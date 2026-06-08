@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    crack-mini-dot-commentator
-// @version      0.2.1
+// @version      0.2.2
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @updateURL    none
@@ -452,15 +452,22 @@
     if (!isEpisodePath()) return [];
     const scope = findMessageScope();
     if (!(scope instanceof HTMLElement)) return [];
-    const groups = scope.matches?.('[data-message-group-id]')
+    let groups = scope.matches?.('[data-message-group-id]')
       ? [scope]
       : Array.from(scope.querySelectorAll('[data-message-group-id]'));
 
+    if (!groups.length) {
+      groups = Array.from(scope.querySelectorAll('.wrtn-markdown:not(.not-wrtn-markdown)'))
+        .map(markdown => markdown.closest('[data-message-id], article, [role="listitem"], li, section') || markdown)
+        .filter((group, index, list) => group instanceof HTMLElement && list.indexOf(group) === index);
+    }
 
     return groups.map((group, index) => {
       if (!(group instanceof HTMLElement) || isOwnNode(group)) return null;
       if (group.closest('[role="dialog"], #igx-live-popup')) return null;
-      const markdown = group.querySelector('.wrtn-markdown:not(.not-wrtn-markdown)');
+      const markdown = group.matches?.('.wrtn-markdown:not(.not-wrtn-markdown)')
+        ? group
+        : group.querySelector('.wrtn-markdown:not(.not-wrtn-markdown)');
       if (!(markdown instanceof HTMLElement) || !visible(group)) return null;
       const text = cleanMarkdownText(markdown);
       if (text.length < 2) return null;
@@ -499,9 +506,9 @@
     const attrs = attrParts.filter(Boolean).join(' ').toLowerCase();
 
 
+    if (/\b(ai|assistant|bot|character|incoming|received)\b|답변|캐릭터/i.test(attrs)) return false;
     if (/\b(user|human|me|client|outgoing|sent)\b|사용자|내\s*메시지|보낸\s*메시지/i.test(attrs)) return true;
     if (/\b(self-end|justify-end|items-end|ml-auto|text-right|outgoing|mine|my-message|user-message)\b/i.test(attrs)) return true;
-    if (/\b(ai|assistant|bot|character|incoming|received)\b|답변|캐릭터/i.test(attrs)) return false;
 
 
     const scopeRect = scope?.getBoundingClientRect?.();
@@ -523,17 +530,9 @@
     }
 
 
-    if (textRect.left > center) return true;
-    if (textCenter > center + 80 && textRect.width < Math.max(760, innerWidth * 0.72)) return true;
-    if (groupRect.left > center && groupRect.width < Math.max(760, innerWidth * 0.72)) return true;
-
-
-    const index = entries.indexOf(entry);
-    if (index >= 1) {
-      const prev = entries[index - 1];
-      const prevTextRect = prev?.markdown?.getBoundingClientRect?.();
-      if (prevTextRect && textRect.left - prevTextRect.left > 80) return true;
-    }
+    const narrow = textRect.width < Math.max(760, innerWidth * 0.72);
+    if (narrow && textRect.left > center && textRect.right > center + 120) return true;
+    if (narrow && textCenter > center + 100 && groupRect.right > center + 120) return true;
 
 
     return false;
