@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.2
+// @version      0.1.3
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -548,11 +548,12 @@
     for (let i = entries.length - 1; i >= 0; i--) {
       const picked = entries[i];
       if (looksLikeUserMessage(picked, entries)) continue;
+      if (matchesLastSubmittedText(picked.text)) continue;
       const latest = normalize(picked.text);
       if (latest.length < MIN_REPLY_CHARS) continue;
       const context = entries
         .slice(Math.max(0, i - contextCount), i)
-        .map(x => `${looksLikeUserMessage(x, entries) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
+        .map(x => `${looksLikeUserMessage(x, entries) || matchesLastSubmittedText(x.text) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
         .filter(Boolean)
         .join('\n---\n')
         .slice(-Math.max(MAX_CONTEXT_CHARS, contextCount * 420));
@@ -1294,6 +1295,18 @@
   }
 
 
+  function matchesLastSubmittedText(text) {
+    if (!lastSubmittedText) return false;
+    const candidate = compactText(text);
+    const submitted = compactText(lastSubmittedText);
+    if (!candidate || !submitted) return false;
+    if (candidate === submitted) return true;
+    if (submitted.length >= 12 && candidate.includes(submitted)) return true;
+    if (candidate.length >= 12 && submitted.includes(candidate)) return true;
+    return false;
+  }
+
+
   let scanTimer = null;
   let busy = false;
   let pendingPayload = null;
@@ -1329,14 +1342,7 @@
 
 
   function candidateMatchesSubmitted(payload) {
-    if (!payload || !lastSubmittedText) return false;
-    const candidate = compactText(payload.latest);
-    const submitted = compactText(lastSubmittedText);
-    if (!candidate || !submitted) return false;
-    if (candidate === submitted) return true;
-    if (submitted.length >= 12 && candidate.includes(submitted)) return true;
-    if (candidate.length >= 12 && submitted.includes(candidate)) return true;
-    return false;
+    return Boolean(payload && matchesLastSubmittedText(payload.latest));
   }
 
 
