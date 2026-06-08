@@ -13,6 +13,8 @@
 // @connect      googleapis.com
 // @connect      open.er-api.com
 // @noframes
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Assistant.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Assistant.user.js
 // ==/UserScript==
 
 (function () {
