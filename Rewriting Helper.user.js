@@ -1,5 +1,5 @@
 ﻿// ==UserScript==
-// @name         크랙 대사&묘사 헬퍼
+// @name         윤문 헬퍼
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher
 // @version      1.1.0
 // @description  크랙 채팅창의 대사/상황묘사를 Gemini로 번역·의역·윤문 후 미리보기하고 입력창만 대체
