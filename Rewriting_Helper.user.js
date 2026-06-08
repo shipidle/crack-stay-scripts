@@ -9,6 +9,8 @@
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Rewriting_Helper.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Rewriting_Helper.user.js
 // ==/UserScript==
 
 (function () {
