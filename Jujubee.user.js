@@ -4,8 +4,6 @@
 // @version      0.1.0
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
-// @updateURL    none
-// @downloadURL  none
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
