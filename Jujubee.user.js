@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    crack-mini-dot-commentator
-// @version      0.2.0
+// @version      0.2.1
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @updateURL    none
@@ -545,17 +545,14 @@
     if (!entries.length) return null;
     const store = readStore();
     const contextCount = Math.max(0, Math.min(12, Number(store.contextCount ?? 3)));
-    const latestUserIndex = awaitingUserReply ? latestUserishEntryIndex(entries) : -1;
     for (let i = entries.length - 1; i >= 0; i--) {
       const picked = entries[i];
       if (looksLikeUserMessage(picked, entries)) continue;
-      if (matchesLastSubmittedText(picked.text)) continue;
-      if (latestUserIndex >= 0 && i <= latestUserIndex) continue;
       const latest = normalize(picked.text);
       if (latest.length < MIN_REPLY_CHARS) continue;
       const context = entries
         .slice(Math.max(0, i - contextCount), i)
-        .map(x => `${looksLikeUserMessage(x, entries) || matchesLastSubmittedText(x.text) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
+        .map(x => `${looksLikeUserMessage(x, entries) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
         .filter(Boolean)
         .join('\n---\n')
         .slice(-Math.max(MAX_CONTEXT_CHARS, contextCount * 420));
@@ -571,14 +568,6 @@
       };
     }
     return null;
-  }
-
-
-  function latestUserishEntryIndex(entries) {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      if (looksLikeUserMessage(entries[i], entries) || matchesLastSubmittedText(entries[i].text)) return i;
-    }
-    return -1;
   }
 
 
@@ -1312,68 +1301,12 @@
   }
 
 
-  function compactText(text) {
-    return normalize(text).replace(/\s+/g, '').slice(-700);
-  }
-
-
-  function matchesLastSubmittedText(text) {
-    if (!lastSubmittedText) return false;
-    const candidate = compactText(text);
-    const submitted = compactText(lastSubmittedText);
-    if (!candidate || !submitted) return false;
-    if (candidate === submitted) return true;
-    if (submitted.length >= 12 && candidate.includes(submitted)) return true;
-    if (candidate.length >= 12 && submitted.includes(candidate)) return true;
-    return false;
-  }
-
-
   let scanTimer = null;
   let busy = false;
   let pendingPayload = null;
   let deleteMode = false;
-  let userTurnSerial = 0;
-  let handledUserTurnSerial = 0;
-  let awaitingUserReply = false;
-  let lastUserSignalAt = 0;
-  let lastSubmittedText = '';
-  let lastSubmittedHash = '';
   const bootstrappedRooms = new Set();
   const bootStartedAt = Date.now();
-
-
-  function markUserTurn(text = '') {
-    if (!isEpisodePath()) return;
-    const clean = normalize(text).slice(-700);
-    const hash = compactText(clean) ? hashTiny(compactText(clean)) : '';
-    if (hash && hash === lastSubmittedHash && Date.now() - lastUserSignalAt < 5000) {
-      scheduleScan(STABLE_REPLY_MS);
-      return;
-    }
-    userTurnSerial++;
-    awaitingUserReply = true;
-    lastUserSignalAt = Date.now();
-    lastSubmittedText = clean;
-    lastSubmittedHash = hash;
-    pendingPayload = null;
-    beginActivity();
-    scheduleScan(STABLE_REPLY_MS);
-  }
-
-
-  function candidateMatchesSubmitted(payload) {
-    return Boolean(payload && matchesLastSubmittedText(payload.latest));
-  }
-
-
-  function readComposerText(target) {
-    const direct = target?.closest?.('textarea, [contenteditable="true"]');
-    const active = document.activeElement?.matches?.('textarea, [contenteditable="true"]') ? document.activeElement : null;
-    const el = direct || active || document.querySelector('textarea');
-    if (!el || isOwnNode(el)) return '';
-    return normalize(el.value ?? el.innerText ?? el.textContent ?? '');
-  }
 
 
   function scheduleScan(delay = 700) {
@@ -1391,7 +1324,6 @@
     const payload = latestAiReply();
     if (!payload) {
       pendingPayload = null;
-      if (awaitingUserReply) scheduleScan(900);
       if (Date.now() - bootStartedAt > 5500) bootstrappedRooms.add(roomKey());
       return;
     }
@@ -1400,27 +1332,6 @@
       writeStore({ lastKey: payload.key });
       bootstrappedRooms.add(roomKey());
       pendingPayload = null;
-      return;
-    }
-
-
-    if (!awaitingUserReply || userTurnSerial <= handledUserTurnSerial) {
-      if (payload.key !== store.lastKey) writeStore({ lastKey: payload.key });
-      pendingPayload = null;
-      return;
-    }
-
-
-    if (Date.now() - lastUserSignalAt < 1200) {
-      scheduleScan(1200);
-      return;
-    }
-
-
-    if (candidateMatchesSubmitted(payload)) {
-      writeStore({ lastKey: payload.key });
-      pendingPayload = null;
-      scheduleScan(900);
       return;
     }
 
@@ -1451,12 +1362,6 @@
       scheduleScan(700);
       return;
     }
-    if (candidateMatchesSubmitted(confirmed)) {
-      writeStore({ lastKey: confirmed.key });
-      pendingPayload = null;
-      scheduleScan(900);
-      return;
-    }
 
 
     pendingPayload = null;
@@ -1474,8 +1379,6 @@
       say(line);
       console.debug('[Crack Mini Dot Commentator]', err);
     } finally {
-      handledUserTurnSerial = userTurnSerial;
-      awaitingUserReply = false;
       busy = false;
       setStateClass('thinking', false);
     }
@@ -1485,30 +1388,12 @@
   function observeChat() {
     const observer = new MutationObserver(mutations => {
       if (mutations.some(m => Array.from(m.addedNodes || []).some(n => n instanceof Element && !isOwnNode(n)))) {
-        const entries = getEntries();
-        const latest = entries[entries.length - 1];
-        if (latest && looksLikeUserMessage(latest, entries)) markUserTurn(latest.text);
         beginActivity();
         scheduleScan(STABLE_REPLY_MS);
       }
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    document.addEventListener('keydown', event => {
-      if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
-      const text = readComposerText(event.target);
-      if (text) markUserTurn(text);
-    }, true);
-    document.addEventListener('click', event => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (!target || isOwnNode(target)) return;
-      const button = target.closest('button, [role="button"], [data-testid*="send" i], [aria-label*="send" i], [aria-label*="전송" i]');
-      if (!button) return;
-      const text = readComposerText(button);
-      if (text) markUserTurn(text);
-    }, true);
-    setInterval(() => {
-      if (awaitingUserReply) scheduleScan(900);
-    }, 4500);
+    setInterval(() => scheduleScan(120), 4500);
     setInterval(() => {
       const idle = Date.now() - Number(readStore().lastActiveAt || Date.now());
       setStateClass('sleep', idle >= IDLE_SLEEP_MS);
@@ -1522,5 +1407,3 @@
   observeChat();
   scheduleScan(1400);
 })();
-
-
