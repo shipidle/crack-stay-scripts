@@ -9,6 +9,8 @@
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Jujubee.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Jujubee.user.js
 // ==/UserScript==
 
 
