@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         주접이
-// @namespace    crack-mini-dot-commentator
+// @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
 // @version      0.1.0
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
