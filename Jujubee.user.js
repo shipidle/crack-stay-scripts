@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.3
+// @version      0.1.4
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -440,6 +440,19 @@
   }
 
 
+  function messageKeyId(key) {
+    if (!key) return '';
+    return [
+      key.lenAt,
+      key.groupId,
+      key.msgId,
+      Math.round(Number(key.bottom || 0)),
+      Math.round(Number(key.top || 0)),
+      key.index,
+    ].join(':');
+  }
+
+
   function compareKey(a, b) {
     if (a.lenAt !== b.lenAt) return a.lenAt - b.lenAt;
     if (a.bottom !== b.bottom) return a.bottom - b.bottom;
@@ -549,6 +562,7 @@
       const picked = entries[i];
       if (looksLikeUserMessage(picked, entries)) continue;
       if (matchesLastSubmittedText(picked.text)) continue;
+      if (isAtOrBeforeSubmittedEntry(picked)) continue;
       const latest = normalize(picked.text);
       if (latest.length < MIN_REPLY_CHARS) continue;
       const context = entries
@@ -1317,6 +1331,9 @@
   let lastUserSignalAt = 0;
   let lastSubmittedText = '';
   let lastSubmittedHash = '';
+  let lastSubmittedEntryKey = null;
+  let lastSubmittedEntryKeyId = '';
+  let lastSubmittedEntrySeenAt = 0;
   const bootstrappedRooms = new Set();
   const bootStartedAt = Date.now();
 
@@ -1335,9 +1352,35 @@
     lastUserSignalAt = Date.now();
     lastSubmittedText = clean;
     lastSubmittedHash = hash;
+    lastSubmittedEntryKey = null;
+    lastSubmittedEntryKeyId = '';
+    lastSubmittedEntrySeenAt = 0;
     pendingPayload = null;
     beginActivity();
     scheduleScan(STABLE_REPLY_MS);
+  }
+
+
+  function rememberSubmittedEntry(entries = getEntries()) {
+    if (!lastSubmittedText) return false;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (!matchesLastSubmittedText(entry?.text)) continue;
+      lastSubmittedEntryKey = entry.key;
+      lastSubmittedEntryKeyId = messageKeyId(entry.key);
+      lastSubmittedEntrySeenAt = Date.now();
+      return true;
+    }
+    return false;
+  }
+
+
+  function isAtOrBeforeSubmittedEntry(entry) {
+    if (!lastSubmittedEntryKey || !entry?.key) return false;
+    const cmp = compareKey(entry.key, lastSubmittedEntryKey);
+    if (cmp < 0) return true;
+    if (cmp === 0 && messageKeyId(entry.key) === lastSubmittedEntryKeyId) return true;
+    return false;
   }
 
 
@@ -1385,6 +1428,13 @@
     if (!awaitingUserReply || userTurnSerial <= handledUserTurnSerial) {
       if (payload.key !== store.lastKey) writeStore({ lastKey: payload.key });
       pendingPayload = null;
+      return;
+    }
+
+
+    if (!lastSubmittedEntryKey && Date.now() - lastUserSignalAt < 4000) {
+      rememberSubmittedEntry();
+      scheduleScan(700);
       return;
     }
 
@@ -1465,7 +1515,8 @@
       if (mutations.some(m => Array.from(m.addedNodes || []).some(n => n instanceof Element && !isOwnNode(n)))) {
         const entries = getEntries();
         const latest = entries[entries.length - 1];
-        if (latest && looksLikeUserMessage(latest, entries)) markUserTurn(latest.text);
+        rememberSubmittedEntry(entries);
+        if (latest && looksLikeUserMessage(latest, entries) && !matchesLastSubmittedText(latest.text)) markUserTurn(latest.text);
         beginActivity();
         scheduleScan(STABLE_REPLY_MS);
       }
