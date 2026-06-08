@@ -1,5 +1,5 @@
 ﻿// ==UserScript==
-// @name         크랙 캐릭터챗 어시스턴트
+// @name         캐챗 어시스턴트
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
 // @version      2.39.0-local
 // @description  crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
