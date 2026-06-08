@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.4
+// @version      0.1.5
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -65,6 +65,9 @@
   let summaryAccum = [];
   let summarySeen = {};
   let summaryChatId = null;
+  let messagesAccum = [];
+  let messagesSeen = {};
+  let messagesChatId = null;
 
 
   function defaultStore() {
@@ -211,6 +214,15 @@
   }
 
 
+  function syncMessagesChat() {
+    const id = chatId();
+    if (!id || id === messagesChatId) return;
+    messagesChatId = id;
+    messagesAccum = [];
+    messagesSeen = {};
+  }
+
+
   function mergeSummaries(list) {
     if (!Array.isArray(list)) return 0;
     let added = 0;
@@ -219,6 +231,21 @@
       if (!summarySeen[key]) {
         summarySeen[key] = 1;
         summaryAccum.push(item);
+        added++;
+      }
+    });
+    return added;
+  }
+
+
+  function mergeMessages(list) {
+    if (!Array.isArray(list)) return 0;
+    let added = 0;
+    list.forEach(item => {
+      const key = item?._id || item?.id || JSON.stringify(item);
+      if (!messagesSeen[key]) {
+        messagesSeen[key] = 1;
+        messagesAccum.push(item);
         added++;
       }
     });
@@ -250,6 +277,15 @@
         }
       }
     }
+
+    if (/\/messages(\?|$)/.test(rec.url) && Array.isArray(json?.data?.messages)) {
+      const match = rec.url.match(/\/chats\/([a-zA-Z0-9]+)\/messages/);
+      syncMessagesChat();
+      if (match?.[1] && match[1] === messagesChatId) {
+        const added = mergeMessages(json.data.messages);
+        if (added > 0) scheduleScan(600);
+      }
+    }
   }
 
 
@@ -260,11 +296,13 @@
 
   function refreshFeatureData() {
     syncSummaryChat();
+    syncMessagesChat();
     const id = chatId();
     if (!id) return;
     const base = 'https://crack-api.wrtn.ai';
     proactiveFetch(`${base}/crack-gen/v3/chats/${id}`);
     proactiveFetch(`${base}/crack-gen/v3/chats/${id}/summaries?limit=20&type=longTerm&orderBy=newest&filter=all`);
+    proactiveFetch(`${base}/crack-gen/v3/chats/${id}/messages?limit=20`);
   }
 
 
@@ -553,7 +591,115 @@
   }
 
 
+  function cleanApiMessageText(text) {
+    return normalize(text)
+      .replace(/^\[\/\/\]:\s*#.*$/gm, '')
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .trim();
+  }
+
+
+  function apiMessageText(message) {
+    if (!message || typeof message !== 'object') return '';
+    const candidates = [
+      message.content,
+      message.text,
+      message.message,
+      message.body,
+      message?.content?.text,
+      message?.message?.content,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) return cleanApiMessageText(candidate);
+    }
+    if (Array.isArray(message.parts)) {
+      return cleanApiMessageText(message.parts.map(part => (
+        typeof part === 'string' ? part : part?.text || part?.content || ''
+      )).filter(Boolean).join('\n'));
+    }
+    return '';
+  }
+
+
+  function apiMessageRole(message) {
+    const raw = [
+      message?.role,
+      message?.type,
+      message?.sender,
+      message?.author,
+      message?.speaker,
+      message?.creatorType,
+      message?.messageType,
+      message?.userType,
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (/\b(user|human|me|client)\b|사용자/.test(raw)) return 'user';
+    if (/\b(assistant|ai|bot|character|model)\b|캐릭터|답변/.test(raw)) return 'assistant';
+    return message?.role === 'user' ? 'user' : 'assistant';
+  }
+
+
+  function apiEntries() {
+    syncMessagesChat();
+    if (!messagesAccum.length || messagesChatId !== chatId()) return [];
+    return messagesAccum.slice()
+      .sort((a, b) => {
+        const ax = String(a?._id || a?.id || a?.createdAt || '');
+        const bx = String(b?._id || b?.id || b?.createdAt || '');
+        return ax < bx ? -1 : ax > bx ? 1 : 0;
+      })
+      .map((message, index) => ({
+        role: apiMessageRole(message),
+        text: apiMessageText(message),
+        id: String(message?._id || message?.id || message?.createdAt || index),
+        index,
+      }))
+      .filter(entry => entry.text);
+  }
+
+
+  function latestApiAiReply() {
+    const entries = apiEntries();
+    if (!entries.length) return null;
+    const store = readStore();
+    const contextCount = Math.max(0, Math.min(12, Number(store.contextCount ?? 3)));
+    let startIndex = -1;
+    if (awaitingUserReply && lastSubmittedText) {
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i].role === 'user' && matchesLastSubmittedText(entries[i].text)) {
+          startIndex = i;
+          break;
+        }
+      }
+      if (startIndex < 0) return null;
+    }
+    for (let i = entries.length - 1; i > startIndex; i--) {
+      const picked = entries[i];
+      if (picked.role === 'user') continue;
+      if (matchesLastSubmittedText(picked.text)) continue;
+      const latest = normalize(picked.text);
+      if (latest.length < MIN_REPLY_CHARS) continue;
+      const context = entries
+        .slice(Math.max(0, i - contextCount), i)
+        .map(x => `${x.role === 'user' ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
+        .filter(Boolean)
+        .join('\n---\n')
+        .slice(-Math.max(MAX_CONTEXT_CHARS, contextCount * 420));
+      return {
+        latest,
+        context,
+        source: 'api',
+        key: `${roomKey()}|api:${picked.id}|${latest.length}:${hashTiny(latest)}:${latest.slice(-60)}`,
+      };
+    }
+    return null;
+  }
+
+
   function latestAiReply() {
+    const apiPayload = latestApiAiReply();
+    if (apiPayload) return apiPayload;
+    if (awaitingUserReply && lastSubmittedText) return null;
+
     const entries = getEntries();
     if (!entries.length) return null;
     const store = readStore();
@@ -579,6 +725,7 @@
       return {
         latest,
         context,
+        source: 'dom',
         key: `${roomKey()}|${domKey}|${latest.length}:${hashTiny(latest)}:${latest.slice(-60)}`,
       };
     }
@@ -1357,6 +1504,8 @@
     lastSubmittedEntrySeenAt = 0;
     pendingPayload = null;
     beginActivity();
+    refreshFeatureData();
+    setTimeout(refreshFeatureData, 1800);
     scheduleScan(STABLE_REPLY_MS);
   }
 
@@ -1432,7 +1581,7 @@
     }
 
 
-    if (!lastSubmittedEntryKey && Date.now() - lastUserSignalAt < 4000) {
+    if (payload.source !== 'api' && !lastSubmittedEntryKey && Date.now() - lastUserSignalAt < 4000) {
       rememberSubmittedEntry();
       scheduleScan(700);
       return;
