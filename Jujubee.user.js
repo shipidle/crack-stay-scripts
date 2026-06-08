@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.5
+// @version      0.1.6
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -652,6 +652,7 @@
         text: apiMessageText(message),
         id: String(message?._id || message?.id || message?.createdAt || index),
         index,
+        orderKey: String(message?._id || message?.id || message?.createdAt || index),
       }))
       .filter(entry => entry.text);
   }
@@ -665,10 +666,13 @@
     let startIndex = -1;
     if (awaitingUserReply && lastSubmittedText) {
       for (let i = entries.length - 1; i >= 0; i--) {
-        if (entries[i].role === 'user' && matchesLastSubmittedText(entries[i].text)) {
+        if (entries[i].role === 'user' && matchesSubmittedUserMessage(entries[i].text)) {
           startIndex = i;
           break;
         }
+      }
+      if (startIndex < 0 && lastApiBoundaryKey) {
+        startIndex = entries.findIndex(entry => entry.orderKey === lastApiBoundaryKey);
       }
       if (startIndex < 0) return null;
     }
@@ -1468,6 +1472,18 @@
   }
 
 
+  function matchesSubmittedUserMessage(text) {
+    if (!lastSubmittedText) return false;
+    const candidate = compactText(text);
+    const submitted = compactText(lastSubmittedText);
+    if (!candidate || !submitted) return false;
+    if (candidate === submitted) return true;
+    if (submitted.length >= 2 && candidate.includes(submitted)) return true;
+    if (candidate.length >= 2 && submitted.includes(candidate)) return true;
+    return false;
+  }
+
+
   let scanTimer = null;
   let busy = false;
   let pendingPayload = null;
@@ -1481,6 +1497,8 @@
   let lastSubmittedEntryKey = null;
   let lastSubmittedEntryKeyId = '';
   let lastSubmittedEntrySeenAt = 0;
+  let lastApiBoundaryKey = '';
+  let lastReplyPollAt = 0;
   const bootstrappedRooms = new Set();
   const bootStartedAt = Date.now();
 
@@ -1490,6 +1508,8 @@
     const clean = normalize(text).slice(-700);
     const compact = compactText(clean);
     const hash = compact ? hashTiny(compact) : '';
+    const beforeApiEntries = apiEntries();
+    const beforeApiLatest = beforeApiEntries[beforeApiEntries.length - 1];
     if (hash && hash === lastSubmittedHash && Date.now() - lastUserSignalAt < 5000) {
       scheduleScan(STABLE_REPLY_MS);
       return;
@@ -1502,6 +1522,8 @@
     lastSubmittedEntryKey = null;
     lastSubmittedEntryKeyId = '';
     lastSubmittedEntrySeenAt = 0;
+    lastApiBoundaryKey = beforeApiLatest?.orderKey || '';
+    lastReplyPollAt = 0;
     pendingPayload = null;
     beginActivity();
     refreshFeatureData();
@@ -1562,15 +1584,25 @@
     const payload = latestAiReply();
     if (!payload) {
       pendingPayload = null;
+      if (awaitingUserReply && Date.now() - lastUserSignalAt < 60000) {
+        if (Date.now() - lastReplyPollAt > 2200) {
+          lastReplyPollAt = Date.now();
+          refreshFeatureData();
+        }
+        scheduleScan(1000);
+        return;
+      }
       if (Date.now() - bootStartedAt > 5500) bootstrappedRooms.add(roomKey());
       return;
     }
 
     if (!bootstrappedRooms.has(roomKey())) {
-      writeStore({ lastKey: payload.key });
       bootstrappedRooms.add(roomKey());
-      pendingPayload = null;
-      return;
+      if (!awaitingUserReply || userTurnSerial <= handledUserTurnSerial) {
+        writeStore({ lastKey: payload.key });
+        pendingPayload = null;
+        return;
+      }
     }
 
 
