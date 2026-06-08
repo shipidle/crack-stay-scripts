@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.7
+// @version      0.1.8
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -45,7 +45,7 @@
     'gemini-3.1-pro-preview',
   ];
   const IDLE_SLEEP_MS = 1000 * 60 * 3;
-  const STABLE_REPLY_MS = 2200;
+  const STABLE_REPLY_MS = 900;
   const MIN_REPLY_CHARS = 18;
   const MAX_REPLY_CHARS = 1300;
   const MAX_CONTEXT_CHARS = 650;
@@ -1330,6 +1330,8 @@
   let lastUserSignalAt = 0;
   let lastSubmittedText = '';
   let lastSubmittedHash = '';
+  let lastComposerText = '';
+  let lastComposerTextAt = 0;
   const bootstrappedRooms = new Set();
   const bootStartedAt = Date.now();
 
@@ -1358,9 +1360,22 @@
   function readComposerText(target) {
     const direct = target?.closest?.('textarea, [contenteditable="true"]');
     const active = document.activeElement?.matches?.('textarea, [contenteditable="true"]') ? document.activeElement : null;
-    const el = direct || active || document.querySelector('textarea');
-    if (!el || isOwnNode(el)) return '';
-    return normalize(el.value ?? el.innerText ?? el.textContent ?? '');
+    const global = document.querySelector('textarea, [contenteditable="true"]');
+    const el = direct || active || global;
+    if (el && !isOwnNode(el)) {
+      const text = normalize(el.value ?? el.innerText ?? el.textContent ?? '');
+      if (text) return text;
+    }
+    if (Date.now() - lastComposerTextAt < 5000) return lastComposerText;
+    return '';
+  }
+
+
+  function rememberComposerText(target) {
+    const text = readComposerText(target);
+    if (!text) return;
+    lastComposerText = text;
+    lastComposerTextAt = Date.now();
   }
 
 
@@ -1418,7 +1433,7 @@
 
 
     if (Date.now() - lastUserSignalAt < 1200) {
-      scheduleScan(1200);
+      scheduleScan(350);
       return;
     }
 
@@ -1491,9 +1506,20 @@
 
 
   function observeUserSubmit() {
+    document.addEventListener('input', event => {
+      if (isOwnNode(event.target)) return;
+      rememberComposerText(event.target);
+    }, true);
+
+    document.addEventListener('keyup', event => {
+      if (isOwnNode(event.target)) return;
+      rememberComposerText(event.target);
+    }, true);
+
     document.addEventListener('keydown', event => {
       if (event.isComposing || event.defaultPrevented) return;
       if (event.key !== 'Enter' || event.shiftKey || event.altKey) return;
+      rememberComposerText(event.target);
       const text = readComposerText(event.target);
       if (text.length >= 1) markUserTurn(text);
     }, true);
@@ -1501,8 +1527,9 @@
     document.addEventListener('click', event => {
       if (isOwnNode(event.target)) return;
       const button = event.target?.closest?.('button, [role="button"]');
-      if (!looksLikeSendButton(button)) return;
+      if (!button) return;
       const text = readComposerText(event.target);
+      if (!looksLikeSendButton(button) && !(text && Date.now() - lastComposerTextAt < 5000)) return;
       if (text.length >= 1) markUserTurn(text);
     }, true);
   }
