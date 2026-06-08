@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         주접이
-// @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.9
+// @namespace    crack-mini-dot-commentator
+// @version      0.2.0
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
+// @updateURL    none
+// @downloadURL  none
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Jujubee.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Jujubee.user.js
 // ==/UserScript==
 
 
@@ -45,7 +45,7 @@
     'gemini-3.1-pro-preview',
   ];
   const IDLE_SLEEP_MS = 1000 * 60 * 3;
-  const STABLE_REPLY_MS = 900;
+  const STABLE_REPLY_MS = 2200;
   const MIN_REPLY_CHARS = 18;
   const MAX_REPLY_CHARS = 1300;
   const MAX_CONTEXT_CHARS = 650;
@@ -54,7 +54,7 @@
 
   const TENDENCIES = {
     romance: { label: '완전야르다', words: /사랑|고백|질투|키스|입맞춤|연인|데이트|심장|눈빛|설렘|끌어안|품에|보고 싶|좋아해|사귀/i },
-    spice: { label: '야르방댕이', words: /벗|침대|허벅|가슴|허리|입술|뜨거|욕망|쾌락|애무|몸|나체|숨결|섹|야해/i },
+    spice: { label: '( ͡° ͜ʖ ͡°)', words: /벗|침대|허벅|가슴|허리|입술|뜨거|욕망|쾌락|애무|몸|나체|숨결|섹|야해/i },
     angst: { label: '상처수집가', words: /눈물|상처|버림|후회|미안|죽|고통|외로|절망|무너|울었|슬픔|불안|공포/i },
     power: { label: '권위처형인', words: /왕|황제|공작|상관|명령|권력|계급|귀족|복종|처벌|법|재판|군주|신하/i },
     chaos: { label: '혼돈중독', words: /ㅋㅋ|미친|돌았|난장|폭발|싸움|도망|사건|위험|비밀|배신|거짓|혼란|충격/i },
@@ -545,14 +545,17 @@
     if (!entries.length) return null;
     const store = readStore();
     const contextCount = Math.max(0, Math.min(12, Number(store.contextCount ?? 3)));
+    const latestUserIndex = awaitingUserReply ? latestUserishEntryIndex(entries) : -1;
     for (let i = entries.length - 1; i >= 0; i--) {
       const picked = entries[i];
       if (looksLikeUserMessage(picked, entries)) continue;
+      if (matchesLastSubmittedText(picked.text)) continue;
+      if (latestUserIndex >= 0 && i <= latestUserIndex) continue;
       const latest = normalize(picked.text);
       if (latest.length < MIN_REPLY_CHARS) continue;
       const context = entries
         .slice(Math.max(0, i - contextCount), i)
-        .map(x => `${looksLikeUserMessage(x, entries) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
+        .map(x => `${looksLikeUserMessage(x, entries) || matchesLastSubmittedText(x.text) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
         .filter(Boolean)
         .join('\n---\n')
         .slice(-Math.max(MAX_CONTEXT_CHARS, contextCount * 420));
@@ -568,6 +571,14 @@
       };
     }
     return null;
+  }
+
+
+  function latestUserishEntryIndex(entries) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (looksLikeUserMessage(entries[i], entries) || matchesLastSubmittedText(entries[i].text)) return i;
+    }
+    return -1;
   }
 
 
@@ -699,11 +710,7 @@
     const notes = store.roomNotes ? String(store.roomNotes).slice(-900) : '';
     const userNote = store.sendUserNote ? findUserNote().slice(-900) : '';
     const memory = store.sendMemory ? findSummary(store.memoryCount).slice(-1600) : '';
-    const recentLines = (store.logs || [])
-      .slice(0, 8)
-      .map(item => item?.line)
-      .filter(Boolean)
-      .join('\n');
+    const recent = recentBotLines(store, 10);
 
 
     return [
@@ -713,12 +720,12 @@
       '비서처럼 분석/칭찬/요약하지 말고, 지금 장면의 감정선과 캐릭터 관계를 보고 웃긴 주접 한 문장만 쓴다.',
       '욕설, 천박한 드립, 트위터식 밈, 풍자, 시적 비유를 허용한다. 단, 실제 혐오표현/위협/개인정보 언급은 하지 않는다.',
       '항상 한국어 1문장. 줄바꿈 금지. 30~70자 안에서 완결된 웃긴 주접을 쓴다. 문장을 중간에 끊지 말고 반드시 끝맺는다.',
-      '카오모지, 이모지, 이모티콘, 괄호 감탄표를 붙이지 않는다.',
-      '직전에 쓴 표현, 비유, 말버릇, 문장 끝맺음을 반복하지 않는다. 클리셰 대신 매번 새 비유와 새 어휘를 쓴다.',
-      recentLines ? `최근 네가 이미 한 말(반복 금지):\n${recentLines}` : '',
+      '카오모지/이모티콘/얼굴문자/괄호 이모티콘을 붙이지 않는다.',
+      '최근에 쓴 단어, 비유, 말끝, 문장 구조, 유행어를 반복하지 말고 새 표현으로 바꾼다.',
       notes ? `노트(사용자가 직접 적은 세계관/관계 참고):\n${notes}` : '',
       userNote ? `유저노트(사이트에 저장된 참고):\n${userNote}` : '',
       memory ? `장기기억/요약메모리(최근 ${Math.max(0, Number(store.memoryCount || 0))}개):\n${memory}` : '',
+      recent ? `최근 주접(표현 재사용 금지):\n${recent}` : '',
       context ? `과거대화(최근 ${Math.max(0, Number(store.contextCount || 0))}개):\n${context}` : '',
       `최신 AI 답변:\n${latest}`,
     ].filter(Boolean).join('\n\n');
@@ -732,9 +739,19 @@
       `이름은 ${petName}. 성격은 ${store.personality || '재치, 막말, 풍자, 로코 엔진'}.`,
       '아래 사용자의 짧은 말에만 반응한다. 채팅 본문을 상상해서 끼워넣지 않는다.',
       '사용자가 설정을 정정하면 맞장구치면서 그 정정을 앞으로 참고하겠다는 느낌을 자연스럽게 담는다.',
-      '항상 한국어 1문장. 줄바꿈 금지. 30~70자 안에서 완결된 웃긴 반응을 쓴다. 카오모지, 이모지, 이모티콘은 붙이지 않는다.',
+      '항상 한국어 1문장. 줄바꿈 금지. 30~70자 안에서 완결된 웃긴 반응을 쓴다. 카오모지/이모티콘은 붙이지 않는다.',
       `사용자가 말검:\n${String(text || '').slice(-500)}`,
     ].join('\n\n');
+  }
+
+
+  function recentBotLines(store, count = 8) {
+    return (store.logs || [])
+      .map(item => normalize(item?.line || ''))
+      .filter(Boolean)
+      .slice(0, count)
+      .map((line, index) => `${index + 1}. ${line.slice(0, 120)}`)
+      .join('\n');
   }
 
 
@@ -743,11 +760,17 @@
   }
 
 
- function cleanOneSentence(text) {
+  function stripTrailingKaomoji(text) {
+    return normalize(text)
+      .replace(/\s*(?:[(（][^()\n（）]{1,24}[)）]|[♡♥ㅠㅜㅋㅎ]+|[ᐛ˶ᵔᵕᵔ•⤙˙꒳◜◡Φωฅ´ཀ]+)\s*$/u, '')
+      .trim();
+  }
+
+
+  function cleanOneSentence(text) {
     let line = normalize(text).replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ');
     line = line.split(/\n/)[0] || '';
-    line = line.replace(/\s*[\(\[\{][^가-힣a-zA-Z0-9]{1,24}[\)\]\}]\s*$/u, '').trim();
-    line = line.replace(/\s*[\u{1F300}-\u{1FAFF}\u2600-\u27BF]+$/u, '').trim();
+    line = stripTrailingKaomoji(line);
     if (line.length > 500) line = `${line.slice(0, 498).trim()}…`;
     return line;
   }
@@ -758,7 +781,7 @@
       '머임? 저 눈빛이면 주민등록상 연애 중이어야 됨',
       '아니 저러고 안 사귄다고? 나 오늘도 상식 패배함',
       '둘이 감정선으로 줄다리기하다가 전봇대 뽑겠는데',
-      '냐냐냥!!! 냐냐냥!!! 냐냐냥!!!',
+      '냐냐냥!!! 지금 공기까지 옆에서 박수치는 중임',
       '저 분위기면 국세청도 썸세 걷으러 옴',
       '말은 아닌 척하는데 심장은 이미 혼인신고서 출력함',
     ];
@@ -1294,6 +1317,18 @@
   }
 
 
+  function matchesLastSubmittedText(text) {
+    if (!lastSubmittedText) return false;
+    const candidate = compactText(text);
+    const submitted = compactText(lastSubmittedText);
+    if (!candidate || !submitted) return false;
+    if (candidate === submitted) return true;
+    if (submitted.length >= 12 && candidate.includes(submitted)) return true;
+    if (candidate.length >= 12 && submitted.includes(candidate)) return true;
+    return false;
+  }
+
+
   let scanTimer = null;
   let busy = false;
   let pendingPayload = null;
@@ -1311,8 +1346,7 @@
   function markUserTurn(text = '') {
     if (!isEpisodePath()) return;
     const clean = normalize(text).slice(-700);
-    const compact = compactText(clean);
-    const hash = compact ? hashTiny(compact) : '';
+    const hash = compactText(clean) ? hashTiny(compactText(clean)) : '';
     if (hash && hash === lastSubmittedHash && Date.now() - lastUserSignalAt < 5000) {
       scheduleScan(STABLE_REPLY_MS);
       return;
@@ -1329,26 +1363,7 @@
 
 
   function candidateMatchesSubmitted(payload) {
-    if (!payload || !lastSubmittedText) return false;
-    const candidate = compactText(payload.latest);
-    const submitted = compactText(lastSubmittedText);
-    if (!candidate || !submitted) return false;
-    if (candidate === submitted) return true;
-    if (submitted.length >= 12 && candidate.includes(submitted)) return true;
-    if (candidate.length >= 12 && submitted.includes(candidate)) return true;
-    return false;
-  }
-
-
-  function submittedPayload() {
-    const latest = normalize(lastSubmittedText);
-    if (latest.length < 1) return null;
-    return {
-      latest,
-      context: `나: ${latest.slice(-360)}`,
-      source: 'submitted',
-      key: `${roomKey()}|submitted:${userTurnSerial}:${latest.length}:${hashTiny(latest)}:${latest.slice(-60)}`,
-    };
+    return Boolean(payload && matchesLastSubmittedText(payload.latest));
   }
 
 
@@ -1373,14 +1388,10 @@
     if (!store.enabled || busy) return;
 
 
-    let payload = latestAiReply();
-    if (awaitingUserReply && userTurnSerial > handledUserTurnSerial) {
-      if (!payload || payload.key === store.lastKey || candidateMatchesSubmitted(payload)) {
-        payload = submittedPayload();
-      }
-    }
+    const payload = latestAiReply();
     if (!payload) {
       pendingPayload = null;
+      if (awaitingUserReply) scheduleScan(900);
       if (Date.now() - bootStartedAt > 5500) bootstrappedRooms.add(roomKey());
       return;
     }
@@ -1400,8 +1411,16 @@
     }
 
 
-    if (Date.now() - lastUserSignalAt < 350) {
-      scheduleScan(350);
+    if (Date.now() - lastUserSignalAt < 1200) {
+      scheduleScan(1200);
+      return;
+    }
+
+
+    if (candidateMatchesSubmitted(payload)) {
+      writeStore({ lastKey: payload.key });
+      pendingPayload = null;
+      scheduleScan(900);
       return;
     }
 
@@ -1426,13 +1445,16 @@
     }
 
 
-    let confirmed = pendingPayload.source === 'submitted' ? pendingPayload : latestAiReply();
-    if (awaitingUserReply && pendingPayload.source !== 'submitted' && candidateMatchesSubmitted(confirmed)) {
-      confirmed = submittedPayload();
-    }
+    const confirmed = latestAiReply();
     if (!confirmed || confirmed.key !== pendingPayload.key) {
       pendingPayload = null;
       scheduleScan(700);
+      return;
+    }
+    if (candidateMatchesSubmitted(confirmed)) {
+      writeStore({ lastKey: confirmed.key });
+      pendingPayload = null;
+      scheduleScan(900);
       return;
     }
 
@@ -1463,11 +1485,30 @@
   function observeChat() {
     const observer = new MutationObserver(mutations => {
       if (mutations.some(m => Array.from(m.addedNodes || []).some(n => n instanceof Element && !isOwnNode(n)))) {
+        const entries = getEntries();
+        const latest = entries[entries.length - 1];
+        if (latest && looksLikeUserMessage(latest, entries)) markUserTurn(latest.text);
         beginActivity();
-        if (awaitingUserReply) scheduleScan(STABLE_REPLY_MS);
+        scheduleScan(STABLE_REPLY_MS);
       }
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+      const text = readComposerText(event.target);
+      if (text) markUserTurn(text);
+    }, true);
+    document.addEventListener('click', event => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target || isOwnNode(target)) return;
+      const button = target.closest('button, [role="button"], [data-testid*="send" i], [aria-label*="send" i], [aria-label*="전송" i]');
+      if (!button) return;
+      const text = readComposerText(button);
+      if (text) markUserTurn(text);
+    }, true);
+    setInterval(() => {
+      if (awaitingUserReply) scheduleScan(900);
+    }, 4500);
     setInterval(() => {
       const idle = Date.now() - Number(readStore().lastActiveAt || Date.now());
       setStateClass('sleep', idle >= IDLE_SLEEP_MS);
@@ -1475,31 +1516,11 @@
   }
 
 
-  function observeUserSubmit() {
-    document.addEventListener('keydown', event => {
-      if (event.isComposing || event.defaultPrevented) return;
-      if (event.key !== 'Enter' || event.shiftKey || event.altKey) return;
-      const text = readComposerText(event.target);
-      if (text.length >= 1) markUserTurn(text);
-    }, true);
-
-    document.addEventListener('click', event => {
-      if (isOwnNode(event.target)) return;
-      const button = event.target?.closest?.('button, [role="button"]');
-      if (!button) return;
-      const text = readComposerText(event.target);
-      if (text.length >= 1) markUserTurn(text);
-    }, true);
-  }
-
-
   installApiCapture();
   refreshFeatureData();
   renderRoot();
-  observeUserSubmit();
   observeChat();
   scheduleScan(1400);
 })();
-
 
 
