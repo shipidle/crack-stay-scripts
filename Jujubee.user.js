@@ -1,4 +1,4 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
 // @version      0.1.2
@@ -1498,7 +1498,3 @@
   observeChat();
   scheduleScan(1400);
 })();
-
-
-
-
