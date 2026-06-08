@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.8
+// @version      0.1.9
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -250,7 +250,6 @@
         }
       }
     }
-
   }
 
 
@@ -441,19 +440,6 @@
   }
 
 
-  function messageKeyId(key) {
-    if (!key) return '';
-    return [
-      key.lenAt,
-      key.groupId,
-      key.msgId,
-      Math.round(Number(key.bottom || 0)),
-      Math.round(Number(key.top || 0)),
-      key.index,
-    ].join(':');
-  }
-
-
   function compareKey(a, b) {
     if (a.lenAt !== b.lenAt) return a.lenAt - b.lenAt;
     if (a.bottom !== b.bottom) return a.bottom - b.bottom;
@@ -561,11 +547,12 @@
     const contextCount = Math.max(0, Math.min(12, Number(store.contextCount ?? 3)));
     for (let i = entries.length - 1; i >= 0; i--) {
       const picked = entries[i];
+      if (looksLikeUserMessage(picked, entries)) continue;
       const latest = normalize(picked.text);
       if (latest.length < MIN_REPLY_CHARS) continue;
       const context = entries
         .slice(Math.max(0, i - contextCount), i)
-        .map(x => `${looksLikeUserMessage(x, entries) || matchesLastSubmittedText(x.text) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
+        .map(x => `${looksLikeUserMessage(x, entries) ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
         .filter(Boolean)
         .join('\n---\n')
         .slice(-Math.max(MAX_CONTEXT_CHARS, contextCount * 420));
@@ -577,7 +564,6 @@
       return {
         latest,
         context,
-        source: 'dom',
         key: `${roomKey()}|${domKey}|${latest.length}:${hashTiny(latest)}:${latest.slice(-60)}`,
       };
     }
@@ -1308,18 +1294,6 @@
   }
 
 
-  function matchesLastSubmittedText(text) {
-    if (!lastSubmittedText) return false;
-    const candidate = compactText(text);
-    const submitted = compactText(lastSubmittedText);
-    if (!candidate || !submitted) return false;
-    if (candidate === submitted) return true;
-    if (submitted.length >= 12 && candidate.includes(submitted)) return true;
-    if (candidate.length >= 12 && submitted.includes(candidate)) return true;
-    return false;
-  }
-
-
   let scanTimer = null;
   let busy = false;
   let pendingPayload = null;
@@ -1330,8 +1304,6 @@
   let lastUserSignalAt = 0;
   let lastSubmittedText = '';
   let lastSubmittedHash = '';
-  let lastComposerText = '';
-  let lastComposerTextAt = 0;
   const bootstrappedRooms = new Set();
   const bootStartedAt = Date.now();
 
@@ -1352,43 +1324,40 @@
     lastSubmittedHash = hash;
     pendingPayload = null;
     beginActivity();
-    refreshFeatureData();
     scheduleScan(STABLE_REPLY_MS);
+  }
+
+
+  function candidateMatchesSubmitted(payload) {
+    if (!payload || !lastSubmittedText) return false;
+    const candidate = compactText(payload.latest);
+    const submitted = compactText(lastSubmittedText);
+    if (!candidate || !submitted) return false;
+    if (candidate === submitted) return true;
+    if (submitted.length >= 12 && candidate.includes(submitted)) return true;
+    if (candidate.length >= 12 && submitted.includes(candidate)) return true;
+    return false;
+  }
+
+
+  function submittedPayload() {
+    const latest = normalize(lastSubmittedText);
+    if (latest.length < 1) return null;
+    return {
+      latest,
+      context: `나: ${latest.slice(-360)}`,
+      source: 'submitted',
+      key: `${roomKey()}|submitted:${userTurnSerial}:${latest.length}:${hashTiny(latest)}:${latest.slice(-60)}`,
+    };
   }
 
 
   function readComposerText(target) {
     const direct = target?.closest?.('textarea, [contenteditable="true"]');
     const active = document.activeElement?.matches?.('textarea, [contenteditable="true"]') ? document.activeElement : null;
-    const global = document.querySelector('textarea, [contenteditable="true"]');
-    const el = direct || active || global;
-    if (el && !isOwnNode(el)) {
-      const text = normalize(el.value ?? el.innerText ?? el.textContent ?? '');
-      if (text) return text;
-    }
-    if (Date.now() - lastComposerTextAt < 5000) return lastComposerText;
-    return '';
-  }
-
-
-  function rememberComposerText(target) {
-    const text = readComposerText(target);
-    if (!text) return;
-    lastComposerText = text;
-    lastComposerTextAt = Date.now();
-  }
-
-
-  function looksLikeSendButton(button) {
-    if (!(button instanceof HTMLElement)) return false;
-    const label = [
-      button.getAttribute('aria-label'),
-      button.getAttribute('title'),
-      button.getAttribute('data-testid'),
-      button.textContent,
-      button.className,
-    ].filter(Boolean).join(' ').toLowerCase();
-    return /보내|전송|send|submit/.test(label);
+    const el = direct || active || document.querySelector('textarea');
+    if (!el || isOwnNode(el)) return '';
+    return normalize(el.value ?? el.innerText ?? el.textContent ?? '');
   }
 
 
@@ -1404,24 +1373,23 @@
     if (!store.enabled || busy) return;
 
 
-    const payload = latestAiReply();
+    let payload = latestAiReply();
+    if (awaitingUserReply && userTurnSerial > handledUserTurnSerial) {
+      if (!payload || payload.key === store.lastKey || candidateMatchesSubmitted(payload)) {
+        payload = submittedPayload();
+      }
+    }
     if (!payload) {
       pendingPayload = null;
-      if (awaitingUserReply && Date.now() - lastUserSignalAt < 12000) {
-        scheduleScan(700);
-        return;
-      }
       if (Date.now() - bootStartedAt > 5500) bootstrappedRooms.add(roomKey());
       return;
     }
 
     if (!bootstrappedRooms.has(roomKey())) {
+      writeStore({ lastKey: payload.key });
       bootstrappedRooms.add(roomKey());
-      if (!awaitingUserReply || userTurnSerial <= handledUserTurnSerial) {
-        writeStore({ lastKey: payload.key });
-        pendingPayload = null;
-        return;
-      }
+      pendingPayload = null;
+      return;
     }
 
 
@@ -1432,7 +1400,7 @@
     }
 
 
-    if (Date.now() - lastUserSignalAt < 1200) {
+    if (Date.now() - lastUserSignalAt < 350) {
       scheduleScan(350);
       return;
     }
@@ -1440,7 +1408,6 @@
 
     if (payload.key === store.lastKey) {
       pendingPayload = null;
-      if (awaitingUserReply && Date.now() - lastUserSignalAt < 12000) scheduleScan(700);
       return;
     }
 
@@ -1459,7 +1426,10 @@
     }
 
 
-    const confirmed = latestAiReply();
+    let confirmed = pendingPayload.source === 'submitted' ? pendingPayload : latestAiReply();
+    if (awaitingUserReply && pendingPayload.source !== 'submitted' && candidateMatchesSubmitted(confirmed)) {
+      confirmed = submittedPayload();
+    }
     if (!confirmed || confirmed.key !== pendingPayload.key) {
       pendingPayload = null;
       scheduleScan(700);
@@ -1506,20 +1476,9 @@
 
 
   function observeUserSubmit() {
-    document.addEventListener('input', event => {
-      if (isOwnNode(event.target)) return;
-      rememberComposerText(event.target);
-    }, true);
-
-    document.addEventListener('keyup', event => {
-      if (isOwnNode(event.target)) return;
-      rememberComposerText(event.target);
-    }, true);
-
     document.addEventListener('keydown', event => {
       if (event.isComposing || event.defaultPrevented) return;
       if (event.key !== 'Enter' || event.shiftKey || event.altKey) return;
-      rememberComposerText(event.target);
       const text = readComposerText(event.target);
       if (text.length >= 1) markUserTurn(text);
     }, true);
@@ -1529,7 +1488,6 @@
       const button = event.target?.closest?.('button, [role="button"]');
       if (!button) return;
       const text = readComposerText(event.target);
-      if (!looksLikeSendButton(button) && !(text && Date.now() - lastComposerTextAt < 5000)) return;
       if (text.length >= 1) markUserTurn(text);
     }, true);
   }
