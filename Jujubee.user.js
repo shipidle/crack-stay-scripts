@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         주접이
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/crack-mini-dot-commentator
-// @version      0.1.6
+// @version      0.1.7
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -65,9 +65,6 @@
   let summaryAccum = [];
   let summarySeen = {};
   let summaryChatId = null;
-  let messagesAccum = [];
-  let messagesSeen = {};
-  let messagesChatId = null;
 
 
   function defaultStore() {
@@ -214,15 +211,6 @@
   }
 
 
-  function syncMessagesChat() {
-    const id = chatId();
-    if (!id || id === messagesChatId) return;
-    messagesChatId = id;
-    messagesAccum = [];
-    messagesSeen = {};
-  }
-
-
   function mergeSummaries(list) {
     if (!Array.isArray(list)) return 0;
     let added = 0;
@@ -231,21 +219,6 @@
       if (!summarySeen[key]) {
         summarySeen[key] = 1;
         summaryAccum.push(item);
-        added++;
-      }
-    });
-    return added;
-  }
-
-
-  function mergeMessages(list) {
-    if (!Array.isArray(list)) return 0;
-    let added = 0;
-    list.forEach(item => {
-      const key = item?._id || item?.id || JSON.stringify(item);
-      if (!messagesSeen[key]) {
-        messagesSeen[key] = 1;
-        messagesAccum.push(item);
         added++;
       }
     });
@@ -278,14 +251,6 @@
       }
     }
 
-    if (/\/messages(\?|$)/.test(rec.url) && Array.isArray(json?.data?.messages)) {
-      const match = rec.url.match(/\/chats\/([a-zA-Z0-9]+)\/messages/);
-      syncMessagesChat();
-      if (match?.[1] && match[1] === messagesChatId) {
-        const added = mergeMessages(json.data.messages);
-        if (added > 0) scheduleScan(600);
-      }
-    }
   }
 
 
@@ -296,13 +261,11 @@
 
   function refreshFeatureData() {
     syncSummaryChat();
-    syncMessagesChat();
     const id = chatId();
     if (!id) return;
     const base = 'https://crack-api.wrtn.ai';
     proactiveFetch(`${base}/crack-gen/v3/chats/${id}`);
     proactiveFetch(`${base}/crack-gen/v3/chats/${id}/summaries?limit=20&type=longTerm&orderBy=newest&filter=all`);
-    proactiveFetch(`${base}/crack-gen/v3/chats/${id}/messages?limit=20`);
   }
 
 
@@ -591,128 +554,13 @@
   }
 
 
-  function cleanApiMessageText(text) {
-    return normalize(text)
-      .replace(/^\[\/\/\]:\s*#.*$/gm, '')
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-      .trim();
-  }
-
-
-  function apiMessageText(message) {
-    if (!message || typeof message !== 'object') return '';
-    const candidates = [
-      message.content,
-      message.text,
-      message.message,
-      message.body,
-      message?.content?.text,
-      message?.message?.content,
-    ];
-    for (const candidate of candidates) {
-      if (typeof candidate === 'string' && candidate.trim()) return cleanApiMessageText(candidate);
-    }
-    if (Array.isArray(message.parts)) {
-      return cleanApiMessageText(message.parts.map(part => (
-        typeof part === 'string' ? part : part?.text || part?.content || ''
-      )).filter(Boolean).join('\n'));
-    }
-    return '';
-  }
-
-
-  function apiMessageRole(message) {
-    const raw = [
-      message?.role,
-      message?.type,
-      message?.sender,
-      message?.author,
-      message?.speaker,
-      message?.creatorType,
-      message?.messageType,
-      message?.userType,
-    ].filter(Boolean).join(' ').toLowerCase();
-    if (/\b(user|human|me|client)\b|사용자/.test(raw)) return 'user';
-    if (/\b(assistant|ai|bot|character|model)\b|캐릭터|답변/.test(raw)) return 'assistant';
-    return message?.role === 'user' ? 'user' : 'assistant';
-  }
-
-
-  function apiEntries() {
-    syncMessagesChat();
-    if (!messagesAccum.length || messagesChatId !== chatId()) return [];
-    return messagesAccum.slice()
-      .sort((a, b) => {
-        const ax = String(a?._id || a?.id || a?.createdAt || '');
-        const bx = String(b?._id || b?.id || b?.createdAt || '');
-        return ax < bx ? -1 : ax > bx ? 1 : 0;
-      })
-      .map((message, index) => ({
-        role: apiMessageRole(message),
-        text: apiMessageText(message),
-        id: String(message?._id || message?.id || message?.createdAt || index),
-        index,
-        orderKey: String(message?._id || message?.id || message?.createdAt || index),
-      }))
-      .filter(entry => entry.text);
-  }
-
-
-  function latestApiAiReply() {
-    const entries = apiEntries();
-    if (!entries.length) return null;
-    const store = readStore();
-    const contextCount = Math.max(0, Math.min(12, Number(store.contextCount ?? 3)));
-    let startIndex = -1;
-    if (awaitingUserReply && lastSubmittedText) {
-      for (let i = entries.length - 1; i >= 0; i--) {
-        if (entries[i].role === 'user' && matchesSubmittedUserMessage(entries[i].text)) {
-          startIndex = i;
-          break;
-        }
-      }
-      if (startIndex < 0 && lastApiBoundaryKey) {
-        startIndex = entries.findIndex(entry => entry.orderKey === lastApiBoundaryKey);
-      }
-      if (startIndex < 0) return null;
-    }
-    for (let i = entries.length - 1; i > startIndex; i--) {
-      const picked = entries[i];
-      if (picked.role === 'user') continue;
-      if (matchesLastSubmittedText(picked.text)) continue;
-      const latest = normalize(picked.text);
-      if (latest.length < MIN_REPLY_CHARS) continue;
-      const context = entries
-        .slice(Math.max(0, i - contextCount), i)
-        .map(x => `${x.role === 'user' ? '나' : '캐릭터'}: ${normalize(x.text).slice(-360)}`)
-        .filter(Boolean)
-        .join('\n---\n')
-        .slice(-Math.max(MAX_CONTEXT_CHARS, contextCount * 420));
-      return {
-        latest,
-        context,
-        source: 'api',
-        key: `${roomKey()}|api:${picked.id}|${latest.length}:${hashTiny(latest)}:${latest.slice(-60)}`,
-      };
-    }
-    return null;
-  }
-
-
   function latestAiReply() {
-    const apiPayload = latestApiAiReply();
-    if (apiPayload) return apiPayload;
-    if (awaitingUserReply && lastSubmittedText) return null;
-
     const entries = getEntries();
     if (!entries.length) return null;
     const store = readStore();
     const contextCount = Math.max(0, Math.min(12, Number(store.contextCount ?? 3)));
     for (let i = entries.length - 1; i >= 0; i--) {
       const picked = entries[i];
-      if (looksLikeUserMessage(picked, entries)) continue;
-      if (matchesLastSubmittedText(picked.text)) continue;
-      if (isAtOrBeforeSubmittedEntry(picked)) continue;
       const latest = normalize(picked.text);
       if (latest.length < MIN_REPLY_CHARS) continue;
       const context = entries
@@ -1472,18 +1320,6 @@
   }
 
 
-  function matchesSubmittedUserMessage(text) {
-    if (!lastSubmittedText) return false;
-    const candidate = compactText(text);
-    const submitted = compactText(lastSubmittedText);
-    if (!candidate || !submitted) return false;
-    if (candidate === submitted) return true;
-    if (submitted.length >= 2 && candidate.includes(submitted)) return true;
-    if (candidate.length >= 2 && submitted.includes(candidate)) return true;
-    return false;
-  }
-
-
   let scanTimer = null;
   let busy = false;
   let pendingPayload = null;
@@ -1494,11 +1330,6 @@
   let lastUserSignalAt = 0;
   let lastSubmittedText = '';
   let lastSubmittedHash = '';
-  let lastSubmittedEntryKey = null;
-  let lastSubmittedEntryKeyId = '';
-  let lastSubmittedEntrySeenAt = 0;
-  let lastApiBoundaryKey = '';
-  let lastReplyPollAt = 0;
   const bootstrappedRooms = new Set();
   const bootStartedAt = Date.now();
 
@@ -1508,8 +1339,6 @@
     const clean = normalize(text).slice(-700);
     const compact = compactText(clean);
     const hash = compact ? hashTiny(compact) : '';
-    const beforeApiEntries = apiEntries();
-    const beforeApiLatest = beforeApiEntries[beforeApiEntries.length - 1];
     if (hash && hash === lastSubmittedHash && Date.now() - lastUserSignalAt < 5000) {
       scheduleScan(STABLE_REPLY_MS);
       return;
@@ -1519,44 +1348,10 @@
     lastUserSignalAt = Date.now();
     lastSubmittedText = clean;
     lastSubmittedHash = hash;
-    lastSubmittedEntryKey = null;
-    lastSubmittedEntryKeyId = '';
-    lastSubmittedEntrySeenAt = 0;
-    lastApiBoundaryKey = beforeApiLatest?.orderKey || '';
-    lastReplyPollAt = 0;
     pendingPayload = null;
     beginActivity();
     refreshFeatureData();
-    setTimeout(refreshFeatureData, 1800);
     scheduleScan(STABLE_REPLY_MS);
-  }
-
-
-  function rememberSubmittedEntry(entries = getEntries()) {
-    if (!lastSubmittedText) return false;
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i];
-      if (!matchesLastSubmittedText(entry?.text)) continue;
-      lastSubmittedEntryKey = entry.key;
-      lastSubmittedEntryKeyId = messageKeyId(entry.key);
-      lastSubmittedEntrySeenAt = Date.now();
-      return true;
-    }
-    return false;
-  }
-
-
-  function isAtOrBeforeSubmittedEntry(entry) {
-    if (!lastSubmittedEntryKey || !entry?.key) return false;
-    const cmp = compareKey(entry.key, lastSubmittedEntryKey);
-    if (cmp < 0) return true;
-    if (cmp === 0 && messageKeyId(entry.key) === lastSubmittedEntryKeyId) return true;
-    return false;
-  }
-
-
-  function candidateMatchesSubmitted(payload) {
-    return Boolean(payload && matchesLastSubmittedText(payload.latest));
   }
 
 
@@ -1566,6 +1361,19 @@
     const el = direct || active || document.querySelector('textarea');
     if (!el || isOwnNode(el)) return '';
     return normalize(el.value ?? el.innerText ?? el.textContent ?? '');
+  }
+
+
+  function looksLikeSendButton(button) {
+    if (!(button instanceof HTMLElement)) return false;
+    const label = [
+      button.getAttribute('aria-label'),
+      button.getAttribute('title'),
+      button.getAttribute('data-testid'),
+      button.textContent,
+      button.className,
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /보내|전송|send|submit/.test(label);
   }
 
 
@@ -1584,12 +1392,8 @@
     const payload = latestAiReply();
     if (!payload) {
       pendingPayload = null;
-      if (awaitingUserReply && Date.now() - lastUserSignalAt < 60000) {
-        if (Date.now() - lastReplyPollAt > 2200) {
-          lastReplyPollAt = Date.now();
-          refreshFeatureData();
-        }
-        scheduleScan(1000);
+      if (awaitingUserReply && Date.now() - lastUserSignalAt < 12000) {
+        scheduleScan(700);
         return;
       }
       if (Date.now() - bootStartedAt > 5500) bootstrappedRooms.add(roomKey());
@@ -1613,29 +1417,15 @@
     }
 
 
-    if (payload.source !== 'api' && !lastSubmittedEntryKey && Date.now() - lastUserSignalAt < 4000) {
-      rememberSubmittedEntry();
-      scheduleScan(700);
-      return;
-    }
-
-
     if (Date.now() - lastUserSignalAt < 1200) {
       scheduleScan(1200);
       return;
     }
 
 
-    if (candidateMatchesSubmitted(payload)) {
-      writeStore({ lastKey: payload.key });
-      pendingPayload = null;
-      scheduleScan(900);
-      return;
-    }
-
-
     if (payload.key === store.lastKey) {
       pendingPayload = null;
+      if (awaitingUserReply && Date.now() - lastUserSignalAt < 12000) scheduleScan(700);
       return;
     }
 
@@ -1658,12 +1448,6 @@
     if (!confirmed || confirmed.key !== pendingPayload.key) {
       pendingPayload = null;
       scheduleScan(700);
-      return;
-    }
-    if (candidateMatchesSubmitted(confirmed)) {
-      writeStore({ lastKey: confirmed.key });
-      pendingPayload = null;
-      scheduleScan(900);
       return;
     }
 
@@ -1694,16 +1478,11 @@
   function observeChat() {
     const observer = new MutationObserver(mutations => {
       if (mutations.some(m => Array.from(m.addedNodes || []).some(n => n instanceof Element && !isOwnNode(n)))) {
-        const entries = getEntries();
-        const latest = entries[entries.length - 1];
-        rememberSubmittedEntry(entries);
-        if (latest && looksLikeUserMessage(latest, entries) && !matchesLastSubmittedText(latest.text)) markUserTurn(latest.text);
         beginActivity();
-        scheduleScan(STABLE_REPLY_MS);
+        if (awaitingUserReply) scheduleScan(STABLE_REPLY_MS);
       }
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    setInterval(() => scheduleScan(120), 4500);
     setInterval(() => {
       const idle = Date.now() - Number(readStore().lastActiveAt || Date.now());
       setStateClass('sleep', idle >= IDLE_SLEEP_MS);
@@ -1722,7 +1501,7 @@
     document.addEventListener('click', event => {
       if (isOwnNode(event.target)) return;
       const button = event.target?.closest?.('button, [role="button"]');
-      if (!button) return;
+      if (!looksLikeSendButton(button)) return;
       const text = readComposerText(event.target);
       if (text.length >= 1) markUserTurn(text);
     }, true);
