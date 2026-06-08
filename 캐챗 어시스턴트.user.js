@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         크랙 캐릭터챗 어시스턴트
-// @namespace    https://crack.wrtn.ai/
+// @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
 // @version      2.39.0-local
-// @description  crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판. 자동 업데이트 차단됨
+// @description  crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
 // @author       extensionCode
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
