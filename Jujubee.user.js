@@ -4,8 +4,8 @@
 // @version      0.2.2
 // @description  냐냐냥!!!
 // @match        https://crack.wrtn.ai/*
-// @updateURL    none
-// @downloadURL  none
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Jujubee.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Jujubee.user.js
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
