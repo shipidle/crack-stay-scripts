@@ -6,6 +6,10 @@
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=crack.wrtn.ai
+// @author       shipidle
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper_iOS.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper_iOS.user.js
 // ==/UserScript==
 
 (function () {
