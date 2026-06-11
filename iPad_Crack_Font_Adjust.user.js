@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         iPad_크랙 폰트 조정
+// @name         [패드] 크랙 폰트 조정
 // @namespace    https://github.com/shipidle/crack-stay-scripts/ipad-crack-font-adjust
 // @version      1.0.0
 // @description  crack.wrtn.ai 리스트 간격과 인용문 표시를 compact하게 조정
