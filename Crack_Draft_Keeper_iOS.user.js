@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 자동저장 (iOS)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.0.0
+// @version      1.0.1
 // @description  Keep unsent Crack/WRTN chat drafts per chat room after refresh.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -16,9 +16,11 @@
   'use strict';
 
   const STORE_PREFIX = 'crackDraftKeeper:v1:';
+  const LAST_SNAPSHOT_KEY = 'crackDraftKeeper:lastSnapshot:v1';
   const RESTORE_ATTR = 'data-crack-draft-restored';
   const SAVE_DELAY = 160;
   const SCAN_DELAY = 500;
+  const RESTORE_MAX_AGE = 2 * 60 * 1000;
 
   let activeEditor = null;
   let saveTimer = 0;
@@ -89,8 +91,42 @@
     }
 
     localStorage.removeItem(key);
+    localStorage.removeItem(LAST_SNAPSHOT_KEY);
     if (Date.now() < pendingSendUntil) {
       pendingSendUntil = 0;
+    }
+  }
+
+  function saveReloadSnapshot() {
+    const el = activeEditor;
+    if (!isEditor(el)) return;
+
+    const text = editorText(el);
+    const key = roomKey();
+
+    if (text.trim()) {
+      localStorage.setItem(key, text);
+      localStorage.setItem(LAST_SNAPSHOT_KEY, JSON.stringify({
+        key,
+        text,
+        url: location.href,
+        savedAt: Date.now()
+      }));
+      return;
+    }
+
+    localStorage.removeItem(key);
+    localStorage.removeItem(LAST_SNAPSHOT_KEY);
+  }
+
+  function getFreshReloadSnapshot(key) {
+    try {
+      const snapshot = JSON.parse(localStorage.getItem(LAST_SNAPSHOT_KEY) || 'null');
+      if (!snapshot || snapshot.key !== key) return '';
+      if (Date.now() - Number(snapshot.savedAt || 0) > RESTORE_MAX_AGE) return '';
+      return String(snapshot.text || '');
+    } catch {
+      return '';
     }
   }
 
@@ -103,7 +139,7 @@
     if (!isEditor(el) || el.getAttribute(RESTORE_ATTR) === roomKey()) return;
     activeEditor = el;
 
-    const saved = localStorage.getItem(roomKey());
+    const saved = getFreshReloadSnapshot(roomKey());
     if (saved && !editorText(el).trim()) {
       setEditorText(el, saved);
     }
@@ -189,8 +225,8 @@
     }
   }, true);
 
-  window.addEventListener('beforeunload', saveDraftNow);
-  window.addEventListener('pagehide', saveDraftNow);
+  window.addEventListener('beforeunload', saveReloadSnapshot);
+  window.addEventListener('pagehide', saveReloadSnapshot);
 
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.documentElement, { childList: true, subtree: true });

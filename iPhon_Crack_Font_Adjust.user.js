@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 폰트 조정 (폰)
 // @namespace    https://github.com/shipidle/crack-stay-scripts/iphon-crack-font-adjust
-// @version      1.0.1
+// @version      1.0.2
 // @description  crack.wrtn.ai 채팅 글자 크기와 코드블록, 인용문 표시를 작게 조정
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -42,12 +42,22 @@
     main ul,
     main ol {
       padding-left: 1.2em !important;
-      margin-top: 0.3em !important;
-      margin-bottom: 0.3em !important;
+      margin-top: 0.04em !important;
+      margin-bottom: 0.04em !important;
     }
 
     main li {
-      margin: 0.15em 0 !important;
+      margin: 0 !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+    }
+
+    main li > p,
+    main li p,
+    main ul p,
+    main ol p {
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
     }
 
     /* 인용문 compact */

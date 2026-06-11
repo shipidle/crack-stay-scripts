@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 유저노트 DB
 // @namespace    crack-usernote-db
-// @version      1.0.0
+// @version      1.0.1
 // @description  크랙 유저노트에 저장해둔 범용지침/옵션/페르소나를 마커 기반으로 자동 적용
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
@@ -22,6 +22,11 @@
   const SLOT_COUNT = 10;
   const LOCAL_BACKUP_LIMIT = 30;
   const MARK = {
+    rules: ['[r]', '[/r]'],
+    option: (n) => [`[o${n}]`, `[/o${n}]`],
+    persona: (n) => [`[p${n}]`, `[/p${n}]`],
+  };
+  const LEGACY_MARK = {
     rules: ['[U:r]', '[/U:r]'],
     option: (n) => [`[U:o${n}]`, `[/U:o${n}]`],
     persona: (n) => [`[U:p${n}]`, `[/U:p${n}]`],
@@ -400,7 +405,7 @@
       GM_setValue(STORAGE_KEY, JSON.stringify(state));
       updateLengthInfo();
       setStatus('자동 저장됨');
-    }, 450);
+    }, 200);
   }
 
   function makePanelDraggable() {
@@ -616,21 +621,21 @@
     const firstClick = await clickNoteSaveButton(note.dialog);
     if (firstClick === 'disabled') {
       closeDialog(note.dialog);
-      await sleep(220);
+      await sleep(80);
       const continueButton = findContinueWritingButton();
       if (!continueButton) return { unchanged: true };
       continueButton.click();
-      await sleep(250);
+      await sleep(100);
       const retryClick = await clickNoteSaveButton(note.dialog);
       if (retryClick === 'disabled') return { unchanged: true };
     }
-    await waitForDialogClose(note.dialog, 1600);
+    await waitForDialogClose(note.dialog, 900);
     if (note.dialog && note.dialog.isConnected && /500자 이하로 입력해주세요/.test(note.dialog.textContent || '')) {
       await ensureExpandedLimit(note.dialog);
       note.textarea.dispatchEvent(new Event('input', { bubbles: true }));
       const limitRetry = await clickNoteSaveButton(note.dialog);
       if (limitRetry === 'disabled') return { unchanged: true };
-      await waitForDialogClose(note.dialog, 1600);
+      await waitForDialogClose(note.dialog, 900);
     }
     if (note.dialog && note.dialog.isConnected && isVisibleEl(note.dialog) && findSaveButton(note.dialog)) {
       throw new Error('등록 후에도 유저노트 창이 닫히지 않음');
@@ -638,20 +643,20 @@
     const continueButton = findContinueWritingButton();
     if (continueButton) {
       continueButton.click();
-      await sleep(250);
+      await sleep(100);
       const retryClick = await clickNoteSaveButton(note.dialog);
       if (retryClick === 'disabled') return { unchanged: true };
-      await waitForDialogClose(note.dialog, 1600);
+      await waitForDialogClose(note.dialog, 900);
     }
     if (note.dialog && note.dialog.isConnected) closeDialog(note.dialog);
-    await sleep(180);
+    await sleep(80);
     const continueAfterClose = findContinueWritingButton();
     if (continueAfterClose) {
       continueAfterClose.click();
-      await sleep(250);
+      await sleep(100);
       const retryClick = await clickNoteSaveButton(note.dialog);
       if (retryClick === 'disabled') return { unchanged: true };
-      await waitForDialogClose(note.dialog, 1600);
+      await waitForDialogClose(note.dialog, 900);
       if (note.dialog && note.dialog.isConnected) closeDialog(note.dialog);
     }
     return { unchanged: false };
@@ -720,14 +725,19 @@
 
   function stripManagedBlocks(text) {
     let next = text || '';
-    const pairs = [MARK.rules];
-    for (let i = 1; i <= SLOT_COUNT; i++) {
-      pairs.push(MARK.option(i), MARK.persona(i));
-    }
+    const pairs = allMarkPairs();
     pairs.forEach(([start, end]) => {
       next = next.replace(new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, 'g'), '');
     });
     return next.trim();
+  }
+
+  function allMarkPairs() {
+    const pairs = [MARK.rules, LEGACY_MARK.rules];
+    for (let i = 1; i <= SLOT_COUNT; i++) {
+      pairs.push(MARK.option(i), MARK.persona(i), LEGACY_MARK.option(i), LEGACY_MARK.persona(i));
+    }
+    return pairs;
   }
 
   function joinNote(existing, blocks) {
@@ -1064,8 +1074,7 @@
 
   function unwrapImportedText(text) {
     const trimmed = String(text || '').trim();
-    const pairs = [MARK.rules];
-    for (let i = 1; i <= SLOT_COUNT; i++) pairs.push(MARK.option(i), MARK.persona(i));
+    const pairs = allMarkPairs();
     for (const [start, end] of pairs) {
       if (trimmed.startsWith(start) && trimmed.endsWith(end)) {
         return trimmed.slice(start.length, -end.length).trim();

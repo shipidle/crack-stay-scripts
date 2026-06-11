@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.4
+// @version      1.1.5
 // @description  입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -111,8 +111,8 @@
             }
 
             #my-custom-info-display.is-under-crack-layer {
-                z-index: 0;
-                opacity: 0.45;
+                z-index: 0 !important;
+                opacity: 0.28;
                 filter: brightness(0.65);
             }
 
@@ -296,7 +296,7 @@
             subtree: true,
             characterData: true,
             attributes: true,
-            attributeFilter: ['aria-valuenow']
+            attributeFilter: ['aria-valuenow', 'aria-hidden', 'aria-modal', 'data-state', 'class', 'style']
         });
     }
 
@@ -657,17 +657,61 @@
         );
     }
 
+    function isBlockingVisualLayer(el) {
+        if (!isVisibleLayer(el)) return false;
+        if (!counterBadge) return false;
+        if (el.contains(counterBadge) || counterBadge.contains(el)) return false;
+
+        const style = getComputedStyle(el);
+        const zIndex = Number.parseInt(style.zIndex, 10);
+        const rect = el.getBoundingClientRect();
+        const badgeRect = counterBadge.getBoundingClientRect();
+        const coversBadge = (
+            rect.left <= badgeRect.right &&
+            rect.right >= badgeRect.left &&
+            rect.top <= badgeRect.bottom &&
+            rect.bottom >= badgeRect.top
+        );
+        const coversViewport = (
+            rect.width >= window.innerWidth * 0.65 &&
+            rect.height >= window.innerHeight * 0.35
+        );
+
+        return (
+            (style.position === 'fixed' || style.position === 'absolute') &&
+            (Number.isNaN(zIndex) || zIndex >= 10) &&
+            (coversBadge || coversViewport)
+        );
+    }
+
     function hasActiveCrackLayer() {
-        const layerSelectors = [
+        const directLayerSelectors = [
             '[role="dialog"]',
+            '[role="menu"]',
+            '[role="listbox"]',
             '[aria-modal="true"]',
             '[data-radix-dialog-content]',
+            '[data-radix-dialog-overlay]',
             '[data-radix-popper-content-wrapper]'
         ];
+        const visualLayerSelectors = [
+            '[data-state="open"]',
+            '.fixed.inset-0',
+            'div[class*="overlay"]',
+            'div[class*="Overlay"]',
+            'div[class*="backdrop"]',
+            'div[class*="Backdrop"]'
+        ];
 
-        return layerSelectors.some(selector =>
+        if (directLayerSelectors.some(selector =>
             Array.from(document.querySelectorAll(selector)).some(isVisibleLayer)
-        );
+        )) return true;
+
+        if (visualLayerSelectors.some(selector =>
+            Array.from(document.querySelectorAll(selector)).some(isBlockingVisualLayer)
+        )) return true;
+
+        return Array.from(document.body.children).some(isBlockingVisualLayer);
     }
 
     function syncCrackLayerState() {

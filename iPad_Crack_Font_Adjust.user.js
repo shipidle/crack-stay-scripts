@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 폰트 조정 (패드)
 // @namespace    https://github.com/shipidle/crack-stay-scripts/ipad-crack-font-adjust
-// @version      1.0.1
+// @version      1.0.2
 // @description  crack.wrtn.ai 리스트 간격과 인용문 표시를 compact하게 조정
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -19,16 +19,21 @@
     main ul,
     main ol {
       padding-left: 1.2em !important;
-      margin-top: 0.12em !important;
-      margin-bottom: 0.12em !important;
+      margin-top: 0.04em !important;
+      margin-bottom: 0.04em !important;
     }
 
     main li {
-      margin-top: 0.05em !important;
-      margin-bottom: 0.05em !important;
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
     }
 
-    main li > p {
+    main li > p,
+    main li p,
+    main ul p,
+    main ol p {
       margin-top: 0 !important;
       margin-bottom: 0 !important;
     }
