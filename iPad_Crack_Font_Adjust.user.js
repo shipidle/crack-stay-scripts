@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         [패드] 크랙 폰트 조정
+// @name         크랙 폰트 조정 (패드)
 // @namespace    https://github.com/shipidle/crack-stay-scripts/ipad-crack-font-adjust
-// @version      1.0.0
+// @version      1.0.1
 // @description  crack.wrtn.ai 리스트 간격과 인용문 표시를 compact하게 조정
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -63,13 +63,14 @@
       content: "" !important;
       position: absolute !important;
       left: 0 !important;
-      top: 0.1em !important;
+      top: 50% !important;
+      transform: translateY(-50%) !important;
       bottom: auto !important;
       display: block !important;
       width: 3px !important;
-      height: 1.35em !important;
+      height: 1.05em !important;
       min-height: 0 !important;
-      max-height: 1.35em !important;
+      max-height: 1.05em !important;
       border-radius: 999px !important;
       background: #d1d5db !important;
       border: 0 !important;
