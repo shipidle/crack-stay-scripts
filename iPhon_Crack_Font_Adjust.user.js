@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         iPhon_크랙 폰트 조정
+// @name         [폰] 크랙 폰트 조정
 // @namespace    https://github.com/shipidle/crack-stay-scripts/iphon-crack-font-adjust
 // @version      1.0.0
 // @description  crack.wrtn.ai 채팅 글자 크기와 코드블록, 인용문 표시를 작게 조정
