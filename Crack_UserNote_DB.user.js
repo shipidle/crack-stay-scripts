@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 유저노트 DB
 // @namespace    crack-usernote-db
-// @version      0.1.0
+// @version      1.0.0
 // @description  크랙 유저노트에 저장해둔 범용지침/옵션/페르소나를 마커 기반으로 자동 적용
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
