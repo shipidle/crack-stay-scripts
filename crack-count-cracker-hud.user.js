@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.3
+// @version      1.1.4
 // @description  입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -107,6 +107,17 @@
                 display: flex;
                 align-items: center;
                 border-radius: 8px 8px 0 0;
+                transition: opacity 0.15s, filter 0.15s;
+            }
+
+            #my-custom-info-display.is-under-crack-layer {
+                z-index: 0;
+                opacity: 0.45;
+                filter: brightness(0.65);
+            }
+
+            #my-custom-info-display.is-under-crack-layer * {
+                pointer-events: none !important;
             }
 
             #my-custom-info-display #my-counter-settings-button {
@@ -630,6 +641,44 @@
         return cachedCosts?.[modelName]?.maxCost || MODEL_INFO[modelName]?.cost || null;
     }
 
+    function isVisibleLayer(el) {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.closest('#my-custom-info-display, #info-display-settings-menu')) return false;
+
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+
+        return (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            Number(style.opacity || 1) > 0.01 &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
+    }
+
+    function hasActiveCrackLayer() {
+        const layerSelectors = [
+            '[role="dialog"]',
+            '[aria-modal="true"]',
+            '[data-radix-dialog-content]',
+            '[data-radix-popper-content-wrapper]'
+        ];
+
+        return layerSelectors.some(selector =>
+            Array.from(document.querySelectorAll(selector)).some(isVisibleLayer)
+        );
+    }
+
+    function syncCrackLayerState() {
+        if (!counterBadge) return;
+
+        const isUnderLayer = hasActiveCrackLayer();
+        counterBadge.classList.toggle('is-under-crack-layer', isUnderLayer);
+
+        if (isUnderLayer) hideSettingsMenu();
+    }
+
     function updateLayout(inputEl) {
         if (!counterBadge || !counterBadge.parentElement) return;
 
@@ -650,6 +699,8 @@
 
         inputEl.style.setProperty('padding-top', `${requiredPaddingTop}px`, 'important');
         inputEl.style.setProperty('min-height', `${requiredPaddingTop + 40}px`, 'important');
+
+        syncCrackLayerState();
     }
 
     function renderParts(parts) {
