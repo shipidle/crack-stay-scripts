@@ -135,7 +135,7 @@
                 --active-text: #000;
                 position: absolute; top: 2px; left: 0; right: 0; padding-top: 8px; padding-bottom: 2px; box-sizing: border-box;
                 font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; font-weight: 500;
-                pointer-events: none; z-index: 999; display: flex; align-items: center; border-radius: 8px 8px 0 0;
+                pointer-events: none; z-index: 1; display: flex; align-items: center; border-radius: 8px 8px 0 0;
             }
             #my-custom-btn-menu #my-counter-settings-button { all: unset; position: relative; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; margin-left: 0; margin-right: 8px; transition: opacity 0.15s; touch-action: manipulation; color: inherit; }
             #my-custom-btn-menu #my-counter-settings-button::after { content: ''; position: absolute; top: -10px; bottom: -10px; left: -8px; right: -10px; }
