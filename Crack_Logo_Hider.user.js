@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로고 숨김
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider
-// @version      1.0.2
+// @version      1.0.3
 // @description  crack.wrtn.ai 상단 크랙 홈 로고 링크 숨김.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -30,6 +30,7 @@
     'header a:has(img[alt*="크랙"])',
     'nav a:has(img[alt*="크랙"])'
   ].join(',');
+  const BOOT_HIDE_ATTR = 'data-crack-logo-hider-boot';
 
   function injectEarlyStyle() {
     if (document.getElementById('crack-logo-hider-style')) return;
@@ -38,6 +39,22 @@
     style.id = 'crack-logo-hider-style';
     style.textContent = `
       ${LOGO_SELECTOR} {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+        opacity: 0 !important;
+      }
+
+      html[${BOOT_HIDE_ATTR}="1"] header a[href="/"],
+      html[${BOOT_HIDE_ATTR}="1"] header a[href="https://crack.wrtn.ai/"],
+      html[${BOOT_HIDE_ATTR}="1"] header a[href="https://crack.wrtn.ai"],
+      html[${BOOT_HIDE_ATTR}="1"] nav a[href="/"],
+      html[${BOOT_HIDE_ATTR}="1"] nav a[href="https://crack.wrtn.ai/"],
+      html[${BOOT_HIDE_ATTR}="1"] nav a[href="https://crack.wrtn.ai"],
+      html[${BOOT_HIDE_ATTR}="1"] header [class*="logo"],
+      html[${BOOT_HIDE_ATTR}="1"] header [class*="Logo"],
+      html[${BOOT_HIDE_ATTR}="1"] nav [class*="logo"],
+      html[${BOOT_HIDE_ATTR}="1"] nav [class*="Logo"] {
         display: none !important;
         visibility: hidden !important;
         pointer-events: none !important;
@@ -79,6 +96,11 @@
     });
   }
 
+  function releaseBootHide() {
+    document.documentElement.removeAttribute(BOOT_HIDE_ATTR);
+  }
+
+  document.documentElement.setAttribute(BOOT_HIDE_ATTR, '1');
   injectEarlyStyle();
   hideCrackLogo();
 
@@ -89,8 +111,15 @@
   const fastTimer = setInterval(() => {
     hideCrackLogo();
     fastTicks++;
+    if (fastTicks === 24) releaseBootHide();
     if (fastTicks >= 80) clearInterval(fastTimer);
   }, 50);
 
+  window.addEventListener('load', () => {
+    hideCrackLogo();
+    setTimeout(releaseBootHide, 300);
+  }, { once: true });
+
+  setTimeout(releaseBootHide, 1600);
   setInterval(hideCrackLogo, 250);
 })();
