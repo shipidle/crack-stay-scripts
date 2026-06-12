@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📱미니 사이드바 메뉴
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.3
+// @version      1.3.4
 // @description  입력창 내부 상단에 사이드바 메뉴를 표시합니다. 내 추천 모델 표시 추가.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -1054,6 +1054,7 @@
         syncingOfficialModelInfo = true;
 
         const wasExpanded = officialBtn.getAttribute('aria-expanded') === 'true';
+        const stopViewportGuard = createModelMenuViewportGuard();
         const stopHidingModelMenu = createModelMenuAutoHider();
 
         try {
@@ -1081,6 +1082,7 @@
 
             setTimeout(() => {
                 stopHidingModelMenu();
+                stopViewportGuard();
                 syncingOfficialModelInfo = false;
 
                 if (currentInput && document.contains(currentInput)) {
@@ -1090,8 +1092,71 @@
                         try { currentInput.focus(); } catch {}
                     }
                 }
-            }, 120);
+            }, 260);
         }
+    }
+
+    function createModelMenuViewportGuard() {
+        const root = document.documentElement;
+        const body = document.body;
+        const startX = window.scrollX || window.pageXOffset || 0;
+        const previous = {
+            rootOverflowX: root.style.overflowX,
+            rootMaxWidth: root.style.maxWidth,
+            rootOverscrollBehaviorX: root.style.overscrollBehaviorX,
+            bodyOverflowX: body?.style.overflowX || '',
+            bodyMaxWidth: body?.style.maxWidth || '',
+            bodyOverscrollBehaviorX: body?.style.overscrollBehaviorX || ''
+        };
+        let stopped = false;
+        let frameId = 0;
+
+        root.style.overflowX = 'hidden';
+        root.style.maxWidth = '100vw';
+        root.style.overscrollBehaviorX = 'none';
+
+        if (body) {
+            body.style.overflowX = 'hidden';
+            body.style.maxWidth = '100vw';
+            body.style.overscrollBehaviorX = 'none';
+        }
+
+        const keepX = () => {
+            if (stopped) return;
+
+            if ((window.scrollX || window.pageXOffset || 0) !== startX) {
+                window.scrollTo(startX, window.scrollY || window.pageYOffset || 0);
+            }
+
+            frameId = requestAnimationFrame(keepX);
+        };
+
+        keepX();
+
+        return () => {
+            if (stopped) return;
+
+            stopped = true;
+            cancelAnimationFrame(frameId);
+
+            root.style.overflowX = previous.rootOverflowX;
+            root.style.maxWidth = previous.rootMaxWidth;
+            root.style.overscrollBehaviorX = previous.rootOverscrollBehaviorX;
+
+            if (body) {
+                body.style.overflowX = previous.bodyOverflowX;
+                body.style.maxWidth = previous.bodyMaxWidth;
+                body.style.overscrollBehaviorX = previous.bodyOverscrollBehaviorX;
+            }
+
+            [0, 80, 180].forEach(delay => {
+                setTimeout(() => {
+                    if ((window.scrollX || window.pageXOffset || 0) !== startX) {
+                        window.scrollTo(startX, window.scrollY || window.pageYOffset || 0);
+                    }
+                }, delay);
+            });
+        };
     }
 
     function createModelMenuAutoHider() {
@@ -1152,6 +1217,7 @@
 
         if (!officialBtn) return;
 
+        const stopViewportGuard = createModelMenuViewportGuard();
         const stopHidingModelMenu = createModelMenuAutoHider();
 
         if (officialBtn.getAttribute('aria-expanded') !== 'true') {
@@ -1163,6 +1229,7 @@
 
             if (!modelMenu) {
                 stopHidingModelMenu();
+                stopViewportGuard();
                 return;
             }
 
@@ -1187,7 +1254,10 @@
                 lastHeavyCheckTime = 0;
             }
 
-            setTimeout(() => stopHidingModelMenu(), 220);
+            setTimeout(() => {
+                stopHidingModelMenu();
+                stopViewportGuard();
+            }, 320);
         }, 60);
     }
 
