@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 유저노트 DB
 // @namespace    crack-usernote-db
-// @version      1.0.1
+// @version      1.0.2
 // @description  크랙 유저노트에 저장해둔 범용지침/옵션/페르소나를 마커 기반으로 자동 적용
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
@@ -124,6 +124,10 @@
     }
     .undb-order-item.dragging{opacity:.45}
     .undb-grip{color:#8194a6;font-weight:800}
+    .undb-silent-dialog{
+      opacity:0!important;pointer-events:none!important;transform:scale(.985)!important;
+      transition:none!important;
+    }
   `);
 
   const btn = document.createElement('button');
@@ -585,17 +589,25 @@
     const button = findUserNoteButton(kind);
     if (!button) throw new Error(`${kind === 'default' ? '기본' : '방'} 유저노트 버튼을 못 찾음`);
     const beforeDialogs = new Set($$('[role="dialog"]').filter(isVisibleEl));
+    const stopWatching = watchAutoDialog(beforeDialogs);
     button.click();
-    const textarea = await waitFor(() => {
-      const dialogs = $$('#undb-panel ~ [role="dialog"], [role="dialog"]').filter(isVisibleEl);
-      for (const dialog of dialogs) {
-        if (beforeDialogs.has(dialog)) continue;
-        const ta = $$('textarea[maxlength="2000"], textarea', dialog).find(isVisibleEl);
-        if (ta && !panel.contains(ta)) return ta;
-      }
-      return null;
-    }, 4000);
+    let textarea;
+    try {
+      textarea = await waitFor(() => {
+        const dialogs = $$('#undb-panel ~ [role="dialog"], [role="dialog"]').filter(isVisibleEl);
+        for (const dialog of dialogs) {
+          if (beforeDialogs.has(dialog)) continue;
+          dialog.classList.add('undb-silent-dialog');
+          const ta = $$('textarea[maxlength="2000"], textarea', dialog).find((el) => !panel.contains(el));
+          if (ta) return ta;
+        }
+        return null;
+      }, 2200, 25);
+    } finally {
+      stopWatching();
+    }
     const dialog = textarea.closest('[role="dialog"]');
+    if (dialog) dialog.classList.add('undb-silent-dialog');
     return { textarea, dialog };
   }
 
@@ -613,7 +625,27 @@
     return rooms[0] || candidates.find((el) => !defaults.includes(el)) || candidates[candidates.length - 1] || null;
   }
 
+  function watchAutoDialog(beforeDialogs) {
+    const hideNewDialog = (node) => {
+      if (!(node instanceof HTMLElement)) return;
+      const dialogs = [];
+      if (node.matches?.('[role="dialog"]')) dialogs.push(node);
+      dialogs.push(...$$('[role="dialog"]', node));
+      dialogs.forEach((dialog) => {
+        if (!beforeDialogs.has(dialog) && !panel.contains(dialog)) {
+          dialog.classList.add('undb-silent-dialog');
+        }
+      });
+    };
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => mutation.addedNodes.forEach(hideNewDialog));
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }
+
   async function saveTextarea(note, value) {
+    if (note.dialog) note.dialog.classList.add('undb-silent-dialog');
     await ensureExpandedLimit(note.dialog);
     setNativeValue(note.textarea, value);
     note.textarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -621,21 +653,21 @@
     const firstClick = await clickNoteSaveButton(note.dialog);
     if (firstClick === 'disabled') {
       closeDialog(note.dialog);
-      await sleep(80);
+      await sleep(40);
       const continueButton = findContinueWritingButton();
       if (!continueButton) return { unchanged: true };
       continueButton.click();
-      await sleep(100);
+      await sleep(50);
       const retryClick = await clickNoteSaveButton(note.dialog);
       if (retryClick === 'disabled') return { unchanged: true };
     }
-    await waitForDialogClose(note.dialog, 900);
+    await waitForDialogClose(note.dialog, 700);
     if (note.dialog && note.dialog.isConnected && /500자 이하로 입력해주세요/.test(note.dialog.textContent || '')) {
       await ensureExpandedLimit(note.dialog);
       note.textarea.dispatchEvent(new Event('input', { bubbles: true }));
       const limitRetry = await clickNoteSaveButton(note.dialog);
       if (limitRetry === 'disabled') return { unchanged: true };
-      await waitForDialogClose(note.dialog, 900);
+      await waitForDialogClose(note.dialog, 700);
     }
     if (note.dialog && note.dialog.isConnected && isVisibleEl(note.dialog) && findSaveButton(note.dialog)) {
       throw new Error('등록 후에도 유저노트 창이 닫히지 않음');
@@ -643,27 +675,27 @@
     const continueButton = findContinueWritingButton();
     if (continueButton) {
       continueButton.click();
-      await sleep(100);
+      await sleep(50);
       const retryClick = await clickNoteSaveButton(note.dialog);
       if (retryClick === 'disabled') return { unchanged: true };
-      await waitForDialogClose(note.dialog, 900);
+      await waitForDialogClose(note.dialog, 700);
     }
     if (note.dialog && note.dialog.isConnected) closeDialog(note.dialog);
-    await sleep(80);
+    await sleep(40);
     const continueAfterClose = findContinueWritingButton();
     if (continueAfterClose) {
       continueAfterClose.click();
-      await sleep(100);
+      await sleep(50);
       const retryClick = await clickNoteSaveButton(note.dialog);
       if (retryClick === 'disabled') return { unchanged: true };
-      await waitForDialogClose(note.dialog, 900);
+      await waitForDialogClose(note.dialog, 700);
       if (note.dialog && note.dialog.isConnected) closeDialog(note.dialog);
     }
     return { unchanged: false };
   }
 
   async function clickNoteSaveButton(dialog) {
-    const saveButton = await waitFor(() => findSaveButton(dialog), 2500).catch(() => null);
+    const saveButton = await waitFor(() => findSaveButton(dialog), 900, 25).catch(() => null);
     if (!saveButton) throw new Error('등록 버튼을 못 찾음');
     if (saveButton.disabled) return 'disabled';
     saveButton.click();
@@ -684,16 +716,16 @@
     if (!switchButton) return;
     if (switchButton.getAttribute('aria-checked') === 'true' || switchButton.dataset.state === 'checked') return;
     switchButton.click();
-    await sleep(120);
+    await sleep(35);
     const confirmButton = findDialogButtonByText('확인');
     if (confirmButton) {
       confirmButton.click();
-      await sleep(180);
+      await sleep(50);
     }
     await waitFor(() => {
       const current = $$('button[role="switch"]', dialog).find((el) => isVisibleEl(el));
       return current && (current.getAttribute('aria-checked') === 'true' || current.dataset.state === 'checked');
-    }, 1200, 80).catch(() => null);
+    }, 700, 25).catch(() => null);
   }
 
   function findContinueWritingButton() {
@@ -711,7 +743,7 @@
 
   async function waitForDialogClose(dialog, timeout = 1500) {
     if (!dialog) return;
-    await waitFor(() => !dialog.isConnected || !isVisibleEl(dialog), timeout, 80).catch(() => null);
+    await waitFor(() => !dialog.isConnected || !isVisibleEl(dialog), timeout, 25).catch(() => null);
   }
 
   function closeDialog(dialog) {
