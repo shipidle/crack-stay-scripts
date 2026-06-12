@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.7
+// @version      1.1.8
 // @description  입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -114,6 +114,7 @@
 
             #my-custom-info-display.is-under-side-layer {
                 --info-display-z: 0;
+                display: none !important;
             }
 
             #my-custom-info-display #my-counter-settings-button {
@@ -655,10 +656,33 @@
         return touchesSide && looksLayered && !isSmallPopupRole && text.length > 0;
     }
 
+    function isOpenMobileSidebar(el) {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.closest('#my-custom-info-display, #info-display-settings-menu, #my-custom-btn-menu, #btn-custom-dropdown-menu, #btn-menu-settings-menu')) return false;
+
+        const root = el.closest('[width="260px"], [class*="css-17jcfrp"], [class*="bg-sidebar"]') || el;
+        const rect = root.getBoundingClientRect();
+        const style = getComputedStyle(root);
+        const text = root.textContent || '';
+
+        return (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            rect.width >= 220 &&
+            rect.width <= 340 &&
+            rect.height >= window.innerHeight * 0.65 &&
+            rect.left <= 8 &&
+            (root.querySelector?.('.bg-sidebar, [class*="bg-sidebar"]') || root.className?.toString().includes('bg-sidebar')) &&
+            /MY|이미지|크래커|알림|캐릭터|채팅|보관|episode|party/i.test(text)
+        );
+    }
+
     function syncSideLayerStack() {
         if (!counterBadge) return;
 
-        const sideLayerOpen = Array.from(document.body.querySelectorAll('[data-state="open"], [aria-expanded="true"], aside, section, div[class*="side"], div[class*="Side"], div[class*="drawer"], div[class*="Drawer"], div[class*="sheet"], div[class*="Sheet"]'))
+        const mobileSidebarOpen = Array.from(document.body.querySelectorAll('.bg-sidebar, [class*="bg-sidebar"], [width="260px"], [class*="css-17jcfrp"]'))
+            .some(isOpenMobileSidebar);
+        const sideLayerOpen = mobileSidebarOpen || Array.from(document.body.querySelectorAll('[data-state="open"], [aria-expanded="true"], aside, section, div[class*="side"], div[class*="Side"], div[class*="drawer"], div[class*="Drawer"], div[class*="sheet"], div[class*="Sheet"]'))
             .some(isVisibleSideLayer);
 
         counterBadge.classList.toggle('is-under-side-layer', sideLayerOpen);
