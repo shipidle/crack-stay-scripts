@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.6
+// @version      1.1.7
 // @description  입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -94,19 +94,26 @@
         style.id = 'info-display-base-style';
         style.textContent = `
             #my-custom-info-display {
+                --info-display-z: 999;
                 position: absolute;
-                top: 0;
+                top: 2px;
                 left: 0;
                 right: 0;
+                padding-top: 5px;
+                padding-bottom: 5px;
                 box-sizing: border-box;
                 font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif;
                 font-size: 13px;
                 font-weight: 500;
                 pointer-events: none;
-                z-index: 999;
+                z-index: var(--info-display-z);
                 display: flex;
                 align-items: center;
                 border-radius: 8px 8px 0 0;
+            }
+
+            #my-custom-info-display.is-under-side-layer {
+                --info-display-z: 0;
             }
 
             #my-custom-info-display #my-counter-settings-button {
@@ -285,7 +292,7 @@
             subtree: true,
             characterData: true,
             attributes: true,
-            attributeFilter: ['aria-valuenow']
+            attributeFilter: ['aria-valuenow', 'data-state', 'class', 'style']
         });
     }
 
@@ -630,6 +637,34 @@
         return cachedCosts?.[modelName]?.maxCost || MODEL_INFO[modelName]?.cost || null;
     }
 
+    function isVisibleSideLayer(el) {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.closest('#my-custom-info-display, #info-display-settings-menu, #my-custom-btn-menu, #btn-custom-dropdown-menu, #btn-menu-settings-menu')) return false;
+        if (counterBadge && (el.contains(counterBadge) || counterBadge.contains(el))) return false;
+
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) <= 0.01) return false;
+        if (rect.width < 220 || rect.height < window.innerHeight * 0.55) return false;
+
+        const touchesSide = rect.left <= 8 || rect.right >= window.innerWidth - 8;
+        const looksLayered = style.position === 'fixed' || style.position === 'absolute' || style.position === 'sticky';
+        const text = el.textContent || '';
+        const isSmallPopupRole = el.matches('[role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]');
+
+        return touchesSide && looksLayered && !isSmallPopupRole && text.length > 0;
+    }
+
+    function syncSideLayerStack() {
+        if (!counterBadge) return;
+
+        const sideLayerOpen = Array.from(document.body.querySelectorAll('[data-state="open"], [aria-expanded="true"], aside, section, div[class*="side"], div[class*="Side"], div[class*="drawer"], div[class*="Drawer"], div[class*="sheet"], div[class*="Sheet"]'))
+            .some(isVisibleSideLayer);
+
+        counterBadge.classList.toggle('is-under-side-layer', sideLayerOpen);
+        if (sideLayerOpen) hideSettingsMenu();
+    }
+
     function updateLayout(inputEl) {
         if (!counterBadge || !counterBadge.parentElement) return;
 
@@ -643,13 +678,13 @@
 
         counterBadge.style.paddingLeft = '12px';
         counterBadge.style.paddingRight = '12px';
-        counterBadge.style.paddingTop = '5px';
-        counterBadge.style.paddingBottom = '5px';
 
         const requiredPaddingTop = otherIsInsideContainer ? 81 : 46;
 
         inputEl.style.setProperty('padding-top', `${requiredPaddingTop}px`, 'important');
         inputEl.style.setProperty('min-height', `${requiredPaddingTop + 40}px`, 'important');
+
+        syncSideLayerStack();
     }
 
     function renderParts(parts) {
