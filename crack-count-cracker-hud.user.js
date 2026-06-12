@@ -113,8 +113,7 @@
             }
 
             #my-custom-info-display.is-under-side-layer {
-                --info-display-z: 0;
-                display: none !important;
+                --info-display-z: 1;
             }
 
             #my-custom-info-display #my-counter-settings-button {
