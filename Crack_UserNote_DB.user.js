@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 유저노트 DB
 // @namespace    crack-usernote-db
-// @version      1.0.2
+// @version      1.0.3
 // @description  크랙 유저노트에 저장해둔 범용지침/옵션/페르소나를 마커 기반으로 자동 적용
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
@@ -52,6 +52,7 @@
   let panel;
   let autoSaveTimer = null;
   let draggedOrderItem = null;
+  let pointerOrderDrag = null;
   let lastNoteLength = null;
 
   GM_addStyle(`
@@ -120,7 +121,7 @@
     .undb-order-list{display:flex;flex-direction:column;gap:5px}
     .undb-order-item{
       display:flex;align-items:center;gap:7px;border:1px solid #CEDEF2;border-radius:7px;background:#fff;
-      padding:8px;font-size:12px;cursor:grab;
+      padding:8px;font-size:12px;cursor:grab;touch-action:none;user-select:none;-webkit-user-drag:none;
     }
     .undb-order-item.dragging{opacity:.45}
     .undb-grip{color:#8194a6;font-weight:800}
@@ -826,6 +827,7 @@
     $$('.undb-order-item').forEach((item) => {
       if (item.dataset.bound === 'true') return;
       item.dataset.bound = 'true';
+      item.addEventListener('pointerdown', startPointerOrderDrag);
       item.addEventListener('dragstart', () => {
         draggedOrderItem = { group: item.dataset.orderGroup, id: Number(item.dataset.orderId) };
         item.classList.add('dragging');
@@ -844,6 +846,74 @@
         moveSlot(group, draggedOrderItem.id, targetId);
       });
     });
+  }
+
+  function startPointerOrderDrag(event) {
+    if (event.pointerType === 'mouse' || !event.isPrimary) return;
+    const item = event.currentTarget;
+    const list = item.closest('.undb-order-list');
+    if (!list) return;
+    event.preventDefault();
+    pointerOrderDrag = {
+      pointerId: event.pointerId,
+      group: item.dataset.orderGroup,
+      item,
+      list,
+    };
+    item.classList.add('dragging');
+    if (item.setPointerCapture) item.setPointerCapture(event.pointerId);
+    item.addEventListener('pointermove', movePointerOrderDrag);
+    item.addEventListener('pointerup', finishPointerOrderDrag);
+    item.addEventListener('pointercancel', cancelPointerOrderDrag);
+  }
+
+  function movePointerOrderDrag(event) {
+    if (!pointerOrderDrag || event.pointerId !== pointerOrderDrag.pointerId) return;
+    event.preventDefault();
+    const { item, list, group } = pointerOrderDrag;
+    item.style.pointerEvents = 'none';
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.undb-order-item');
+    item.style.pointerEvents = '';
+    if (!target || target === item || target.closest('.undb-order-list') !== list || target.dataset.orderGroup !== group) return;
+    const rect = target.getBoundingClientRect();
+    const shouldInsertAfter = event.clientY > rect.top + rect.height / 2;
+    list.insertBefore(item, shouldInsertAfter ? target.nextSibling : target);
+  }
+
+  function finishPointerOrderDrag(event) {
+    if (!pointerOrderDrag || event.pointerId !== pointerOrderDrag.pointerId) return;
+    const { group, item, list } = pointerOrderDrag;
+    const orderedIds = $$('.undb-order-item', list).map((el) => Number(el.dataset.orderId));
+    clearPointerOrderDrag(event);
+    collectPanelState();
+    const byId = new Map(state[group].map((slot) => [slot.id, slot]));
+    state[group] = orderedIds.map((id) => byId.get(id)).filter(Boolean);
+    GM_setValue(STORAGE_KEY, JSON.stringify(state));
+    renderSlotPanels();
+    renderOrderPanel();
+    item.classList.remove('dragging');
+    setStatus('순서 저장됨');
+  }
+
+  function cancelPointerOrderDrag(event) {
+    if (!pointerOrderDrag || event.pointerId !== pointerOrderDrag.pointerId) return;
+    clearPointerOrderDrag(event);
+    renderOrderPanel();
+  }
+
+  function clearPointerOrderDrag(event) {
+    if (!pointerOrderDrag) return;
+    const item = pointerOrderDrag.item;
+    item.classList.remove('dragging');
+    item.removeEventListener('pointermove', movePointerOrderDrag);
+    item.removeEventListener('pointerup', finishPointerOrderDrag);
+    item.removeEventListener('pointercancel', cancelPointerOrderDrag);
+    if (item.releasePointerCapture) {
+      try {
+        item.releasePointerCapture(event.pointerId);
+      } catch {}
+    }
+    pointerOrderDrag = null;
   }
 
   function moveSlot(group, draggedId, targetId) {
