@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 유저노트 DB
 // @namespace    crack-usernote-db
-// @version      1.0.3
+// @version      1.0.4
 // @description  크랙 유저노트에 저장해둔 범용지침/옵션/페르소나를 마커 기반으로 자동 적용
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
@@ -828,6 +828,7 @@
       if (item.dataset.bound === 'true') return;
       item.dataset.bound = 'true';
       item.addEventListener('pointerdown', startPointerOrderDrag);
+      item.addEventListener('touchstart', startTouchOrderDrag, { passive: false });
       item.addEventListener('dragstart', () => {
         draggedOrderItem = { group: item.dataset.orderGroup, id: Number(item.dataset.orderId) };
         item.classList.add('dragging');
@@ -850,38 +851,83 @@
 
   function startPointerOrderDrag(event) {
     if (event.pointerType === 'mouse' || !event.isPrimary) return;
-    const item = event.currentTarget;
-    const list = item.closest('.undb-order-list');
-    if (!list) return;
+    if (!beginOrderDrag(event.currentTarget, event.pointerId)) return;
     event.preventDefault();
+    window.addEventListener('pointermove', movePointerOrderDrag, { passive: false });
+    window.addEventListener('pointerup', finishPointerOrderDrag);
+    window.addEventListener('pointercancel', cancelPointerOrderDrag);
+  }
+
+  function startTouchOrderDrag(event) {
+    const touch = event.changedTouches && event.changedTouches[0];
+    if (!touch || !beginOrderDrag(event.currentTarget, touch.identifier)) return;
+    event.preventDefault();
+    window.addEventListener('touchmove', moveTouchOrderDrag, { passive: false });
+    window.addEventListener('touchend', finishTouchOrderDrag);
+    window.addEventListener('touchcancel', cancelTouchOrderDrag);
+  }
+
+  function beginOrderDrag(item, pointerId) {
+    if (pointerOrderDrag) return false;
+    const list = item.closest('.undb-order-list');
+    if (!list) return false;
     pointerOrderDrag = {
-      pointerId: event.pointerId,
+      pointerId,
       group: item.dataset.orderGroup,
       item,
       list,
+      wasDraggable: item.draggable,
     };
+    item.draggable = false;
     item.classList.add('dragging');
-    if (item.setPointerCapture) item.setPointerCapture(event.pointerId);
-    item.addEventListener('pointermove', movePointerOrderDrag);
-    item.addEventListener('pointerup', finishPointerOrderDrag);
-    item.addEventListener('pointercancel', cancelPointerOrderDrag);
+    if (item.setPointerCapture && typeof pointerId === 'number') {
+      try {
+        item.setPointerCapture(pointerId);
+      } catch {}
+    }
+    return true;
   }
 
   function movePointerOrderDrag(event) {
     if (!pointerOrderDrag || event.pointerId !== pointerOrderDrag.pointerId) return;
     event.preventDefault();
+    moveOrderDragAt(event.clientX, event.clientY);
+  }
+
+  function moveTouchOrderDrag(event) {
+    if (!pointerOrderDrag) return;
+    const touch = Array.from(event.changedTouches || []).find((item) => item.identifier === pointerOrderDrag.pointerId);
+    if (!touch) return;
+    event.preventDefault();
+    moveOrderDragAt(touch.clientX, touch.clientY);
+  }
+
+  function moveOrderDragAt(clientX, clientY) {
+    if (!pointerOrderDrag) return;
     const { item, list, group } = pointerOrderDrag;
     item.style.pointerEvents = 'none';
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.undb-order-item');
+    const target = document.elementFromPoint(clientX, clientY)?.closest?.('.undb-order-item');
     item.style.pointerEvents = '';
     if (!target || target === item || target.closest('.undb-order-list') !== list || target.dataset.orderGroup !== group) return;
     const rect = target.getBoundingClientRect();
-    const shouldInsertAfter = event.clientY > rect.top + rect.height / 2;
+    const shouldInsertAfter = clientY > rect.top + rect.height / 2;
     list.insertBefore(item, shouldInsertAfter ? target.nextSibling : target);
   }
 
   function finishPointerOrderDrag(event) {
     if (!pointerOrderDrag || event.pointerId !== pointerOrderDrag.pointerId) return;
+    finishOrderDrag(event);
+  }
+
+  function finishTouchOrderDrag(event) {
+    if (!pointerOrderDrag) return;
+    const touch = Array.from(event.changedTouches || []).find((item) => item.identifier === pointerOrderDrag.pointerId);
+    if (!touch) return;
+    finishOrderDrag(event);
+  }
+
+  function finishOrderDrag(event) {
+    if (!pointerOrderDrag) return;
     const { group, item, list } = pointerOrderDrag;
     const orderedIds = $$('.undb-order-item', list).map((el) => Number(el.dataset.orderId));
     clearPointerOrderDrag(event);
@@ -901,14 +947,26 @@
     renderOrderPanel();
   }
 
+  function cancelTouchOrderDrag(event) {
+    if (!pointerOrderDrag) return;
+    const touch = Array.from(event.changedTouches || []).find((item) => item.identifier === pointerOrderDrag.pointerId);
+    if (!touch) return;
+    clearPointerOrderDrag(event);
+    renderOrderPanel();
+  }
+
   function clearPointerOrderDrag(event) {
     if (!pointerOrderDrag) return;
     const item = pointerOrderDrag.item;
     item.classList.remove('dragging');
-    item.removeEventListener('pointermove', movePointerOrderDrag);
-    item.removeEventListener('pointerup', finishPointerOrderDrag);
-    item.removeEventListener('pointercancel', cancelPointerOrderDrag);
-    if (item.releasePointerCapture) {
+    item.draggable = pointerOrderDrag.wasDraggable;
+    window.removeEventListener('pointermove', movePointerOrderDrag);
+    window.removeEventListener('pointerup', finishPointerOrderDrag);
+    window.removeEventListener('pointercancel', cancelPointerOrderDrag);
+    window.removeEventListener('touchmove', moveTouchOrderDrag);
+    window.removeEventListener('touchend', finishTouchOrderDrag);
+    window.removeEventListener('touchcancel', cancelTouchOrderDrag);
+    if (event.pointerId != null && item.releasePointerCapture) {
       try {
         item.releasePointerCapture(event.pointerId);
       } catch {}
