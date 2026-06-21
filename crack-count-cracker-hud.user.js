@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.8
+// @version      1.1.9
 // @description  입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -79,6 +79,10 @@
     let cachedLastConsumed = null;
     let isCheckingLastConsumed = false;
     let lastConsumedCheckTime = 0;
+    let cachedApiCrackerCount = null;
+    let isCheckingApiCrackerCount = false;
+    let lastApiCrackerCheckTime = 0;
+    let lastApiCrackerSuccessTime = 0;
 
     let lastDialogCheckTime = 0;
 
@@ -543,7 +547,99 @@
         });
     }
 
+    function parseCrackerCountFromCashResponse(data) {
+        const directPaths = [
+            ['data', 'cash'],
+            ['data', 'cracker'],
+            ['data', 'crackers'],
+            ['data', 'balance'],
+            ['data', 'total'],
+            ['data', 'amount'],
+            ['cash'],
+            ['cracker'],
+            ['crackers'],
+            ['balance'],
+            ['total'],
+            ['amount']
+        ];
+
+        const readPath = (obj, path) => path.reduce((acc, key) => acc?.[key], obj);
+        const normalizeNumber = (value) => {
+            const parsed = typeof value === 'number'
+                ? value
+                : parseInt(String(value ?? '').replace(/,/g, ''), 10);
+
+            return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+        };
+
+        for (const path of directPaths) {
+            const parsed = normalizeNumber(readPath(data, path));
+            if (parsed !== null) return parsed;
+        }
+
+        const candidates = [];
+
+        const visit = (value, path = []) => {
+            if (value === null || value === undefined || path.length > 6) return;
+
+            if (typeof value === 'number' || typeof value === 'string') {
+                const parsed = normalizeNumber(value);
+                if (parsed === null) return;
+
+                const joined = path.join('.').toLowerCase();
+                const lastKey = String(path[path.length - 1] || '').toLowerCase();
+
+                if (/id|date|time|count|price|cost/.test(lastKey)) return;
+
+                let score = 0;
+                if (/cash|cracker/.test(joined)) score += 20;
+                if (/balance/.test(joined)) score += 12;
+                if (/remain|available|current/.test(joined)) score += 8;
+                if (/total|amount/.test(lastKey)) score += 4;
+
+                if (score > 0) candidates.push({ value: parsed, score });
+                return;
+            }
+
+            if (Array.isArray(value)) {
+                value.slice(0, 5).forEach((item, index) => visit(item, path.concat(index)));
+                return;
+            }
+
+            if (typeof value === 'object') {
+                Object.entries(value).forEach(([key, item]) => visit(item, path.concat(key)));
+            }
+        };
+
+        visit(data);
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates[0]?.value ?? null;
+    }
+
+    async function fetchCurrentCrackerCount() {
+        const token = extractAccessToken();
+        if (!token) return null;
+
+        const res = await fetch('https://crack-api.wrtn.ai/crack-cash/cash', {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                platform: 'web',
+                'wrtn-locale': 'ko-KR'
+            }
+        });
+
+        if (!res.ok) return null;
+
+        const json = await res.json();
+        return parseCrackerCountFromCashResponse(json);
+    }
+
     function getCrackerCount() {
+        if (cachedApiCrackerCount !== null && Date.now() - lastApiCrackerSuccessTime < 10000) {
+            return cachedApiCrackerCount;
+        }
+
         const label = Array.from(document.querySelectorAll('span')).find(span => span.textContent.trim() === '나의 크래커');
         const container = label?.nextElementSibling;
         const match = container?.textContent.match(/[\d,]+/);
@@ -1014,6 +1110,24 @@
         if (!textSpan) return;
 
         const now = Date.now();
+
+        if (!isCheckingApiCrackerCount && now - lastApiCrackerCheckTime > 3000) {
+            isCheckingApiCrackerCount = true;
+            lastApiCrackerCheckTime = now;
+
+            fetchCurrentCrackerCount().then(count => {
+                if (count !== null) {
+                    cachedApiCrackerCount = count;
+                    lastApiCrackerSuccessTime = Date.now();
+                    lastRenderedText = '';
+                    renderUpdate(inputEl, currentModelName);
+                }
+
+                isCheckingApiCrackerCount = false;
+            }).catch(() => {
+                isCheckingApiCrackerCount = false;
+            });
+        }
 
         if (!isCheckingLastConsumed && now - lastConsumedCheckTime > 3000) {
             isCheckingLastConsumed = true;
