@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.0
+// @version      1.0.1
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
 // @match        https://crack.wrtn.ai/characters/*/chats/*
 // @match        https://crack.wrtn.ai/u/*/c/*
+// @match        https://crack.wrtn.ai/
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js
 // @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js
 // @grant        GM_addStyle
@@ -23,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
