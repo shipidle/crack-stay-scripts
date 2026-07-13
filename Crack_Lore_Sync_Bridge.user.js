@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.8
+// @version      1.0.9
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.8';
+  const VERSION = '1.0.9';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -58,6 +58,7 @@
   GM_addStyle(`
     #clsb-fab { position:fixed; top:calc(12px + env(safe-area-inset-top, 0px)); right:12px; z-index:2147483000; width:36px; height:36px; display:grid; place-items:center; border:1px solid #b9d8eb; border-radius:50%; background:#eef6fb; color:#24506d; padding:0; font:17px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:0 5px 20px rgba(31,78,105,.18); cursor:pointer; }
     #clsb-fab:hover { background:#e0f0fb; }
+    @media (min-width: 700px) { #clsb-fab { top:auto; right:24px; bottom:20px; } }
     #clsb-overlay { position:fixed; inset:0; z-index:2147483001; background:rgba(23,43,58,.32); display:flex; align-items:center; justify-content:center; padding:16px; font-family:Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; }
     #clsb-panel { width:min(470px, 100%); max-height:min(760px, 100%); overflow:auto; box-sizing:border-box; color:#1d3546; background:#f9fcff; border:1px solid #c9dfef; border-radius:18px; box-shadow:0 22px 70px rgba(19,58,81,.28); padding:18px; }
     #clsb-panel * { box-sizing:border-box; }
@@ -340,13 +341,7 @@
           setStatus('⚠️ 이 기기와 클라우드가 모두 바뀜.\n안전하게 자동 덮어쓰진 않았음. 패널에서 지금 업로드 또는 클라우드 복원을 골라줘.', 'warn');
           return;
         }
-        const cloud = await decryptBackup(remote.ciphertext);
-        await restoreBackup(cloud);
-        const restoredHash = await fingerprint(sanitizeBackup(cloud));
-        syncState = { lastHash: restoredHash, lastRevision: Number(remote.revision || 0), lastSyncAt: Date.now() };
-        await persistState();
-        setStatus('☁️ 다른 기기의 최신 로어를 받음. 잠시 뒤 새로고침됨.');
-        setTimeout(() => location.reload(), 800);
+        setStatus('☁️ 다른 기기에서 최신 로어가 올라옴. 현재 페이지는 건드리지 않았음. 대화 마친 뒤 "클라우드 로어 복원"을 누르면 됨.', 'warn');
         return;
       }
       if (hash !== syncState.lastHash) await upload(local, hash, remote?.revision || 0);
@@ -439,7 +434,7 @@
     account.appendChild(accountRow); panel.appendChild(account);
 
     const sync = document.createElement('div'); sync.className = 'clsb-card';
-    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능. 첫 동기화 뒤에는 1분마다 자동 확인함.</p>';
+    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능. 이 기기의 변경은 1분마다 자동 업로드하며, 다른 기기 로어는 현재 대화를 건드리지 않도록 직접 복원할 때만 받음.</p>';
     addField(sync, 'clsb-passphrase', '동기화 암호', 'password', config.syncPassphrase, '8자 이상, 기기마다 같은 암호');
     const syncRow = document.createElement('div'); syncRow.className = 'clsb-row';
     syncRow.append(makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }));
