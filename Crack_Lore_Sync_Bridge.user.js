@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.1
+// @version      1.0.2
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -196,6 +196,16 @@
     await persistConfig();
     await persistSession(result);
     return result;
+  }
+
+  async function resendSignup(email) {
+    validateConnection();
+    if (!email) throw new Error('인증 메일을 받을 이메일을 입력해줘.');
+    await request(`${config.projectUrl}/auth/v1/resend`, {
+      method: 'POST', headers: makeHeaders(), body: { type: 'signup', email, options: { emailRedirectTo: AUTH_REDIRECT } },
+    });
+    config.email = email;
+    await persistConfig();
   }
 
   async function authHeaders(extra = {}) {
@@ -412,6 +422,7 @@
     const accountRow = document.createElement('div'); accountRow.className = 'clsb-row';
     accountRow.append(
       makeButton('가입', '', async () => { const email = value('clsb-email'); const password = value('clsb-password'); if (!email || !password) throw new Error('이메일과 비밀번호를 입력해줘.'); const active = await signUp(email, password); setStatus(active ? '✅ 가입과 로그인이 완료됨.' : '📧 인증 메일을 보냈음. 메일 링크를 누른 뒤 이 창에서 로그인해줘.'); }),
+      makeButton('인증 메일 재발송', '', async () => { const email = value('clsb-email') || config.email; await resendSignup(email); setStatus('📧 인증 메일을 다시 보냈음. 스팸함·전체메일도 확인해줘.'); }),
       makeButton('로그인', 'primary', async () => { const email = value('clsb-email'); const password = value('clsb-password'); if (!email || !password) throw new Error('이메일과 비밀번호를 입력해줘.'); await signIn(email, password); setStatus('✅ 로그인 완료. 이제 동기화 암호를 설정해줘.'); }),
       makeButton('로그아웃', 'danger', async () => { await persistSession(null); setStatus('로그아웃됨.'); }),
     );
