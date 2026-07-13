@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.5
+// @version      1.0.6
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.5';
+  const VERSION = '1.0.6';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -71,6 +71,7 @@
     .clsb-field { display:block; margin:8px 0; color:#426276; font-size:11px; font-weight:650; }
     .clsb-field input { width:100%; margin-top:4px; padding:9px 10px; border:1px solid #c8dce9; border-radius:8px; background:#fff; color:#1d3546; font:13px Pretendard, sans-serif; }
     .clsb-field input:focus { outline:2px solid #9ed1ef; border-color:#8cc8e9; }
+    .clsb-field input:disabled { background:#f1f7fb; color:#668092; cursor:not-allowed; }
     .clsb-row { display:flex; flex-wrap:wrap; gap:7px; margin-top:9px; }
     .clsb-btn { border:1px solid #b8d8ea; border-radius:8px; background:#eef6fb; color:#285b78; padding:8px 10px; font:650 12px Pretendard, sans-serif; cursor:pointer; }
     .clsb-btn:hover { background:#dff1fc; }
@@ -202,16 +203,6 @@
     return result;
   }
 
-  async function resendSignup(email) {
-    validateConnection();
-    if (!email) throw new Error('인증 메일을 받을 이메일을 입력해줘.');
-    await request(`${config.projectUrl}/auth/v1/resend`, {
-      method: 'POST', headers: makeHeaders(), body: { type: 'signup', email, options: { emailRedirectTo: AUTH_REDIRECT } },
-    });
-    config.email = email;
-    await persistConfig();
-  }
-
   async function authHeaders(extra = {}) {
     const active = await refreshSessionIfNeeded();
     return makeHeaders({ Authorization: `Bearer ${active.access_token}`, ...extra });
@@ -318,7 +309,13 @@
     const remote = await getRemote();
     const local = await exportBackup();
     const hash = await fingerprint(local);
-    if (!remote || mode === 'upload') {
+    if (!remote) {
+      if (mode === 'restore') throw new Error('클라우드에 복원할 백업이 아직 없음. 첫 기기에서는 먼저 백업을 올려줘.');
+      await upload(local, hash, 0);
+      needsInitialChoice = false;
+      return;
+    }
+    if (mode === 'upload') {
       await upload(local, hash, remote?.revision || 0);
       needsInitialChoice = false;
       return;
@@ -377,7 +374,7 @@
     return button;
   }
 
-  function addField(host, id, label, type, current, placeholder) {
+  function addField(host, id, label, type, current, placeholder, disabled = false) {
     const wrap = document.createElement('label');
     wrap.className = 'clsb-field';
     wrap.textContent = label;
@@ -387,6 +384,7 @@
     input.value = current || '';
     input.placeholder = placeholder || '';
     input.autocomplete = type === 'password' ? 'new-password' : 'off';
+    input.disabled = disabled;
     wrap.appendChild(input);
     host.appendChild(wrap);
   }
@@ -420,28 +418,41 @@
     connection.appendChild(saveConnection); panel.appendChild(connection);
 
     const account = document.createElement('div'); account.className = 'clsb-card';
-    account.innerHTML = '<h3>동기화 계정</h3><p class="clsb-note">Supabase 가입용 이메일과 비밀번호. 비밀번호는 저장하지 않고, 로그인 세션만 이 기기에 저장함.</p>';
-    addField(account, 'clsb-email', '이메일', 'email', config.email, '내 Gmail 주소');
-    addField(account, 'clsb-password', '계정 비밀번호', 'password', '', '8자 이상 새 비밀번호');
+    const loggedIn = Boolean(session?.access_token);
+    account.innerHTML = '<h3>동기화 계정</h3>';
+    const accountNote = document.createElement('p'); accountNote.className = 'clsb-note';
+    accountNote.textContent = loggedIn
+      ? `🟢 ${session?.user?.email || config.email || '저장된 계정'}으로 로그인 중. 로그아웃 전까지 계정 입력은 잠김.`
+      : 'Supabase 가입용 이메일과 비밀번호. 비밀번호는 저장하지 않고, 로그인 세션만 이 기기에 저장함.';
+    account.appendChild(accountNote);
+    addField(account, 'clsb-email', '이메일', 'email', config.email, '내 Gmail 주소', loggedIn);
+    addField(account, 'clsb-password', '계정 비밀번호', 'password', '', '8자 이상 새 비밀번호', loggedIn);
     const accountRow = document.createElement('div'); accountRow.className = 'clsb-row';
-    accountRow.append(
-      makeButton('가입', '', async () => { const email = value('clsb-email'); const password = value('clsb-password'); if (!email || !password) throw new Error('이메일과 비밀번호를 입력해줘.'); const active = await signUp(email, password); setStatus(active ? '✅ 가입과 로그인이 완료됨.' : '📧 인증 메일을 보냈음. 메일 링크를 누른 뒤 이 창에서 로그인해줘.'); }),
-      makeButton('인증 메일 재발송', '', async () => { const email = value('clsb-email') || config.email; await resendSignup(email); setStatus('📧 인증 메일을 다시 보냈음. 스팸함·전체메일도 확인해줘.'); }),
-      makeButton('로그인', 'primary', async () => { const email = value('clsb-email'); const password = value('clsb-password'); if (!email || !password) throw new Error('이메일과 비밀번호를 입력해줘.'); await signIn(email, password); setStatus('✅ 로그인 완료. 이제 동기화 암호를 설정해줘.'); }),
-      makeButton('로그아웃', 'danger', async () => { await persistSession(null); setStatus('로그아웃됨.'); }),
-    );
+    if (loggedIn) {
+      accountRow.append(makeButton('로그아웃', 'danger', async () => { await persistSession(null); setStatus('로그아웃됨.'); }));
+    } else {
+      accountRow.append(
+        makeButton('가입', '', async () => { const email = value('clsb-email'); const password = value('clsb-password'); if (!email || !password) throw new Error('이메일과 비밀번호를 입력해줘.'); const active = await signUp(email, password); setStatus(active ? '✅ 가입과 로그인이 완료됨.' : '✅ 가입됨. 로그인 버튼을 눌러줘.'); }),
+        makeButton('로그인', 'primary', async () => { const email = value('clsb-email'); const password = value('clsb-password'); if (!email || !password) throw new Error('이메일과 비밀번호를 입력해줘.'); await signIn(email, password); setStatus('✅ 로그인 완료. 이제 동기화 암호를 설정해줘.'); }),
+      );
+    }
     account.appendChild(accountRow); panel.appendChild(account);
 
     const sync = document.createElement('div'); sync.className = 'clsb-card';
-    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능.</p>';
+    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능. 첫 동기화 뒤에는 1분마다 자동 확인함.</p>';
     addField(sync, 'clsb-passphrase', '동기화 암호', 'password', config.syncPassphrase, '8자 이상, 기기마다 같은 암호');
     const syncRow = document.createElement('div'); syncRow.className = 'clsb-row';
-    syncRow.append(
-      makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }),
-      makeButton('처음 백업 올리기', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('upload'); }),
-      makeButton('클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }),
-      makeButton('지금 업로드', '', async () => { const local = await exportBackup(); await upload(local, await fingerprint(local), (await getRemote())?.revision || 0); }),
-    );
+    syncRow.append(makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }));
+    if (needsInitialChoice) {
+      syncRow.append(makeButton('클라우드 로어 복원', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }));
+    } else if (!syncState.lastHash) {
+      syncRow.append(makeButton('처음 백업 올리기', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('upload'); }));
+    } else {
+      syncRow.append(
+        makeButton('지금 업로드', '', async () => { const local = await exportBackup(); await upload(local, await fingerprint(local), (await getRemote())?.revision || 0); }),
+        makeButton('클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }),
+      );
+    }
     sync.appendChild(syncRow); panel.appendChild(sync);
 
     statusEl = document.createElement('div');
