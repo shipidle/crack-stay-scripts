@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.7
+// @version      1.0.8
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.7';
+  const VERSION = '1.0.8';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -56,7 +56,7 @@
   const textDecoder = new TextDecoder();
 
   GM_addStyle(`
-    #clsb-fab { position:fixed; right:14px; bottom:calc(78px + env(safe-area-inset-bottom, 0px)); z-index:2147483000; border:1px solid #b9d8eb; border-radius:999px; background:#eef6fb; color:#24506d; padding:9px 12px; font:600 12px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:0 5px 20px rgba(31,78,105,.18); cursor:pointer; }
+    #clsb-fab { position:fixed; top:calc(12px + env(safe-area-inset-top, 0px)); right:12px; z-index:2147483000; width:36px; height:36px; display:grid; place-items:center; border:1px solid #b9d8eb; border-radius:50%; background:#eef6fb; color:#24506d; padding:0; font:17px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:0 5px 20px rgba(31,78,105,.18); cursor:pointer; }
     #clsb-fab:hover { background:#e0f0fb; }
     #clsb-overlay { position:fixed; inset:0; z-index:2147483001; background:rgba(23,43,58,.32); display:flex; align-items:center; justify-content:center; padding:16px; font-family:Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; }
     #clsb-panel { width:min(470px, 100%); max-height:min(760px, 100%); overflow:auto; box-sizing:border-box; color:#1d3546; background:#f9fcff; border:1px solid #c9dfef; border-radius:18px; box-shadow:0 22px 70px rgba(19,58,81,.28); padding:18px; }
@@ -496,7 +496,7 @@
   function mountButton() {
     if (document.getElementById('clsb-fab')) return;
     const button = document.createElement('button');
-    button.id = 'clsb-fab'; button.type = 'button'; button.textContent = '☁️ 로어 동기화'; button.title = '크랙 로어 개인 동기화';
+    button.id = 'clsb-fab'; button.type = 'button'; button.textContent = '☁️'; button.title = '크랙 로어 개인 동기화'; button.setAttribute('aria-label', '크랙 로어 개인 동기화');
     button.addEventListener('click', openPanel); document.body.appendChild(button);
   }
 
