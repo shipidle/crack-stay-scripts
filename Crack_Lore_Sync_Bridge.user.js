@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.4
+// @version      1.0.5
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.4';
+  const VERSION = '1.0.5';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -265,7 +265,7 @@
   }
 
   async function deriveKey(passphrase, salt) {
-    if (String(passphrase || '').length < 12) throw new Error('동기화 암호는 12자 이상으로 정해줘.');
+    if (String(passphrase || '').length < 8) throw new Error('동기화 암호는 8자 이상으로 정해줘.');
     const material = await crypto.subtle.importKey('raw', textEncoder.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
     return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
   }
@@ -422,7 +422,7 @@
     const account = document.createElement('div'); account.className = 'clsb-card';
     account.innerHTML = '<h3>동기화 계정</h3><p class="clsb-note">Supabase 가입용 이메일과 비밀번호. 비밀번호는 저장하지 않고, 로그인 세션만 이 기기에 저장함.</p>';
     addField(account, 'clsb-email', '이메일', 'email', config.email, '내 Gmail 주소');
-    addField(account, 'clsb-password', '계정 비밀번호', 'password', '', '12자 이상 새 비밀번호');
+    addField(account, 'clsb-password', '계정 비밀번호', 'password', '', '8자 이상 새 비밀번호');
     const accountRow = document.createElement('div'); accountRow.className = 'clsb-row';
     accountRow.append(
       makeButton('가입', '', async () => { const email = value('clsb-email'); const password = value('clsb-password'); if (!email || !password) throw new Error('이메일과 비밀번호를 입력해줘.'); const active = await signUp(email, password); setStatus(active ? '✅ 가입과 로그인이 완료됨.' : '📧 인증 메일을 보냈음. 메일 링크를 누른 뒤 이 창에서 로그인해줘.'); }),
@@ -434,10 +434,10 @@
 
     const sync = document.createElement('div'); sync.className = 'clsb-card';
     sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능.</p>';
-    addField(sync, 'clsb-passphrase', '동기화 암호', 'password', config.syncPassphrase, '12자 이상, 기기마다 같은 암호');
+    addField(sync, 'clsb-passphrase', '동기화 암호', 'password', config.syncPassphrase, '8자 이상, 기기마다 같은 암호');
     const syncRow = document.createElement('div'); syncRow.className = 'clsb-row';
     syncRow.append(
-      makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 12) throw new Error('동기화 암호는 12자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }),
+      makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }),
       makeButton('처음 백업 올리기', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('upload'); }),
       makeButton('클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }),
       makeButton('지금 업로드', '', async () => { const local = await exportBackup(); await upload(local, await fingerprint(local), (await getRemote())?.revision || 0); }),
