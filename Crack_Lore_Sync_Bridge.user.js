@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.6
+// @version      1.0.7
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.6';
+  const VERSION = '1.0.7';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -444,7 +444,14 @@
     const syncRow = document.createElement('div'); syncRow.className = 'clsb-row';
     syncRow.append(makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }));
     if (needsInitialChoice) {
-      syncRow.append(makeButton('클라우드 로어 복원', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }));
+      syncRow.append(
+        makeButton('클라우드 로어 복원', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }),
+        makeButton('이 기기 로어로 클라우드 덮어쓰기', 'danger', async () => {
+          if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.');
+          if (!confirm('이 기기의 로어를 새 클라우드 기준으로 저장함. 기존 클라우드 로어는 덮어써짐. 계속할까?')) return;
+          await firstSync('upload');
+        }),
+      );
     } else if (!syncState.lastHash) {
       syncRow.append(makeButton('처음 백업 올리기', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('upload'); }));
     } else {
@@ -465,7 +472,7 @@
     } else {
     const injectorFound = !!BRIDGE.__LoreInj?.backupTools;
     statusEl.textContent = needsInitialChoice
-      ? '⚠️ 클라우드 백업이 이미 있음. 이 기기에서는 "클라우드 로어 복원"을 눌러 시작하면 됨.'
+      ? '⚠️ 클라우드 백업이 이미 있음. 클라우드 기준을 받을 땐 "클라우드 로어 복원", 이 기기 로어를 새 기준으로 쓸 땐 "이 기기 로어로 클라우드 덮어쓰기"를 눌러줘.'
       : `${injectorFound ? '✅ 기존 로어 인젝터 감지됨' : '⏳ 기존 로어 인젝터 기다리는 중'}\n동기화 비용: 1회 0.00원 · 누적 0.00원`;
     }
     panel.appendChild(statusEl);
