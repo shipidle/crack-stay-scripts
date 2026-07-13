@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.2
+// @version      1.0.3
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.2';
+  const VERSION = '1.0.3';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -47,6 +47,8 @@
   let session = null;
   let panel = null;
   let statusEl = null;
+  let latestStatus = '';
+  let latestStatusTone = '';
   let busy = false;
   let needsInitialChoice = false;
 
@@ -95,6 +97,8 @@
   }
 
   function setStatus(message, tone = '') {
+    latestStatus = message;
+    latestStatusTone = tone;
     if (!statusEl) return;
     statusEl.textContent = message;
     statusEl.className = `clsb-status ${tone}`.trim();
@@ -442,10 +446,17 @@
 
     statusEl = document.createElement('div');
     statusEl.className = 'clsb-status';
+    if (latestStatus) {
+      statusEl.textContent = latestStatus;
+      statusEl.className = `clsb-status ${latestStatusTone}`.trim();
+    } else if (session?.access_token) {
+      statusEl.textContent = '✅ 로그인된 상태. 동기화 암호를 저장한 뒤 백업 또는 복원을 선택해줘.';
+    } else {
     const injectorFound = !!BRIDGE.__LoreInj?.backupTools;
     statusEl.textContent = needsInitialChoice
       ? '⚠️ 클라우드 백업이 이미 있음. 이 기기에서는 "클라우드 로어 복원"을 눌러 시작하면 됨.'
       : `${injectorFound ? '✅ 기존 로어 인젝터 감지됨' : '⏳ 기존 로어 인젝터 기다리는 중'}\n동기화 비용: 1회 0.00원 · 누적 0.00원`;
+    }
     panel.appendChild(statusEl);
     const meta = document.createElement('div'); meta.className = 'clsb-meta';
     meta.textContent = `Bridge v${VERSION} · 마지막 동기화: ${syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString() : '아직 없음'} · Supabase 저장 데이터는 AES-256-GCM으로 암호화됨.`;
