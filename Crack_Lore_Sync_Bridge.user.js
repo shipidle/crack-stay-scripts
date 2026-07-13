@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.9
+// @version      1.1.0
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.9';
+  const VERSION = '1.1.0';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -58,7 +58,8 @@
   GM_addStyle(`
     #clsb-fab { position:fixed; top:calc(12px + env(safe-area-inset-top, 0px)); right:12px; z-index:2147483000; width:36px; height:36px; display:grid; place-items:center; border:1px solid #b9d8eb; border-radius:50%; background:#eef6fb; color:#24506d; padding:0; font:17px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:0 5px 20px rgba(31,78,105,.18); cursor:pointer; }
     #clsb-fab:hover { background:#e0f0fb; }
-    @media (min-width: 700px) { #clsb-fab { top:auto; right:24px; bottom:20px; } }
+    #clsb-fab.clsb-header-button { position:static; z-index:auto; width:auto; height:32px; display:inline-flex; gap:5px; border-radius:8px; padding:0 10px; font:650 12px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:none; white-space:nowrap; }
+    @media (min-width: 700px) { #clsb-fab:not(.clsb-header-button) { top:auto; right:24px; bottom:20px; } }
     #clsb-overlay { position:fixed; inset:0; z-index:2147483001; background:rgba(23,43,58,.32); display:flex; align-items:center; justify-content:center; padding:16px; font-family:Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; }
     #clsb-panel { width:min(470px, 100%); max-height:min(760px, 100%); overflow:auto; box-sizing:border-box; color:#1d3546; background:#f9fcff; border:1px solid #c9dfef; border-radius:18px; box-shadow:0 22px 70px rgba(19,58,81,.28); padding:18px; }
     #clsb-panel * { box-sizing:border-box; }
@@ -238,7 +239,7 @@
 
   async function restoreBackup(backup) {
     const tools = await waitForBackupTools();
-    setStatus('☁️ 클라우드 데이터를 안전하게 복원 중...\n기존 인젝터가 새 데이터를 읽도록 곧 새로고침됨.');
+    setStatus('☁️ 클라우드 데이터를 복원 중...\n현재 페이지는 새로고침하지 않음.');
     await tools.importFullBackup(backup, 'replace', { includeSecrets: false, importSettings: true });
   }
 
@@ -327,11 +328,17 @@
     syncState = { lastHash: restoredHash, lastRevision: Number(remote.revision || 0), lastSyncAt: Date.now() };
     await persistState();
     needsInitialChoice = false;
-    setTimeout(() => location.reload(), 800);
+    setStatus('☁️ 클라우드 로어 복원 완료. 현재 페이지는 새로고침하지 않았음.');
+  }
+
+  function isChatRoute() {
+    return /^\/stories\/[a-f0-9]+\/episodes\/[a-f0-9]+\/?$/i.test(location.pathname)
+      || /^\/characters\/[a-f0-9]+\/chats\/[a-f0-9]+\/?$/i.test(location.pathname)
+      || /^\/u\/[a-f0-9]+\/c\/[a-f0-9]+\/?$/i.test(location.pathname);
   }
 
   async function autoSync() {
-    if (busy || !session?.access_token || !config.syncPassphrase || !syncState.lastHash || needsInitialChoice) return;
+    if (!isChatRoute() || busy || !session?.access_token || !config.syncPassphrase || !syncState.lastHash || needsInitialChoice) return;
     try {
       const local = await exportBackup();
       const hash = await fingerprint(local);
@@ -488,16 +495,42 @@
     document.getElementById('clsb-overlay')?.remove(); panel = null; statusEl = null;
   }
 
-  function mountButton() {
-    if (document.getElementById('clsb-fab')) return;
-    const button = document.createElement('button');
-    button.id = 'clsb-fab'; button.type = 'button'; button.textContent = '☁️'; button.title = '크랙 로어 개인 동기화'; button.setAttribute('aria-label', '크랙 로어 개인 동기화');
-    button.addEventListener('click', openPanel); document.body.appendChild(button);
+  function findDesktopHeaderHost() {
+    if (!window.matchMedia('(min-width: 700px)').matches) return null;
+    const aiSummaryButton = document.querySelector('button[data-ce-ai-summary="true"]');
+    return aiSummaryButton?.parentElement || null;
   }
 
-  async function initialize() {
-    await load();
-    mountButton();
+  function placeButton(button) {
+    const headerHost = findDesktopHeaderHost();
+    if (headerHost) {
+      if (button.parentElement !== headerHost) headerHost.insertBefore(button, headerHost.firstChild);
+      button.className = 'clsb-header-button';
+      button.textContent = '☁️ 동기화';
+      return;
+    }
+    if (button.parentElement !== document.body) document.body.appendChild(button);
+    button.className = '';
+    button.textContent = '☁️';
+  }
+
+  function mountButton() {
+    let button = document.getElementById('clsb-fab');
+    if (!button) {
+      button = document.createElement('button');
+      button.id = 'clsb-fab'; button.type = 'button'; button.title = '크랙 로어 개인 동기화'; button.setAttribute('aria-label', '크랙 로어 개인 동기화');
+      button.addEventListener('click', openPanel);
+      document.body.appendChild(button);
+    }
+    placeButton(button);
+  }
+
+  let chatSyncPrepared = false;
+  let chatSyncPreparing = false;
+
+  async function prepareChatSync() {
+    if (chatSyncPrepared || chatSyncPreparing || !isChatRoute()) return;
+    chatSyncPreparing = true;
     try {
       if (session?.access_token && config.syncPassphrase && config.projectUrl && config.publishableKey) {
         const remote = await getRemote();
@@ -507,7 +540,27 @@
       }
     } catch (error) {
       console.warn('[Lore Sync Bridge] boot check failed:', error);
+    } finally {
+      chatSyncPrepared = true;
+      chatSyncPreparing = false;
     }
+  }
+
+  function syncBridgeRoute() {
+    if (!isChatRoute()) {
+      document.getElementById('clsb-fab')?.remove();
+      if (panel) closePanel();
+      chatSyncPrepared = false;
+      return;
+    }
+    mountButton();
+    void prepareChatSync();
+  }
+
+  async function initialize() {
+    await load();
+    syncBridgeRoute();
+    setInterval(syncBridgeRoute, 1000);
     setInterval(autoSync, AUTO_SYNC_MS);
   }
 
