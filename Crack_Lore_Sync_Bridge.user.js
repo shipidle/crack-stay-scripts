@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.0
+// @version      1.1.1
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -56,10 +56,8 @@
   const textDecoder = new TextDecoder();
 
   GM_addStyle(`
-    #clsb-fab { position:fixed; top:calc(12px + env(safe-area-inset-top, 0px)); right:12px; z-index:2147483000; width:36px; height:36px; display:grid; place-items:center; border:1px solid #b9d8eb; border-radius:50%; background:#eef6fb; color:#24506d; padding:0; font:17px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:0 5px 20px rgba(31,78,105,.18); cursor:pointer; }
+    #clsb-fab { width:auto; height:32px; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:1px solid #b9d8eb; border-radius:8px; background:#eef6fb; color:#24506d; padding:0 10px; font:650 12px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:none; white-space:nowrap; cursor:pointer; }
     #clsb-fab:hover { background:#e0f0fb; }
-    #clsb-fab.clsb-header-button { position:static; z-index:auto; width:auto; height:32px; display:inline-flex; gap:5px; border-radius:8px; padding:0 10px; font:650 12px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:none; white-space:nowrap; }
-    @media (min-width: 700px) { #clsb-fab:not(.clsb-header-button) { top:auto; right:24px; bottom:20px; } }
     #clsb-overlay { position:fixed; inset:0; z-index:2147483001; background:rgba(23,43,58,.32); display:flex; align-items:center; justify-content:center; padding:16px; font-family:Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; }
     #clsb-panel { width:min(470px, 100%); max-height:min(760px, 100%); overflow:auto; box-sizing:border-box; color:#1d3546; background:#f9fcff; border:1px solid #c9dfef; border-radius:18px; box-shadow:0 22px 70px rgba(19,58,81,.28); padding:18px; }
     #clsb-panel * { box-sizing:border-box; }
@@ -495,34 +493,37 @@
     document.getElementById('clsb-overlay')?.remove(); panel = null; statusEl = null;
   }
 
-  function findDesktopHeaderHost() {
-    if (!window.matchMedia('(min-width: 700px)').matches) return null;
+  function findHeaderHost() {
     const aiSummaryButton = document.querySelector('button[data-ce-ai-summary="true"]');
-    return aiSummaryButton?.parentElement || null;
-  }
-
-  function placeButton(button) {
-    const headerHost = findDesktopHeaderHost();
-    if (headerHost) {
-      if (button.parentElement !== headerHost) headerHost.insertBefore(button, headerHost.firstChild);
-      button.className = 'clsb-header-button';
-      button.textContent = '☁️ 동기화';
-      return;
-    }
-    if (button.parentElement !== document.body) document.body.appendChild(button);
-    button.className = '';
-    button.textContent = '☁️';
+    if (aiSummaryButton?.parentElement) return aiSummaryButton.parentElement;
+    const header = Array.from(document.querySelectorAll('div.absolute')).find(element => (
+      element.classList.contains('z-[5]')
+      && element.classList.contains('h-12')
+      && element.classList.contains('justify-between')
+    ));
+    if (!header) return null;
+    return Array.from(header.children).find(element => (
+      element instanceof HTMLElement
+      && element.classList.contains('flex')
+      && element.classList.contains('items-center')
+      && element.querySelector('button')
+    )) || header.querySelector('div.flex.items-center');
   }
 
   function mountButton() {
-    let button = document.getElementById('clsb-fab');
-    if (!button) {
-      button = document.createElement('button');
+    const headerHost = findHeaderHost();
+    const existing = document.getElementById('clsb-fab');
+    if (!headerHost) {
+      existing?.remove();
+      return;
+    }
+    const button = existing || document.createElement('button');
+    if (!existing) {
       button.id = 'clsb-fab'; button.type = 'button'; button.title = '크랙 로어 개인 동기화'; button.setAttribute('aria-label', '크랙 로어 개인 동기화');
       button.addEventListener('click', openPanel);
-      document.body.appendChild(button);
     }
-    placeButton(button);
+    if (button.parentElement !== headerHost) headerHost.insertBefore(button, headerHost.firstChild);
+    button.textContent = '☁️ 동기화';
   }
 
   let chatSyncPrepared = false;
