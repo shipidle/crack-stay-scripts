@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Logo Hider2
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider2
-// @version      1.2.0
+// @version      1.3.0
 // @description  Hide the Crack header logo and prevent horizontal page drift on crack.wrtn.ai.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -68,6 +68,84 @@
           max-width: 0 !important;
           overflow: hidden !important;
           border: 0 !important;
+        }
+
+        .group\\/header,
+        .group\\/header > div.absolute.left-0.w-full {
+          width: 100% !important;
+          max-width: 100% !important;
+          min-width: 0 !important;
+          overflow: hidden !important;
+        }
+
+        .group\\/header > div.absolute.left-0.w-full {
+          padding-left: 12px !important;
+          padding-right: 12px !important;
+          gap: 8px !important;
+        }
+
+        .group\\/header > div.absolute.left-0.w-full > button:first-child {
+          min-width: 0 !important;
+          max-width: calc(100% - 164px) !important;
+          flex: 1 1 auto !important;
+          overflow: hidden !important;
+        }
+
+        .group\\/header > div.absolute.left-0.w-full > button:first-child > span {
+          min-width: 0 !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+        }
+
+        .group\\/header > div.absolute.left-0.w-full > div.flex.items-center {
+          flex: 0 0 auto !important;
+          min-width: 0 !important;
+          max-width: 156px !important;
+          gap: 4px !important;
+          overflow: hidden !important;
+        }
+
+        .crack-ext-header-ai-btn,
+        #clsb-fab,
+        #summary-editor-btn,
+        #lore-inj-entry-button,
+        .lore-inj-entry-button {
+          box-sizing: border-box !important;
+          width: 32px !important;
+          min-width: 32px !important;
+          max-width: 32px !important;
+          height: 32px !important;
+          flex: 0 0 32px !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          overflow: hidden !important;
+          white-space: nowrap !important;
+          font-size: 0 !important;
+          line-height: 32px !important;
+          text-align: center !important;
+          text-indent: 0 !important;
+        }
+
+        .crack-ext-header-ai-btn::before {
+          content: '✨';
+          font-size: 14px !important;
+        }
+
+        #clsb-fab::before {
+          content: '☁️';
+          font-size: 14px !important;
+        }
+
+        #summary-editor-btn::before {
+          content: '📝';
+          font-size: 14px !important;
+        }
+
+        #lore-inj-entry-button::before,
+        .lore-inj-entry-button::before {
+          content: '📚';
+          font-size: 14px !important;
         }
       }
 
