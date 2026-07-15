@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Logo Hider2
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider2
-// @version      1.1.0
+// @version      1.2.0
 // @description  Hide the Crack header logo and prevent horizontal page drift on crack.wrtn.ai.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -42,6 +42,33 @@
 
       body {
         position: relative !important;
+      }
+
+      main.relative.h-full,
+      main.relative.h-full > div.flex.flex-col,
+      main.relative.h-full > div.flex.flex-col > div.flex.flex-row:nth-of-type(2) {
+        min-width: 0 !important;
+        max-width: 100vw !important;
+        overflow-x: hidden !important;
+        overscroll-behavior-x: none !important;
+      }
+
+      div.bg-background.border-l > div.flex.flex-col.w-\\[260px\\].h-full.overflow-auto.pt-12 {
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        overscroll-behavior-x: none !important;
+        touch-action: pan-y !important;
+      }
+
+      @media (max-width: 768px) {
+        main.relative.h-full > div.flex.flex-col > div.flex.flex-row:nth-of-type(2) > div.bg-background.border-l:nth-of-type(3) {
+          display: none !important;
+          width: 0 !important;
+          min-width: 0 !important;
+          max-width: 0 !important;
+          overflow: hidden !important;
+          border: 0 !important;
+        }
       }
 
       ${LOGO_SELECTOR} {
