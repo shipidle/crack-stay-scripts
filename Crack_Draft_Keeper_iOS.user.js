@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         크랙 자동저장 (iOS)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.0.1
-// @description  Keep unsent Crack/WRTN chat drafts per chat room after refresh.
+// @version      1.1.0
+// @description  Keep unsent Crack/WRTN chat drafts per chat room after refresh, including iOS reloads.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
@@ -18,24 +18,30 @@
   const STORE_PREFIX = 'crackDraftKeeper:v1:';
   const LAST_SNAPSHOT_KEY = 'crackDraftKeeper:lastSnapshot:v1';
   const RESTORE_ATTR = 'data-crack-draft-restored';
-  const SAVE_DELAY = 160;
-  const SCAN_DELAY = 500;
+  const SAVE_DELAY = 60;
+  const SCAN_DELAY = 250;
   const RESTORE_MAX_AGE = 2 * 60 * 1000;
 
   let activeEditor = null;
+  let activeRoomKey = '';
   let saveTimer = 0;
   let scanTimer = 0;
   let lastUrl = location.href;
   let pendingSendUntil = 0;
 
-  const editorSelector = [
-    'textarea',
-    'input[type="text"]',
-    'input[type="search"]',
-    '[contenteditable="true"]',
-    '[role="textbox"]',
-    '.ProseMirror'
+  const primaryEditorSelector = [
+    '.__chat_input_textarea[contenteditable="true"]',
+    '.tiptap.ProseMirror[contenteditable="true"]',
+    '.ProseMirror[contenteditable="true"]'
   ].join(',');
+
+  const fallbackEditorSelector = [
+    'textarea[placeholder*="메시지"]',
+    'textarea[aria-label*="메시지"]',
+    '[role="textbox"][contenteditable="true"]'
+  ].join(',');
+
+  const editorSelector = `${primaryEditorSelector},${fallbackEditorSelector}`;
 
   function roomKey() {
     const path = location.pathname.replace(/\/+$/, '');
@@ -50,78 +56,147 @@
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   }
 
+  function supportedEditor(el) {
+    return Boolean(el && el.nodeType === 1 && el.matches(editorSelector));
+  }
+
   function isEditor(el) {
-    if (!el || el.nodeType !== 1 || !visible(el)) return false;
-    if (el.matches('input') && !['text', 'search'].includes((el.type || '').toLowerCase())) return false;
+    if (!supportedEditor(el) || !visible(el)) return false;
     if (el.closest('[aria-hidden="true"], [hidden]')) return false;
-    return el.matches(editorSelector);
+    return true;
   }
 
   function editorText(el) {
     if (!el) return '';
     if ('value' in el) return el.value || '';
-    return (el.innerText || el.textContent || '').replace(/\u00a0/g, ' ');
+    return (el.innerText || el.textContent || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\u200b/g, '')
+      .replace(/\r\n?/g, '\n');
+  }
+
+  function makeInputEvent(type, options = {}) {
+    try {
+      return new InputEvent(type, { bubbles: true, composed: true, ...options });
+    } catch {
+      return new Event(type, { bubbles: true, composed: true });
+    }
+  }
+
+  function replaceContentEditable(el, text) {
+    const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    const fragment = document.createDocumentFragment();
+
+    for (const line of lines) {
+      const paragraph = document.createElement('p');
+      if (line) paragraph.textContent = line;
+      else paragraph.appendChild(document.createElement('br'));
+      fragment.appendChild(paragraph);
+    }
+
+    el.replaceChildren(fragment);
   }
 
   function setEditorText(el, text) {
+    el.dispatchEvent(makeInputEvent('beforeinput', {
+      cancelable: true,
+      inputType: 'insertText',
+      data: text
+    }));
+
     if ('value' in el) {
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
       if (setter) setter.call(el, text);
       else el.value = text;
     } else {
-      el.focus();
-      document.execCommand('selectAll', false, null);
-      document.execCommand('insertText', false, text);
-      if (editorText(el) !== text) el.textContent = text;
+      replaceContentEditable(el, text);
     }
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+
+    el.dispatchEvent(makeInputEvent('input', { inputType: 'insertText', data: text }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  function saveDraftNow() {
+  function readStorage(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStorage(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function removeStorage(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Storage may be unavailable in a private browsing context.
+    }
+  }
+
+  function saveSnapshot(key, text) {
+    writeStorage(LAST_SNAPSHOT_KEY, JSON.stringify({
+      key,
+      text,
+      url: location.href,
+      savedAt: Date.now()
+    }));
+  }
+
+  function clearSnapshotFor(key) {
+    try {
+      const snapshot = JSON.parse(readStorage(LAST_SNAPSHOT_KEY) || 'null');
+      if (snapshot?.key === key) removeStorage(LAST_SNAPSHOT_KEY);
+    } catch {
+      removeStorage(LAST_SNAPSHOT_KEY);
+    }
+  }
+
+  function saveDraftNow(allowClear = false) {
     const el = activeEditor;
-    if (!isEditor(el)) return;
+    if (!supportedEditor(el)) return;
 
     const text = editorText(el);
-    const key = roomKey();
+    const key = activeRoomKey || roomKey();
 
     if (text.trim()) {
-      localStorage.setItem(key, text);
+      writeStorage(key, text);
+      saveSnapshot(key, text);
       return;
     }
 
-    localStorage.removeItem(key);
-    localStorage.removeItem(LAST_SNAPSHOT_KEY);
-    if (Date.now() < pendingSendUntil) {
-      pendingSendUntil = 0;
-    }
+    if (!allowClear) return;
+    removeStorage(key);
+    clearSnapshotFor(key);
+    if (Date.now() < pendingSendUntil) pendingSendUntil = 0;
   }
 
   function saveReloadSnapshot() {
     const el = activeEditor;
-    if (!isEditor(el)) return;
+    if (!supportedEditor(el)) return;
 
     const text = editorText(el);
-    const key = roomKey();
+    const key = activeRoomKey || roomKey();
 
     if (text.trim()) {
-      localStorage.setItem(key, text);
-      localStorage.setItem(LAST_SNAPSHOT_KEY, JSON.stringify({
-        key,
-        text,
-        url: location.href,
-        savedAt: Date.now()
-      }));
+      writeStorage(key, text);
+      saveSnapshot(key, text);
       return;
     }
 
-    localStorage.removeItem(key);
-    localStorage.removeItem(LAST_SNAPSHOT_KEY);
+    if (Date.now() < pendingSendUntil) saveDraftNow(true);
   }
 
   function getFreshReloadSnapshot(key) {
     try {
-      const snapshot = JSON.parse(localStorage.getItem(LAST_SNAPSHOT_KEY) || 'null');
+      const snapshot = JSON.parse(readStorage(LAST_SNAPSHOT_KEY) || 'null');
       if (!snapshot || snapshot.key !== key) return '';
       if (Date.now() - Number(snapshot.savedAt || 0) > RESTORE_MAX_AGE) return '';
       return String(snapshot.text || '');
@@ -130,41 +205,59 @@
     }
   }
 
-  function scheduleSave() {
+  function savedDraftFor(key) {
+    const roomDraft = readStorage(key);
+    if (roomDraft?.trim()) return roomDraft;
+    return getFreshReloadSnapshot(key);
+  }
+
+  function scheduleSave(allowClear = false) {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveDraftNow, SAVE_DELAY);
+    saveTimer = setTimeout(() => saveDraftNow(allowClear), SAVE_DELAY);
   }
 
   function restoreDraft(el) {
-    if (!isEditor(el) || el.getAttribute(RESTORE_ATTR) === roomKey()) return;
-    activeEditor = el;
+    if (!isEditor(el)) return;
 
-    const saved = getFreshReloadSnapshot(roomKey());
+    const key = roomKey();
+    activeEditor = el;
+    activeRoomKey = key;
+
+    if (el.getAttribute(RESTORE_ATTR) === key) return;
+    el.setAttribute(RESTORE_ATTR, key);
+
+    const saved = savedDraftFor(key);
     if (saved && !editorText(el).trim()) {
       setEditorText(el, saved);
+    } else if (editorText(el).trim()) {
+      saveDraftNow();
     }
-
-    el.setAttribute(RESTORE_ATTR, roomKey());
   }
 
   function findBestEditor() {
     const focused = document.activeElement;
     if (isEditor(focused)) return focused;
 
-    const candidates = [...document.querySelectorAll(editorSelector)].filter(isEditor);
-    if (!candidates.length) return null;
+    for (const selector of [primaryEditorSelector, fallbackEditorSelector]) {
+      const candidates = [...document.querySelectorAll(selector)].filter(isEditor);
+      if (!candidates.length) continue;
 
-    return candidates.sort((a, b) => {
-      const ar = a.getBoundingClientRect();
-      const br = b.getBoundingClientRect();
-      return br.top - ar.top;
-    })[0];
+      return candidates.sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return br.top - ar.top;
+      })[0];
+    }
+
+    return null;
   }
 
   function scan() {
     if (location.href !== lastUrl) {
+      saveDraftNow();
       lastUrl = location.href;
       activeEditor = null;
+      activeRoomKey = '';
     }
 
     const editor = findBestEditor();
@@ -178,9 +271,9 @@
 
   function markMaybeSent() {
     pendingSendUntil = Date.now() + 2500;
-    setTimeout(saveDraftNow, 300);
-    setTimeout(saveDraftNow, 900);
-    setTimeout(saveDraftNow, 1800);
+    setTimeout(() => saveDraftNow(true), 300);
+    setTimeout(() => saveDraftNow(true), 900);
+    setTimeout(() => saveDraftNow(true), 1800);
   }
 
   document.addEventListener('focusin', (event) => {
@@ -193,12 +286,26 @@
     const editor = event.target?.closest?.(editorSelector);
     if (!isEditor(editor)) return;
     activeEditor = editor;
-    scheduleSave();
+    activeRoomKey = roomKey();
+
+    if (editor.getAttribute(RESTORE_ATTR) !== activeRoomKey) {
+      restoreDraft(editor);
+    }
+
+    saveDraftNow(event.isTrusted || Date.now() < pendingSendUntil);
   }, true);
 
-  document.addEventListener('compositionend', scheduleSave, true);
-  document.addEventListener('paste', scheduleSave, true);
-  document.addEventListener('cut', scheduleSave, true);
+  function scheduleEditorSave(event) {
+    const editor = event.target?.closest?.(editorSelector);
+    if (!isEditor(editor)) return;
+    activeEditor = editor;
+    activeRoomKey = roomKey();
+    scheduleSave(true);
+  }
+
+  document.addEventListener('compositionend', scheduleEditorSave, true);
+  document.addEventListener('paste', scheduleEditorSave, true);
+  document.addEventListener('cut', scheduleEditorSave, true);
 
   document.addEventListener('keydown', (event) => {
     const editor = event.target?.closest?.(editorSelector);
@@ -227,6 +334,11 @@
 
   window.addEventListener('beforeunload', saveReloadSnapshot);
   window.addEventListener('pagehide', saveReloadSnapshot);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveReloadSnapshot();
+  });
+  document.addEventListener('freeze', saveReloadSnapshot);
+  window.addEventListener('popstate', scheduleScan);
 
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.documentElement, { childList: true, subtree: true });
