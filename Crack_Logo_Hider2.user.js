@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Crack Logo Hider2
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider2
-// @version      1.0.0
-// @description  Hide the Crack header logo on crack.wrtn.ai with exact SVG matching.
+// @version      1.1.0
+// @description  Hide the Crack header logo and prevent horizontal page drift on crack.wrtn.ai.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -32,6 +32,18 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
+      html,
+      body {
+        width: 100% !important;
+        max-width: 100vw !important;
+        overflow-x: hidden !important;
+        overscroll-behavior-x: none !important;
+      }
+
+      body {
+        position: relative !important;
+      }
+
       ${LOGO_SELECTOR} {
         display: none !important;
         visibility: hidden !important;
