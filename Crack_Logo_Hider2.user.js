@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Logo Hider2
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider2
-// @version      1.4.0
+// @version      1.5.0
 // @description  Hide the Crack header logo and prevent horizontal page drift on crack.wrtn.ai.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -58,6 +58,54 @@
         overflow-y: auto !important;
         overscroll-behavior-x: none !important;
         touch-action: pan-y !important;
+      }
+
+      .stick-to-bottom,
+      .stick-to-bottom > div,
+      .stick-to-bottom > div > div,
+      .stick-to-bottom > div > div > div.flex.flex-col,
+      .stick-to-bottom div.flex.flex-col.w-full.max-w-\\[768px\\],
+      .stick-to-bottom [data-message-group-id],
+      .stick-to-bottom .wrtn-markdown {
+        box-sizing: border-box !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        overflow-x: hidden !important;
+      }
+
+      .stick-to-bottom .wrtn-markdown,
+      .stick-to-bottom .wrtn-markdown * {
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+      }
+
+      .stick-to-bottom .wrtn-markdown img,
+      .stick-to-bottom .wrtn-markdown video,
+      .stick-to-bottom .wrtn-markdown iframe,
+      .stick-to-bottom .wrtn-markdown canvas,
+      .stick-to-bottom .wrtn-markdown svg,
+      .stick-to-bottom .wrtn-markdown table,
+      .stick-to-bottom .wrtn-markdown pre,
+      .stick-to-bottom .wrtn-markdown code,
+      .stick-to-bottom .wrtn-markdown span,
+      .stick-to-bottom .wrtn-markdown p {
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+      }
+
+      .stick-to-bottom .wrtn-markdown img,
+      .stick-to-bottom .wrtn-markdown video,
+      .stick-to-bottom .wrtn-markdown iframe,
+      .stick-to-bottom .wrtn-markdown canvas,
+      .stick-to-bottom .wrtn-markdown svg {
+        height: auto !important;
+      }
+
+      .stick-to-bottom .wrtn-markdown pre,
+      .stick-to-bottom .wrtn-markdown code,
+      .stick-to-bottom .wrtn-markdown table {
+        white-space: pre-wrap !important;
+        overflow-x: hidden !important;
       }
 
       @media (max-width: 768px) {
