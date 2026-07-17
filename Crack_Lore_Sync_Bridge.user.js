@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.1
+// @version      1.1.2
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.1.1';
+  const VERSION = '1.1.2';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -94,6 +94,9 @@
     if (/invalid login credentials/i.test(raw)) return '이메일 또는 비밀번호가 맞지 않음.';
     if (/user already registered/i.test(raw)) return '이미 가입된 이메일임. 로그인 버튼을 쓰면 됨.';
     if (/fetch|network|timeout/i.test(raw)) return '네트워크 요청 실패. Project URL과 Publishable key를 다시 확인해줘.';
+    if (error?.name === 'OperationError' || /operation\s*error|operation-specific/i.test(raw)) {
+      return '클라우드 백업 복호화 실패. 첫 기기와 이 기기의 동기화 암호가 대소문자·띄어쓰기까지 완전히 같은지 확인해줘. 암호가 맞다면 클라우드 데이터가 손상됐을 수 있음.';
+    }
     return raw.slice(0, 240);
   }
 
@@ -273,9 +276,18 @@
     let envelope;
     try { envelope = JSON.parse(ciphertext); } catch { throw new Error('클라우드 데이터 형식이 올바르지 않음.'); }
     if (envelope?.v !== 1 || !envelope.salt || !envelope.iv || !envelope.data) throw new Error('지원하지 않는 클라우드 데이터 형식.');
-    const key = await deriveKey(config.syncPassphrase, base64UrlToBytes(envelope.salt));
-    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64UrlToBytes(envelope.iv) }, key, base64UrlToBytes(envelope.data));
-    return JSON.parse(textDecoder.decode(plain));
+    try {
+      const key = await deriveKey(config.syncPassphrase, base64UrlToBytes(envelope.salt));
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64UrlToBytes(envelope.iv) }, key, base64UrlToBytes(envelope.data));
+      return JSON.parse(textDecoder.decode(plain));
+    } catch (error) {
+      if (error?.name === 'OperationError' || /operation\s*error|operation-specific/i.test(String(error?.message || error))) {
+        const friendly = new Error('클라우드 백업 복호화 실패. 첫 기기와 이 기기의 동기화 암호가 대소문자·띄어쓰기까지 완전히 같은지 확인해줘.');
+        friendly.cause = error;
+        throw friendly;
+      }
+      throw error;
+    }
   }
 
   async function fingerprint(backup) {
