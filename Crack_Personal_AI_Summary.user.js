@@ -286,6 +286,8 @@
   }
 
   async function createSummary(item) {
+    const before = await fetchSummaries('longTerm');
+    const beforeIds = new Set(before.items.map(entry => entry._id));
     const response = await apiRequest('POST', '/summaries', {
       type: 'longTerm',
       title: item.title,
@@ -293,7 +295,18 @@
       orderBy: 'oldest',
     });
     const data = response?.data;
-    return data?._id || data?.summary?._id || data?.id || '';
+    const responseId = data?._id || data?.summary?._id || data?.id || '';
+    if (responseId) return responseId;
+
+    const after = await fetchSummaries('longTerm');
+    const recovered = after.items.filter(entry => (
+      entry.createdBy === 'user'
+      && !beforeIds.has(entry._id)
+      && entry.title === item.title
+      && entry.summary === item.summary
+    ));
+    if (recovered.length === 1) return recovered[0]._id;
+    throw new Error('저장은 성공했을 수 있으나 신규 장기기억 ID를 안전하게 식별하지 못함. 기존 항목은 삭제하지 않음.');
   }
 
   async function updateSummary(id, item) {
@@ -717,53 +730,87 @@
     saveBackup(chatId, '51→10 재정리 전', current.items);
     state.compactionTxn = { sourceIds: [...draft.sourceIds], newIds: [], items: draft.items, stage: 'create' };
     persistStates();
-
-    try {
-      for (let index = 0; index < draft.items.length; index += 1) {
-        setStatus(`새 장기기억 생성 중 ${index + 1}/10...`);
-        const id = await createSummary(draft.items[index]);
-        if (!id) throw new Error(`${index + 1}번 신규 장기기억 ID를 받지 못함.`);
-        state.compactionTxn.newIds.push(id);
-        persistStates();
-      }
-      const verified = await fetchSummaries('longTerm');
-      const verifiedMap = new Map(verified.items.map(item => [item._id, item]));
-      for (let index = 0; index < state.compactionTxn.newIds.length; index += 1) {
-        const item = verifiedMap.get(state.compactionTxn.newIds[index]);
-        const expected = draft.items[index];
-        if (!item || item.createdBy !== 'user' || item.title !== expected.title || item.summary !== expected.summary) {
-          throw new Error(`${index + 1}번 신규 장기기억 검증 실패.`);
-        }
-      }
-      state.compactionTxn.stage = 'delete-old';
-      persistStates();
-      return resumeCompactionTransaction(chatId);
-    } catch (error) {
-      const newIds = new Set(state.compactionTxn?.newIds || []);
-      for (const id of newIds) {
-        try { await deleteTrackedUserSummary(id, newIds); } catch (_) {}
-      }
-      state.compactionTxn = null;
-      persistStates();
-      throw new Error(`${shortError(error)} 기존 장기기억은 삭제하지 않음.`);
-    }
+    return resumeCompactionTransaction(chatId);
   }
 
   async function resumeCompactionTransaction(chatId) {
     const state = stateFor(chatId);
     const txn = state.compactionTxn;
-    if (!txn || txn.stage !== 'delete-old') return false;
-    const current = await fetchSummaries('longTerm');
+    if (!txn) return false;
+    if (!Array.isArray(txn.items) || txn.items.length !== 10 || !Array.isArray(txn.sourceIds)) {
+      throw new Error('재정리 작업 기록이 손상됨. 기존 장기기억은 삭제하지 않음.');
+    }
+
+    let current = await fetchSummaries('longTerm');
+    const sourceSet = new Set(txn.sourceIds);
+    if (txn.stage === 'create') {
+      const currentById = new Map(current.items.map(item => [item._id, item]));
+      const missingSource = txn.sourceIds.some(id => currentById.get(id)?.createdBy !== 'user');
+      if (missingSource) throw new Error('기존 장기기억 구성이 바뀌어 신규 10개 생성을 중단함. 기존 항목은 더 삭제하지 않음.');
+
+      const tracked = new Set(txn.newIds || []);
+      for (let index = 0; index < txn.items.length; index += 1) {
+        const expected = txn.items[index];
+        const trackedId = txn.newIds[index];
+        if (trackedId) {
+          const saved = currentById.get(trackedId);
+          if (!saved || saved.createdBy !== 'user' || saved.title !== expected.title || saved.summary !== expected.summary) {
+            throw new Error(`${index + 1}번 신규 장기기억 기록이 달라 생성을 중단함. 기존 항목은 삭제하지 않음.`);
+          }
+          continue;
+        }
+
+        setStatus(`새 장기기억 생성 중 ${index + 1}/10...`);
+        const recovered = current.items.find(item => (
+          item.createdBy === 'user'
+          && !sourceSet.has(item._id)
+          && !tracked.has(item._id)
+          && item.title === expected.title
+          && item.summary === expected.summary
+        ));
+        const id = recovered?._id || await createSummary(expected);
+        if (!id) throw new Error(`${index + 1}번 신규 장기기억 ID를 받지 못함. 기존 항목은 삭제하지 않음.`);
+        txn.newIds.push(id);
+        tracked.add(id);
+        persistStates();
+      }
+
+      current = await fetchSummaries('longTerm');
+      const verifiedMap = new Map(current.items.map(item => [item._id, item]));
+      const uniqueNewIds = new Set(txn.newIds);
+      if (txn.newIds.length !== 10 || uniqueNewIds.size !== 10) {
+        throw new Error('신규 장기기억 10개 ID 검증 실패. 기존 항목은 삭제하지 않음.');
+      }
+      txn.newIds.forEach((id, index) => {
+        const saved = verifiedMap.get(id);
+        const expected = txn.items[index];
+        if (!saved || saved.createdBy !== 'user' || sourceSet.has(id)
+          || saved.title !== expected.title || saved.summary !== expected.summary) {
+          throw new Error(`${index + 1}번 신규 장기기억 검증 실패. 기존 항목은 삭제하지 않음.`);
+        }
+      });
+      txn.stage = 'delete-old';
+      persistStates();
+    }
+
+    if (txn.stage !== 'delete-old') return false;
+    current = await fetchSummaries('longTerm');
     const byId = new Map(current.items.map(item => [item._id, item]));
     const newIdSet = new Set(txn.newIds);
-    if (txn.newIds.length !== 10 || txn.newIds.some(id => byId.get(id)?.createdBy !== 'user')) {
+    if (txn.newIds.length !== 10 || newIdSet.size !== 10 || txn.newIds.some((id, index) => {
+      const item = byId.get(id);
+      const expected = txn.items[index];
+      return item?.createdBy !== 'user' || sourceSet.has(id)
+        || item.title !== expected.title || item.summary !== expected.summary;
+    })) {
       throw new Error('신규 10개 검증에 실패하여 기존 장기기억 삭제를 중단함.');
     }
-    const sourceSet = new Set(txn.sourceIds);
     let deleted = 0;
     for (const id of txn.sourceIds) {
       if (!byId.has(id)) continue;
-      if (!sourceSet.has(id) || newIdSet.has(id)) throw new Error('재정리 삭제 대상 검증 실패.');
+      if (byId.get(id)?.createdBy !== 'user' || !sourceSet.has(id) || newIdSet.has(id)) {
+        throw new Error('재정리 삭제 대상 검증 실패.');
+      }
       setStatus(`기존 장기기억 정리 중 ${deleted + 1}/${txn.sourceIds.length}...`);
       await deleteTrackedUserSummary(id, sourceSet);
       deleted += 1;
