@@ -8,8 +8,8 @@
 // @match        https://crack.wrtn.ai/characters/*/chats/*
 // @match        https://crack.wrtn.ai/u/*/c/*
 // @match        https://crack.wrtn.ai/
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/agent/crack-risu-manga-theme-v1/Crack_Risu_Manga_Theme.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/agent/crack-risu-manga-theme-v1/Crack_Risu_Manga_Theme.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/agent/crack-risu-manga-theme-v1/Crack_Risu_Manga_Theme.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/agent/crack-risu-manga-theme-v1/Crack_Risu_Manga_Theme.user.js
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -638,7 +638,7 @@ src: local('KoPubWorldDotum'),
     font-size: 16.5px !important;
 }
 .mg__text mark[risu-mark="quote1"] mark[risu-mark="quote2"]::before,
-.mg__text mark[risu-mark="quote1"] mark[risu-mark="quote2"]::after…9281 tokens truncated…xy;
+.mg__text mark[risu-mark="quote1"] mark[risu…9286 tokens truncated…xy;
   }
 
   function mountOptionProxy(group, card) {
