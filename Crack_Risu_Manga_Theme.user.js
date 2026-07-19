@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 Risu 망가 채팅 테마
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.0
+// @version      1.0.1
 // @description  크랙 채팅을 Risu 망가 카드 스타일로 바꾸고 프로필 이미지 설정을 Supabase로 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -832,11 +832,11 @@ src: local('KoPubWorldDotum'),
   }
 
   function value(id) {
-    return panel?.querySelector(`#${id}`)?.value?.trim() || '';
+    return panel?.querySelector('#' + id)?.value?.trim() || '';
   }
 
   function checked(id) {
-    return Boolean(panel?.querySelector(`#${id}`)?.checked);
+    return Boolean(panel?.querySelector('#' + id)?.checked);
   }
 
   function makeButton(label, className, handler) {
