@@ -341,7 +341,119 @@ ${chatLog}
             .shipidle-crack-summary-header-ai-btn { width:auto; height:32px; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:1px solid #c5b9e7 !important; border-radius:8px; background:#e7e0fa !important; color:#4b3f68 !important; padding:0 10px; font-weight:650; font-size:12px; box-shadow:none; white-space:nowrap !important; cursor:pointer; transition:background 0.2s; }
             .shipidle-crack-summary-header-ai-btn:hover { background:#dcd2f5 !important; }
 
-            body[data-theme="dark"] .shi…2448 tokens truncated…);
+            body[data-theme="dark"] .shipidle-crack-summary-ai-modal { background: #242321 !important; color: #F0EFEB !important; }
+            body[data-theme="dark"] .shipidle-crack-summary-ai-modal-header h3, body[data-theme="dark"] .shipidle-crack-summary-ai-modal label { color: #F0EFEB !important; }
+            body[data-theme="dark"] .shipidle-crack-summary-ai-modal input, body[data-theme="dark"] .shipidle-crack-summary-ai-modal textarea, body[data-theme="dark"] .shipidle-crack-summary-ai-modal select { background: #141413 !important; color: #F0EFEB !important; border: 1px solid #42413D !important; }
+
+            body[data-theme="dark"] #shipidle-ai-summary-card-nav button { background: #2E2D2B !important; color: #F0EFEB !important; border: 1px solid #42413D !important; }
+            body[data-theme="dark"] #shipidle-ai-summary-card-nav button:hover { background: #42413D !important; }
+
+            body[data-theme="dark"] .shipidle-crack-summary-session-card { background: #1a1918 !important; border: 1px solid #42413D !important; }
+            body[data-theme="dark"] .shipidle-crack-summary-session-content { color: #ccc !important; }
+            body[data-theme="dark"] .shipidle-crack-summary-ai-mbtn { background: #2E2D2B !important; color: #F0EFEB !important; border: 1px solid #42413D !important; }
+            body[data-theme="dark"] .shipidle-crack-summary-ai-mbtn-p { background: #F0EFEB !important; color: #1A1918 !important; }
+            body[data-theme="dark"] .shipidle-crack-summary-count-error { color: #ff6b6b !important; }
+        `;
+        document.head.appendChild(s);
+    }
+
+    function showToast(message) {
+        var old = document.getElementById('shipidle-crack-summary-toast');
+        if (old) old.remove();
+        var toast = document.createElement('div');
+        toast.id = 'shipidle-crack-summary-toast';
+        toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-10px);z-index:999999999;background:#1a1a1a;color:#fff;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,0.25);transition:opacity 0.3s,transform 0.3s;';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateX(-50%) translateY(0)'; });
+        setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(-50%) translateY(-10px)'; setTimeout(() => toast.remove(), 300); }, 3000);
+    }
+
+    function refreshCurrentTab(dialog) {
+        var btns = dialog.querySelectorAll('button'), activeBtn = null, otherBtn = null;
+        for (var i = 0; i < btns.length; i++) {
+            var txt = btns[i].textContent.trim();
+            if (txt === '단기 기억' || txt === '장기 기억') {
+                var bg = getComputedStyle(btns[i]).backgroundColor;
+                var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)\)/);
+                if (m && (parseInt(m[1]) + parseInt(m[2]) + parseInt(m[3])) / 3 < 128) activeBtn = btns[i];
+                else if (txt === '장기 기억') otherBtn = btns[i];
+            }
+        }
+        if (!activeBtn) return;
+        if (otherBtn) { otherBtn.click(); setTimeout(() => { activeBtn.click(); }, 150); }
+        else { activeBtn.click(); }
+    }
+
+    function showAiSummaryModal() {
+        var overlay = document.createElement('div');
+        overlay.className = 'shipidle-crack-summary-ai-overlay';
+        overlay.style.position = 'fixed'; overlay.style.inset = '0'; overlay.style.display = 'flex'; overlay.style.alignItems = 'center'; overlay.style.justifyContent = 'center';
+
+        const savedApiKey = localStorage.getItem('shipidle_crack_summary_gemini_key') || '';
+        const savedModel = localStorage.getItem('shipidle_crack_summary_gemini_model') || 'gemini-3.1-pro-preview';
+        const savedTurnCount = localStorage.getItem('shipidle_crack_summary_turn_count') || '15';
+        const savedProvider = localStorage.getItem('shipidle_crack_summary_api_provider') || 'google';
+        const savedFirebaseScript = localStorage.getItem('shipidle_crack_summary_firebase_script') || '';
+
+        let isPromptMode = false;
+        let tempResultContent = "";
+
+        let parsedCards = [];
+        let currentCardIndex = 0;
+
+        var html = '<div class="shipidle-crack-summary-ai-modal">';
+        html += '<div class="shipidle-crack-summary-ai-modal-header"><h3>✨ AI 요약 / 장기 기억 추가</h3></div>';
+
+        html += '<div class="crack-flex-ai-row" id="shipidle-ai-summary-top-settings">';
+        html += '<div class="fg" style="flex: 1.2;"><label>API</label><select id="shipidle-ai-summary-provider"><option value="google" ' + (savedProvider==='google'?'selected':'') + '>Google</option><option value="firebase" ' + (savedProvider==='firebase'?'selected':'') + '>Firebase</option></select></div>';
+        html += '<div class="fg" id="shipidle-ai-summary-key-container" style="flex: 2;' + (savedProvider==='google'?'':'display:none;') + '"><label>API Key</label><input type="password" id="shipidle-ai-summary-key" value="' + escapeHtml(savedApiKey) + '"></div>';
+        html += '<div class="fg" style="flex: 1.5;"><label>모델</label><select id="shipidle-ai-summary-model">';
+        html += '<option value="gemini-3.1-pro-preview" ' + (savedModel==='gemini-3.1-pro-preview'?'selected':'') + '>3.1 Pro Preview</option>';
+        html += '<option value="gemini-3-flash-preview" ' + (savedModel==='gemini-3-flash-preview'?'selected':'') + '>3 Flash Preview</option>';
+        html += '<option value="gemini-3.1-flash-lite-preview" ' + (savedModel==='gemini-3.1-flash-lite-preview'?'selected':'') + '>3.1 Flash-Lite</option>';
+        html += '<option value="gemini-2.5-pro" ' + (savedModel==='gemini-2.5-pro'?'selected':'') + '>2.5 Pro</option>';
+        html += '<option value="gemini-2.5-flash" ' + (savedModel==='gemini-2.5-flash'?'selected':'') + '>2.5 Flash</option>';
+        html += '<option value="gemini-2.5-flash-lite" ' + (savedModel==='gemini-2.5-flash-lite'?'selected':'') + '>2.5 Flash-Lite</option>';
+        html += '</select></div>';
+        html += '<div class="fg" style="flex: 0.8;"><label>턴 수</label><input type="number" id="shipidle-ai-summary-turns" value="' + escapeHtml(savedTurnCount) + '" min="0"></div>';
+        html += '</div>';
+
+        html += '<div class="crack-flex-ai-row" id="shipidle-ai-summary-firebase-container" style="margin-bottom:16px;' + (savedProvider==='firebase'?'':'display:none;') + '">';
+        html += '<div class="fg" style="flex: 1;"><label>Firebase Vertex AI 스크립트</label><textarea id="shipidle-ai-summary-firebase-script" rows="2" placeholder="firebaseConfig = { ... }; 형식의 스크립트를 입력해주세요.">' + escapeHtml(savedFirebaseScript) + '</textarea></div>';
+        html += '</div>';
+
+        html += '<div class="fg"><label id="shipidle-ai-summary-result-label-wrapper" style="display:flex; justify-content:space-between;">';
+        html += '<span id="shipidle-ai-summary-result-label">생성 결과</span>';
+        html += '<div style="display:flex; align-items:center; gap:10px;">';
+        html += '<span id="shipidle-ai-summary-selection-counter" style="color:#a777e3; font-size:12px; font-weight:normal;"></span>';
+        html += '<button id="shipidle-ai-summary-toggle-prompt" style="font-size:12px; background:none; border:1px solid #ddd; padding:4px 8px; border-radius:4px; cursor:pointer;">⚙️ 프롬프트 설정</button>';
+        html += '</div></label>';
+
+        html += '<textarea id="shipidle-ai-summary-result" rows="7" placeholder="생성 버튼을 누르면 요약 결과가 나오고, 직접 써서 추가할 수도 있습니다. 여러 개의 사건을 [제목] 내용 형식으로 적어주면 자동으로 분리해서 추가됩니다."></textarea>';
+
+        html += '<div id="shipidle-ai-summary-preview-container">';
+        html += '<div id="shipidle-ai-summary-card-nav" style="display:none;"><button id="shipidle-ai-summary-card-prev">◀</button><span id="shipidle-ai-summary-card-page">1 / 1</span><button id="shipidle-ai-summary-card-next">▶</button></div>';
+        html += '<div id="shipidle-ai-summary-preview-cards"></div>';
+        html += '</div></div>';
+
+        html += '<div class="shipidle-crack-summary-ai-modal-btns" style="justify-content: space-between; align-items: flex-end;">';
+        html += '<div><button class="shipidle-crack-summary-ai-mbtn" id="shipidle-ai-summary-generate">요약 생성</button></div>';
+        html += '<div style="display:flex; gap:8px;"><button class="shipidle-crack-summary-ai-mbtn" id="shipidle-ai-summary-cancel">취소</button><button class="shipidle-crack-summary-ai-mbtn shipidle-crack-summary-ai-mbtn-p" id="shipidle-ai-summary-save">추가하기</button></div></div></div>';
+
+        overlay.innerHTML = html;
+        document.body.appendChild(overlay);
+
+        const txtResult = overlay.querySelector('#shipidle-ai-summary-result');
+        const selCounter = overlay.querySelector('#shipidle-ai-summary-selection-counter');
+        const previewCards = overlay.querySelector('#shipidle-ai-summary-preview-cards');
+        const cardNav = overlay.querySelector('#shipidle-ai-summary-card-nav');
+        const spanCardPage = overlay.querySelector('#shipidle-ai-summary-card-page');
+        const btnCardPrev = overlay.querySelector('#shipidle-ai-summary-card-prev');
+        const btnCardNext = overlay.querySelector('#shipidle-ai-summary-card-next');
+        const btnSave = overlay.querySelector('#shipidle-ai-summary-save');
+
+        const selProvider = overlay.querySelector('#shipidle-ai-summary-provider');
         const contKey = overlay.querySelector('#shipidle-ai-summary-key-container');
         const contFirebase = overlay.querySelector('#shipidle-ai-summary-firebase-container');
         const inputFirebaseScript = overlay.querySelector('#shipidle-ai-summary-firebase-script');
@@ -779,4 +891,3 @@ ${chatLog}
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
     else start();
 })();
-
