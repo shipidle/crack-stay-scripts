@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.2
+// @version      1.1.3
 // @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
 // @match        https://crack.wrtn.ai/characters/*/chats/*
 // @match        https://crack.wrtn.ai/u/*/c/*
 // @match        https://crack.wrtn.ai/
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/agent/crack-memory-manager-v2/Crack_Lore_Sync_Bridge.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/agent/crack-memory-manager-v2/Crack_Lore_Sync_Bridge.user.js
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.1.2';
+  const VERSION = '1.1.3';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -56,7 +56,7 @@
   const textDecoder = new TextDecoder();
 
   GM_addStyle(`
-    #clsb-fab { width:auto; height:32px; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:1px solid #b9d8eb; border-radius:8px; background:#eef6fb; color:#24506d; padding:0 10px; font:650 12px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:none; white-space:nowrap; cursor:pointer; }
+    #clsb-fab { width:32px; min-width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #b9d8eb; border-radius:8px; background:#eef6fb; color:#24506d; padding:0; font:15px/1 Pretendard, -apple-system, BlinkMacSystemFont, sans-serif; box-shadow:none; white-space:nowrap; cursor:pointer; }
     #clsb-fab:hover { background:#e0f0fb; }
     #clsb-overlay { position:fixed; inset:0; z-index:2147483001; background:rgba(23,43,58,.32); display:flex; align-items:center; justify-content:center; padding:16px; font-family:Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; }
     #clsb-panel { width:min(470px, 100%); max-height:min(760px, 100%); overflow:auto; box-sizing:border-box; color:#1d3546; background:#f9fcff; border:1px solid #c9dfef; border-radius:18px; box-shadow:0 22px 70px rgba(19,58,81,.28); padding:18px; }
@@ -535,7 +535,7 @@
       button.addEventListener('click', openPanel);
     }
     if (button.parentElement !== headerHost) headerHost.insertBefore(button, headerHost.firstChild);
-    button.textContent = '☁️ 동기화';
+    button.textContent = '☁';
   }
 
   let chatSyncPrepared = false;
