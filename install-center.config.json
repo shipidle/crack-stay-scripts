@@ -1,0 +1,56 @@
+{
+  "repository": "shipidle/crack-stay-scripts",
+  "channels": [
+    {
+      "id": "beta",
+      "label": "🧪 BETA 테스트판",
+      "branch": "beta",
+      "description": "최신 수정본을 먼저 실사용 테스트하는 채널"
+    },
+    {
+      "id": "main",
+      "label": "✅ MAIN 안정판",
+      "branch": "main",
+      "description": "테스트 완료 후 Merge된 안정 채널"
+    }
+  ],
+  "devices": [
+    {
+      "id": "iphone",
+      "label": "📱 iPhone",
+      "exclude": [
+        "iPad_Crack_Font_Adjust.user.js"
+      ]
+    },
+    {
+      "id": "ipad",
+      "label": "▣ iPad",
+      "exclude": [
+        "iPhon_Crack_Font_Adjust.user.js"
+      ]
+    },
+    {
+      "id": "desktop",
+      "label": "🖥️ Desktop",
+      "exclude": [
+        "Crack_Logo_Hider2.user.js",
+        "iPad_Crack_Font_Adjust.user.js",
+        "iPhon_Crack_Font_Adjust.user.js"
+      ]
+    }
+  ],
+  "order": [
+    "Crack_Assistant.user.js",
+    "Crack_Draft_Keeper.user.js",
+    "Crack_Linebreak_Optimizer.user.js",
+    "Crack_Logo_Hider2.user.js",
+    "Crack_Lore_Sync_Bridge.user.js",
+    "Crack_Personal_AI_Summary.user.js",
+    "Crack_UserNote_DB.user.js",
+    "Rewriting_Helper.user.js",
+    "crack-count-cracker-hud.user.js",
+    "crack-mini-sidebar-menu.user.js",
+    "iPad_Crack_Font_Adjust.user.js",
+    "iPhon_Crack_Font_Adjust.user.js"
+  ]
+}
