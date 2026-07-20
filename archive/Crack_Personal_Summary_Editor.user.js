@@ -5,8 +5,8 @@
 // @description  shipidle 개인용 장기 요약 메모리 일괄 편집기
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_Summary_Editor.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_Summary_Editor.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_Personal_Summary_Editor.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_Personal_Summary_Editor.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -825,11 +825,6 @@
     // --- 버튼 주입 ---
 
     function injectButton() {
-        // 통합 메모리 관리자 v2가 설치되어 있으면 구형 편집 버튼은 숨깁니다.
-        if (window.__SHIPIDLE_MEMORY_MANAGER_V2__ || document.querySelector('button[data-ce-ai-summary="true"]')) {
-            document.getElementById('shipidle-summary-editor-editor-btn')?.remove();
-            return;
-        }
         // 상단 헤더 컨테이너 찾기
         const headerContainer = document.querySelector('.absolute.z-\\[5\\] .flex.gap-3.items-center');
         if (!headerContainer || document.getElementById('shipidle-summary-editor-editor-btn')) return;
