@@ -1,8 +1,9 @@
 ﻿// ==UserScript==
-// @name         캐챗 어시스턴트
+// @name         🤖 캐챗 어시스턴트
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
-// @version      2.39.0-local
+// @version      2.39.1-local
 // @description  🧪 BETA · crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       extensionCode
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -20,7 +21,7 @@
 (function () {
   'use strict';
 
-  const CWA_VERSION = '2.39.0';
+  const CWA_VERSION = '2.39.1';
   let usdKrw = 1400;   // USD→KRW 환율 — open.er-api.com 에서 자동 갱신(1시간 캐시), 실패 시 이 기본값
 
   /* =========================================================================

@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         크랙 자동저장 (iOS)
+// @name         💾 크랙 자동저장 (iOS)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.1
+// @version      1.1.2
 // @description  Keep unsent Crack/WRTN chat drafts per chat room after refresh, including iOS reloads.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
-// @icon         https://www.google.com/s2/favicons?sz=64&domain=crack.wrtn.ai
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_Draft_Keeper_iOS.user.js
 // @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_Draft_Keeper_iOS.user.js

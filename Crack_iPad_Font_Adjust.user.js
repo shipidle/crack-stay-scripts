@@ -1,13 +1,14 @@
 // ==UserScript==
-// @name         크랙 폰트 조정 (패드)
+// @name         🔠 크랙 폰트 조정 (패드)
 // @namespace    https://github.com/shipidle/crack-stay-scripts/ipad-crack-font-adjust
-// @version      1.0.2
+// @version      1.0.3
 // @description  🧪 BETA · crack.wrtn.ai 리스트 간격과 인용문 표시를 compact하게 조정
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/iPad_Crack_Font_Adjust.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/iPad_Crack_Font_Adjust.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPad_Font_Adjust.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPad_Font_Adjust.user.js
 // ==/UserScript==
 
 (function () {

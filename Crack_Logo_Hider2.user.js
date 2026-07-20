@@ -1,8 +1,9 @@
 // ==UserScript==
-// @name         Crack Logo Hider2
+// @name         🙈 Crack Logo Hider2
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider2
-// @version      1.5.1
+// @version      1.5.2
 // @description  🧪 BETA · Hide the Crack header logo and prevent horizontal page drift without hiding drawers or popups.
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
