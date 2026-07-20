@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name         크랙 유저노트 DB
+// @name         🗂️ 크랙 유저노트 DB
 // @namespace    crack-usernote-db
-// @version      1.0.4
+// @version      1.0.5
 // @description  크랙 유저노트에 저장해둔 범용지침/옵션/페르소나를 마커 기반으로 자동 적용
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
-// @icon         https://www.google.com/s2/favicons?sz=64&domain=crack.wrtn.ai
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js
 // @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js

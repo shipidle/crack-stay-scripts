@@ -1,8 +1,9 @@
 // ==UserScript==
-// @name         줄바꿈 최적화
+// @name         ↩️ 줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.2.1
+// @version      1.2.2
 // @description  크랙의 강제 글자 쪼개기를 막고 iOS Safari에서도 단어 기준 줄바꿈을 적용합니다.
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
