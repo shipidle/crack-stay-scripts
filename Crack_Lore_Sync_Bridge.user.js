@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.2
-// @description  기존 로어 인젝터를 수정하지 않고, 개인 Supabase에 암호화 백업을 자동 동기화합니다.
+// @version      1.2.0
+// @description  개인 Supabase에 로어 백업과 메모리 요약 턴 체크포인트를 안전하게 동기화합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
 // @match        https://crack.wrtn.ai/characters/*/chats/*
@@ -24,8 +24,9 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.1.2';
+  const VERSION = '1.2.0';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
+  const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
   const AUTO_SYNC_MS = 60_000;
@@ -90,6 +91,9 @@
 
   function shortError(error) {
     const raw = String(error?.message || error || '알 수 없는 오류').replace(/\s+/g, ' ').trim();
+    if (/summary_sync_state|summary_checkpoint|summary_batch|schema cache/i.test(raw)) {
+      return 'Supabase에 supabase/summary_sync.sql을 먼저 실행해줘.';
+    }
     if (/email not confirmed/i.test(raw)) return '이메일 인증이 아직 안 됨. 받은메일함의 인증 링크를 누른 뒤 다시 로그인하면 됨.';
     if (/invalid login credentials/i.test(raw)) return '이메일 또는 비밀번호가 맞지 않음.';
     if (/user already registered/i.test(raw)) return '이미 가입된 이메일임. 로그인 버튼을 쓰면 됨.';
@@ -297,6 +301,128 @@
     return bytesToBase64Url(new Uint8Array(digest));
   }
 
+  function summarySyncStatus() {
+    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Supabase 연결 정보를 저장해줘.' };
+    if (!session?.access_token) return { ready: false, reason: '로어 동기화에서 Supabase 로그인해줘.' };
+    if (!config.syncPassphrase || config.syncPassphrase.length < 8) return { ready: false, reason: '동기화 암호를 저장해줘.' };
+    return { ready: true, reason: '' };
+  }
+
+  function validateSummarySyncInput(chatId, batchEndCount = null, lockOwner = '') {
+    if (!/^[a-z0-9-]{1,128}$/i.test(String(chatId || ''))) throw new Error('채팅 ID 형식이 올바르지 않음.');
+    if (batchEndCount !== null && (!Number.isInteger(batchEndCount) || batchEndCount < 0 || batchEndCount % 20 !== 0)) {
+      throw new Error('요약 턴 경계가 올바르지 않음.');
+    }
+    if (lockOwner && String(lockOwner).length < 8) throw new Error('동기화 잠금 ID가 올바르지 않음.');
+  }
+
+  async function summaryRpc(name, body) {
+    const status = summarySyncStatus();
+    if (!status.ready) throw new Error(status.reason);
+    try {
+      return await request(`${config.projectUrl}/rest/v1/rpc/${name}`, {
+        method: 'POST',
+        headers: await authHeaders({ Prefer: 'return=representation' }),
+        body,
+      });
+    } catch (error) {
+      throw new Error(shortError(error));
+    }
+  }
+
+  function normalizeCheckpoint(row) {
+    if (!row) return null;
+    return {
+      batchEndCount: Number(row.batch_end_count ?? row.row_batch_end_count ?? 0),
+      batchStartTurnId: String(row.batch_start_turn_id ?? row.row_batch_start_turn_id ?? ''),
+      batchEndTurnId: String(row.batch_end_turn_id ?? row.row_batch_end_turn_id ?? '__start__'),
+      status: String(row.status ?? row.row_status ?? ''),
+      lockOwner: String(row.lock_owner ?? row.row_lock_owner ?? ''),
+      createdSummaryIds: Array.isArray(row.created_summary_ids ?? row.row_created_summary_ids)
+        ? (row.created_summary_ids ?? row.row_created_summary_ids).map(String)
+        : [],
+    };
+  }
+
+  async function getSummaryCheckpoint(chatId) {
+    validateSummarySyncInput(chatId);
+    const status = summarySyncStatus();
+    if (!status.ready) throw new Error(status.reason);
+    const active = await refreshSessionIfNeeded();
+    const query = new URLSearchParams({
+      owner_id: `eq.${active.user.id}`,
+      chat_id: `eq.${chatId}`,
+      status: 'eq.completed',
+      select: 'batch_end_count,batch_start_turn_id,batch_end_turn_id,status,lock_owner,created_summary_ids',
+      order: 'batch_end_count.desc',
+      limit: '1',
+    });
+    const rows = await request(`${config.projectUrl}/rest/v1/summary_sync_state?${query}`, { headers: await authHeaders() });
+    return normalizeCheckpoint(Array.isArray(rows) ? rows[0] : null);
+  }
+
+  async function initializeSummaryCheckpoint({ chatId, batchEndCount, batchEndTurnId }) {
+    validateSummarySyncInput(chatId, batchEndCount);
+    const rows = await summaryRpc('initialize_summary_checkpoint', {
+      p_chat_id: chatId,
+      p_batch_end_count: batchEndCount,
+      p_batch_end_turn_id: batchEndTurnId || '__start__',
+    });
+    return normalizeCheckpoint(Array.isArray(rows) ? rows[0] : null);
+  }
+
+  async function claimSummaryBatch({ chatId, batchStartTurnId, batchEndTurnId, batchEndCount, lockOwner }) {
+    validateSummarySyncInput(chatId, batchEndCount, lockOwner);
+    const rows = await summaryRpc('claim_summary_batch', {
+      p_chat_id: chatId,
+      p_batch_start_turn_id: batchStartTurnId || '',
+      p_batch_end_turn_id: batchEndTurnId,
+      p_batch_end_count: batchEndCount,
+      p_lock_owner: lockOwner,
+      p_lock_ttl_seconds: 1800,
+    });
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) throw new Error('요약 구간 잠금 응답이 비어 있음.');
+    const checkpoint = normalizeCheckpoint(row);
+    const ciphertext = row.row_payload_ciphertext || '';
+    return {
+      ...checkpoint,
+      claimed: row.claimed === true,
+      payload: ciphertext ? await decryptBackup(ciphertext) : null,
+    };
+  }
+
+  async function saveSummaryBatch({ chatId, batchEndCount, lockOwner, payload, createdSummaryIds }) {
+    validateSummarySyncInput(chatId, batchEndCount, lockOwner);
+    await summaryRpc('save_summary_batch_progress', {
+      p_chat_id: chatId,
+      p_batch_end_count: batchEndCount,
+      p_lock_owner: lockOwner,
+      p_payload_ciphertext: payload ? await encryptBackup(payload) : null,
+      p_created_summary_ids: Array.isArray(createdSummaryIds) ? createdSummaryIds.map(String) : [],
+    });
+  }
+
+  async function completeSummaryBatch({ chatId, batchEndCount, lockOwner, createdSummaryIds }) {
+    validateSummarySyncInput(chatId, batchEndCount, lockOwner);
+    await summaryRpc('complete_summary_batch', {
+      p_chat_id: chatId,
+      p_batch_end_count: batchEndCount,
+      p_lock_owner: lockOwner,
+      p_created_summary_ids: Array.isArray(createdSummaryIds) ? createdSummaryIds.map(String) : [],
+    });
+  }
+
+  async function failSummaryBatch({ chatId, batchEndCount, lockOwner, error }) {
+    validateSummarySyncInput(chatId, batchEndCount, lockOwner);
+    await summaryRpc('fail_summary_batch', {
+      p_chat_id: chatId,
+      p_batch_end_count: batchEndCount,
+      p_lock_owner: lockOwner,
+      p_last_error: String(error?.message || error || 'unknown error').slice(0, 500),
+    });
+  }
+
   async function getRemote() {
     const active = await refreshSessionIfNeeded();
     const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=ciphertext,revision,updated_at,device_label,schema_version`, {
@@ -489,7 +615,7 @@
     }
     panel.appendChild(statusEl);
     const meta = document.createElement('div'); meta.className = 'clsb-meta';
-    meta.textContent = `Bridge v${VERSION} · 마지막 동기화: ${syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString() : '아직 없음'} · Supabase 저장 데이터는 AES-256-GCM으로 암호화됨.`;
+    meta.textContent = `Bridge v${VERSION} · 마지막 동기화: ${syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString() : '아직 없음'} · 로어와 메모리 요약 초안 내용은 AES-256-GCM으로 암호화됨.`;
     panel.appendChild(meta);
   }
 
@@ -576,6 +702,20 @@
     setInterval(syncBridgeRoute, 1000);
     setInterval(autoSync, AUTO_SYNC_MS);
   }
+
+  Object.defineProperty(BRIDGE, SUMMARY_SYNC_API_KEY, {
+    configurable: true,
+    value: Object.freeze({
+      version: 1,
+      getStatus: summarySyncStatus,
+      getCheckpoint: getSummaryCheckpoint,
+      initializeCheckpoint: initializeSummaryCheckpoint,
+      claimBatch: claimSummaryBatch,
+      saveBatch: saveSummaryBatch,
+      completeBatch: completeSummaryBatch,
+      failBatch: failSummaryBatch,
+    }),
+  });
 
   initialize().catch(error => console.warn('[Lore Sync Bridge] init failed:', error));
 })();
