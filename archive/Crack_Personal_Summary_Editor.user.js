@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         크랙 개인 요약 메모리 텍스트 편집기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.0
+// @version      1.0.1
 // @description  shipidle 개인용 장기 요약 메모리 일괄 편집기
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_Summary_Editor.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_Summary_Editor.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_Personal_Summary_Editor.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_Personal_Summary_Editor.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==

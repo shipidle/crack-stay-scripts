@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Crack iOS Overflow Debugger
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-ios-overflow-debugger
-// @version      1.0.0
+// @version      1.0.1
 // @description  Find elements causing horizontal overflow on Crack using an iPhone.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_iOS_Overflow_Debugger.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_iOS_Overflow_Debugger.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_iOS_Overflow_Debugger.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Crack_iOS_Overflow_Debugger.user.js
 // ==/UserScript==
 
 (function () {

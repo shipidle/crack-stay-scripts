@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.0.0
-// @description  shipidle 개인용 장기기억 요약 메모리 생성 및 자동 추가
+// @version      2.0.1
+// @description  20턴 AI 장기기억 요약, 자동 장기기억 정리, 51→10 재요약, 편집 및 백업 통합 관리자
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js
@@ -11,883 +11,1327 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-(function () {
-    'use strict';
+(() => {
+  'use strict';
 
-    const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
-    const TYPE_MAP = {
-        '단기 기억': 'shortTerm'
+  const VERSION = '2.0.1';
+  const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
+  const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
+  const CONFIG_KEY = `${STORAGE_KEY}:config`;
+  const STATE_KEY = `${STORAGE_KEY}:state`;
+  const BACKUP_KEY = `${STORAGE_KEY}:backups`;
+  const LOCK_PREFIX = `${STORAGE_KEY}:lock:`;
+  const AUTO_TURN_COUNT = 20;
+  const AUTO_CHECK_MS = 60_000;
+  const LOCK_TTL_MS = 10 * 60_000;
+  const MAX_SUMMARY_LENGTH = 300;
+  const MAX_TITLE_LENGTH = 20;
+  const MAX_BACKUPS_PER_CHAT = 5;
+  const KRW_PER_USD = 1500;
+
+  const MODEL_OPTIONS = [
+    ['gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite'],
+    ['gemini-3-flash-preview', 'Gemini 3 Flash Preview'],
+    ['gemini-3.1-pro-preview', 'Gemini 3.1 Pro Preview'],
+    ['gemini-2.5-flash', 'Gemini 2.5 Flash'],
+    ['gemini-2.5-pro', 'Gemini 2.5 Pro'],
+  ];
+
+  const MODEL_PRICES = {
+    'gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
+    'gemini-3-flash-preview': { input: 0.5, output: 3 },
+    'gemini-3.1-pro-preview': { input: 2, output: 12 },
+    'gemini-2.5-flash': { input: 0.3, output: 2.5 },
+    'gemini-2.5-pro': { input: 1.25, output: 10 },
+  };
+
+  const SUMMARY_SYSTEM_PROMPT = `당신은 캐릭터 채팅의 장기기억을 만드는 기록자입니다.
+입력은 시간순으로 정렬된 정확히 20회의 유저-캐릭터 왕복 대화입니다.
+
+[목표]
+- 전체 흐름을 2~3개의 독립 사건으로 요약합니다.
+- AI의 recall을 위해 사건, 관계 변화, 약속, 갈등, 핵심 대사, 고유명사, 물건, 장소와 현재 상태를 구체적으로 보존합니다.
+- 로그에 없는 의도나 사실은 만들지 않습니다.
+- 반복 일상은 구체적인 취향·약속·행동만 남기고, 장시간 성적 상황은 장소와 관계 변화 중심으로 압축합니다.
+
+[형식]
+- JSON 배열만 출력합니다. 각 원소는 title, summary 문자열을 가집니다.
+- title: 공백 포함 20자 이하. 유저명은 제외하고 NPC명과 검색 가능한 핵심 사건어를 넣습니다. 대괄호와 번호는 넣지 않습니다.
+- summary: 공백과 줄바꿈 포함 300자 이하, 권장 200~290자입니다.
+- summary 첫 줄은 MM/DD 시간대 형식의 날짜이고 다음 줄은 "- "로 시작합니다.
+- 요약체(~함, ~임) 또는 명사형으로 끝냅니다.
+- 대명사 대신 정확한 이름을 사용합니다.
+- 입력 순서를 지키고 뒤 사건 정보를 앞 사건에 섞지 않습니다.
+- 제목과 내용 제한을 넘기면 실패입니다.`;
+
+  const COMPACT_SYSTEM_PROMPT = `당신은 캐릭터 채팅의 기존 장기기억을 재정리하는 기록자입니다.
+입력된 모든 장기기억을 시간순으로 통합하여 정확히 10개로 줄입니다.
+
+[우선순위]
+1. 사건과 인과관계
+2. 인물 관계 변화, 감정선, 약속, 갈등, 비밀
+3. 이름, 장소, 물건, 설정, 현재 상태
+4. 반복되는 일상은 구체적 취향과 합의만 보존
+5. 장시간 성적 상황은 장소, 상대, 관계 변화 정도로 압축
+
+[형식]
+- JSON 배열만 출력하며 정확히 10개여야 합니다.
+- 각 원소는 title, summary 문자열을 가집니다.
+- title은 "숫자. 제목" 형식이며 번호 포함 공백 기준 10~20자입니다.
+- summary는 공백과 줄바꿈 포함 200~300자입니다.
+- summary 첫 줄은 가능한 가장 대표적인 MM/DD 시간대이며 다음 줄은 "- "로 시작합니다.
+- 요약체(~함, ~임) 또는 명사형으로 끝냅니다.
+- 중복을 제거하되 중요한 사실을 누락하지 않습니다.
+- 로그에 없는 사실과 해석을 만들지 않습니다.
+- 입력에 번호가 있어도 새 번호 1~10으로 다시 작성합니다.`;
+
+  const NORMAL_SCHEMA = {
+    type: 'ARRAY', minItems: 2, maxItems: 3,
+    items: {
+      type: 'OBJECT',
+      properties: { title: { type: 'STRING' }, summary: { type: 'STRING' } },
+      required: ['title', 'summary'],
+    },
+  };
+
+  const COMPACT_SCHEMA = {
+    type: 'ARRAY', minItems: 10, maxItems: 10,
+    items: {
+      type: 'OBJECT',
+      properties: { title: { type: 'STRING' }, summary: { type: 'STRING' } },
+      required: ['title', 'summary'],
+    },
+  };
+
+  const defaultConfig = {
+    autoEnabled: true,
+    provider: 'google',
+    model: 'gemini-3.1-flash-lite',
+    apiKey: '',
+    firebaseScript: '',
+    extraPrompt: '',
+  };
+
+  const storedConfig = loadJson(CONFIG_KEY, null);
+  let config = storedConfig ? { ...defaultConfig, ...storedConfig } : migrateLegacyConfig();
+  let states = loadJson(STATE_KEY, {});
+  let panel = null;
+  let activeTab = 'overview';
+  let busy = false;
+  let latestStatus = '준비됨.';
+  let latestStatusTone = '';
+  let dashboard = { progress: 0, userCount: 0, autoCount: 0, shortCount: 0 };
+  let editorOriginal = [];
+  let editorLoaded = false;
+  const ownerId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+  window.__SHIPIDLE_MEMORY_MANAGER_V2__ = true;
+
+  function loadJson(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function saveJson(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  function migrateLegacyConfig() {
+    const oldModel = localStorage.getItem('shipidle_crack_summary_gemini_model') || '';
+    const validModel = MODEL_OPTIONS.some(([id]) => id === oldModel) ? oldModel : 'gemini-3.1-flash-lite';
+    const next = {
+      ...defaultConfig,
+      provider: localStorage.getItem('shipidle_crack_summary_api_provider') || 'google',
+      model: validModel,
+      apiKey: localStorage.getItem('shipidle_crack_summary_gemini_key') || '',
+      firebaseScript: localStorage.getItem('shipidle_crack_summary_firebase_script') || '',
     };
+    saveJson(CONFIG_KEY, next);
+    return next;
+  }
 
-    const DEFAULT_PROMPT = `# 📔 장기기억 아카이브 요약 프롬프트
-
-## 🎯 목적
-채팅 로그를 분석하여 이후 서사가 어긋나지 않도록 **'사건 단위의 독립적 앵커'**를 생성하되, **인물 간의 감정선과 미묘한 상호작용의 질감(Texture)**을 보존한다.
-생성된 요약문은 향후 AI가 인물 간의 관계 역학부터 소소한 추억까지 생생하고 섬세하게 기억하여, 이후의 롤플레잉을 보다 입체적으로 이끌어가는 참고 자료로 쓰일 예정이다.
-
----
-
-## 🧩 출력 단위 및 분리 기준
-- **단위**: 출력의 최소 단위는 ‘사건’이다.
-- **분리 필수 조건**: 아래 중 하나라도 해당하면 반드시 **새로운 사건 슬롯**으로 분리하여 출력한다.
-1. **장소 이동** (예: 복도 → 교실 / 교정 → 중앙 정원)
-2. **시간대 변화** (예: 오전 → 오후 / 수업 시간 → 쉬는 시간)
-3. **주요 인물 구성 변화** (예: 1:1 대화 중 제3자 난입)
-- **장소 명시**: 동일한 시간 내 주제가 이어질 때 장소가 바뀌면 병합해서 작성하되 바뀐 장소를 반드시 명시한다.
-- **소급 금지**: 나중에 발생한 일(대사, 결정, 물건 등장 등)을 앞선 사건 요약에 미리 포함하지 않는다.
--**성행위 예외**: 단, 성행위 상황은 예외이므로 분리하지 않고 반드시 하나의 사건 슬롯으로 묶는다.
--**슬롯 수**: 가능한 2-3슬롯 내로 한 슬롯당 내용이 300자가 되게 작성한다.
-
----
-
-## 📋 출력 형식 (강제)
-
-[제목]
-- 내용
-
-### 1. 제목 규칙 (최고 중요도: 시맨틱 검색 최적화)
-- **제한**: 공백 포함 **20자 이내 최대 활용**. 조사(~의, ~와, ~에서) 및 특수기호(# 등) 사용 금지.
-- **형식 고정**: 유저명은 제외하고 관련된 **NPC명(필수)**을 포함하되, **세력명/국가명/소재/핵심행동** 등 검색에 유의미한 고유명사를 띄어쓰기로 나열. (날짜/시간 및 주관적 감정 기재 금지)
-- 제목은 항상 []로 가둘 것. []는 20자 제한에 미포함, 대괄호[] 안의 내용 기준 공백 포함 20자 제한.
-- **예시**:
-- \`[NPC명 연회 독살시도 찻잔]\` (O)
-- \`[NPC명 말다툼 사과 바닐라라떼]\` (O)
-- \`[#NPC 말다툼 사과]\` (X - '#' 기호 사용 금지)
-- \`[유저명 NPC명 말다툼 사과]\` (X - 기본값인 유저명 포함으로 글자수 낭비)
-
-### 2. 내용 규칙
-- **제한**: 공백 포함 **500자 이내**. **요약체(~함, ~임)**를 사용할 것.
-- **형식**: 반드시 \`- \` (하이픈과 공백)으로 시작하되, 항목은 1개로 유지.
-- **타임라인**: 본문 첫머리에 반드시 \`MM/DD 시간대\`를 명시할 것. (예: \`08/24 오후\`)
-- **시간대**: 새벽 / 오전 / 오후 / 저녁 / 밤 중 택1.
-- **대명사 금지**: '그', '그녀' 대신 반드시 **정확한 이름(유저명, NPC명 등)**을 명시하여 맥락 독립성을 확보할 것.
-- **핵심 기록 요소**:
-- **상호작용의 연쇄(Flow)**: 단순 '자극-반응'을 넘어, **[누군가의 행동/발화] → [상대의 리액션] → [그로 인한 재반응/변화]**의 인과 사슬을 명확히 기록할 것. **대사는 " " 인용**
-- **사건의 배경 및 정보(Context & Lore)**: 단순 결과만 적지 말 것. '누가 무엇 때문에 공표했는지', '무슨 속셈으로 한 거짓말인지' 등 대화 중 언급된 **공식 발표, 전언, 소문, 은밀한 동기** 등 떡밥이 되는 맥락 정보를 구체적으로 포함할 것.
-- **구체적 양상(How)**: '애교', '화냄' 등 추상적 표현 대신 **"옷자락을 당김", "미간을 찌푸림", "시선을 피함"** 등 로그에 명시된 행동과 표정을 적을 것.
-- **미묘한 기류(Mood)**: 사건 전개에 필수적이지 않더라도, 두 인물 간의 **사소한 장난, 묘한 긴장감, 말투의 변화** 등 질감을 살리는 디테일을 포함할 것.
-- **전환점 (Turning Point)**: **관계 변화** 및 **결정적 약속/은폐** 사실.
-- **구체적 명사(Keywords)**: 상징적인 **선물, 물건, 공간**을 정확한 명칭으로 기록할 것.
-
----
-
-## 🚫 기록 원칙 (Strict)
-- **❌ 통합 금지**: 하루 전체를 하나로 요약하거나, 여러 사건을 대표 사건 하나로 뭉뚱그리지 말 것.
-- **❌ 소설 금지**: AI의 주관적 해석, 의도 추론, 로그에 없는 사실 기록 금지. (동기는 오직 로그 안에서 확인된 것만 적을 것)
-- **❌ 뭉개기 금지**: '대화를 나눴다'는 식의 결과적 요약 금지. **어떻게 시작되었고 그 대화가 어떻게 흘러갔는지(인과)**를 적을 것.
-- **❌ 순서 변경 금지**: 반드시 입력 로그의 시간 흐름(Timeline)을 엄격히 준수할 것.
-- **❌ 정보 이동 금지**: 특정 장소에서 일어난 대화나 물건을 다른 장소의 요약문에 섞지 말 것.
-- **❌ 대괄표 남발 금지**: 제목 이외의 어떠한 내용에도 대괄호([,])를 사용하지 않는다.
-- **⭕ 팩트의 확장 보존**: 물리적 사건뿐만 아니라, 인물 간 전달된 **간접 정보(미확인 소문, 제3자의 동향, 공표 내용 등)**도 스토리의 핵심 팩트로 간주하여 명확히 기록할 것.
-- **⭕ 주체 보존**: 발단이 누구인지 구분하여, 상호작용의 방향성과 주체를 명확히 할 것.
-
----
-
-## ⚠️ 오류 조건
-- 서로 다른 장소의 사건이 하나로 합쳐질 경우 **출력 오류**.
-- 제목 형식 미준수 또는 공백 포함 20자 초과 시 **출력 오류**.
-- 내용이 공백 포함 500자를 초과하거나 로그의 순서가 뒤섞일 경우 **출력 오류**.
-- 인물 간의 인과적 연쇄가 누락되면 **출력 오류**.
-- 한국어 외의 언어로 출력시 **출력 오류**.`;
-
-    function getChatId() {
-        const m = location.pathname.match(/\/episodes\/([a-f0-9]+)/);
-        return m ? m[1] : null;
+  function stateFor(chatId) {
+    if (!states[chatId]) {
+      states[chatId] = {
+        baselineTurnId: '',
+        progress: 0,
+        lastCostKrw: 0,
+        totalCostKrw: 0,
+        cleanupApproved: false,
+        compactionApproved: false,
+        pendingBatch: null,
+        pendingCompaction: null,
+        compactionTxn: null,
+        lastRunAt: 0,
+      };
+      persistStates();
     }
+    return states[chatId];
+  }
 
-    function getToken() {
-        const m = document.cookie.match(/(^| )access_token=([^;]+)/);
-        return m ? m[2] : null;
+  function persistConfig() {
+    saveJson(CONFIG_KEY, config);
+  }
+
+  function persistStates() {
+    saveJson(STATE_KEY, states);
+  }
+
+  function getChatId() {
+    const patterns = [
+      /\/episodes\/([a-f0-9]+)/i,
+      /\/chats\/([a-f0-9]+)/i,
+      /\/c\/([a-f0-9]+)/i,
+    ];
+    for (const pattern of patterns) {
+      const match = location.pathname.match(pattern);
+      if (match) return match[1];
     }
+    return null;
+  }
 
-    function escapeHtml(s) {
-        if (!s) return "";
-        const d = document.createElement('div');
-        d.textContent = s;
-        return d.innerHTML;
+  function getAccessToken() {
+    const match = document.cookie.match(/(?:^|;\s*)access_token=([^;]+)/);
+    if (!match) return '';
+    try { return decodeURIComponent(match[1]); } catch (_) { return match[1]; }
+  }
+
+  function escapeHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = String(value ?? '');
+    return div.innerHTML;
+  }
+
+  function charCount(value) {
+    return String(value || '').length;
+  }
+
+  function formatWon(value) {
+    return Number(value || 0).toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function shortError(error) {
+    const raw = String(error?.message || error || '알 수 없는 오류').replace(/\s+/g, ' ').trim();
+    if (/401|403|unauthor|forbidden/i.test(raw)) return '인증이 만료됐거나 해당 작업 권한이 없음.';
+    if (/fetch|network|timeout/i.test(raw)) return '네트워크 요청 실패.';
+    return raw.slice(0, 280);
+  }
+
+  function setStatus(message, tone = '') {
+    latestStatus = message;
+    latestStatusTone = tone;
+    const el = panel?.querySelector('#cmm-status');
+    if (el) {
+      el.textContent = message;
+      el.className = `cmm-status ${tone}`.trim();
     }
+  }
 
-    function apiCall(method, path, body) {
-        const token = getToken(), chatId = getChatId();
-        if (!token || !chatId) {
-            alert('인증 정보 또는 채팅 ID를 찾을 수 없습니다.');
-            return Promise.resolve(null);
-        }
-        const opts = {
-            method,
-            headers: {
-                'Authorization': 'Bearer ' + token,
-                'Content-Type': 'application/json'
-            }
+  function showToast(message, tone = '') {
+    document.getElementById('cmm-toast')?.remove();
+    const toast = document.createElement('div');
+    toast.id = 'cmm-toast';
+    toast.className = tone;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 250);
+    }, 4200);
+  }
+
+  async function apiRequest(method, path, body) {
+    const chatId = getChatId();
+    const token = getAccessToken();
+    if (!chatId || !token) throw new Error('채팅 ID 또는 로그인 토큰을 찾을 수 없음.');
+    const response = await fetch(`${API_BASE}/${chatId}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    let parsed = null;
+    try { parsed = text ? JSON.parse(text) : { result: 'SUCCESS' }; } catch (_) { parsed = { raw: text }; }
+    if (!response.ok) throw new Error(parsed?.message || parsed?.error || parsed?.raw || `HTTP ${response.status}`);
+    return parsed;
+  }
+
+  async function fetchSummaries(type = 'longTerm') {
+    const items = [];
+    let cursor = '';
+    let meta = { totalCount: 0, userCreatedCount: 0, isCreatable: true };
+    for (let page = 0; page < 100; page += 1) {
+      const params = new URLSearchParams({ limit: '20', type, orderBy: 'oldest', filter: 'all' });
+      if (cursor) params.set('cursor', cursor);
+      const response = await apiRequest('GET', `/summaries?${params}`);
+      const data = response?.data || {};
+      if (page === 0) {
+        meta = {
+          totalCount: Number(data.totalCount || 0),
+          userCreatedCount: Number(data.userCreatedCount || 0),
+          isCreatable: data.isCreatable !== false,
         };
-        if (body) opts.body = JSON.stringify(body);
-        return fetch(API_BASE + '/' + chatId + path, opts)
-            .then(function (r) {
-                if (!r.ok) {
-                    return r.text().then(function (t) {
-                        console.error('API Error:', r.status, t);
-                        return null;
-                    });
-                }
-                return r.text().then(function (t) {
-                    return t ? JSON.parse(t) : { result: 'SUCCESS' };
-                });
-            })
-            .catch(function (e) {
-                alert('네트워크 오류: ' + e.message);
-                return null;
-            });
+      }
+      const pageItems = Array.isArray(data.summaries) ? data.summaries : [];
+      items.push(...pageItems);
+      cursor = data.nextCursor || '';
+      if (!cursor || pageItems.length === 0) break;
+    }
+    return { items, ...meta };
+  }
+
+  async function createSummary(item) {
+    const before = await fetchSummaries('longTerm');
+    const beforeIds = new Set(before.items.map(entry => entry._id));
+    const response = await apiRequest('POST', '/summaries', {
+      type: 'longTerm',
+      title: item.title,
+      summary: item.summary,
+      orderBy: 'oldest',
+    });
+    const data = response?.data;
+    const responseId = data?._id || data?.summary?._id || data?.id || '';
+    if (responseId) return responseId;
+
+    const after = await fetchSummaries('longTerm');
+    const recovered = after.items.filter(entry => (
+      entry.createdBy === 'user'
+      && !beforeIds.has(entry._id)
+      && entry.title === item.title
+      && entry.summary === item.summary
+    ));
+    if (recovered.length === 1) return recovered[0]._id;
+    throw new Error('저장은 성공했을 수 있으나 신규 장기기억 ID를 안전하게 식별하지 못함. 기존 항목은 삭제하지 않음.');
+  }
+
+  async function updateSummary(id, item) {
+    return apiRequest('PATCH', `/summaries/${id}`, { title: item.title, summary: item.summary });
+  }
+
+  async function deleteAssistantSummary(snapshot) {
+    if (!snapshot?._id || snapshot.createdBy !== 'assistant') {
+      throw new Error('보호된 사용자 장기기억은 자동 삭제할 수 없음.');
+    }
+    return apiRequest('DELETE', `/summaries/${snapshot._id}`);
+  }
+
+  async function deleteTrackedUserSummary(id, allowedIds) {
+    if (!id || !allowedIds.has(id)) throw new Error('추적되지 않은 사용자 장기기억 삭제 차단됨.');
+    return apiRequest('DELETE', `/summaries/${id}`);
+  }
+
+  function isCompletedAssistant(message) {
+    return message?.role === 'assistant'
+      && message.status === 'end'
+      && message.isPrologue !== true;
+  }
+
+  async function fetchMessagesForPairs(baselineTurnId = '', desiredPairs = AUTO_TURN_COUNT) {
+    const all = [];
+    let cursor = '';
+    let foundBaseline = !baselineTurnId;
+    for (let page = 0; page < 100; page += 1) {
+      let path = '/messages?limit=50';
+      if (cursor) path += `&cursor=${encodeURIComponent(cursor)}`;
+      const response = await apiRequest('GET', path);
+      const data = response?.data || {};
+      const pageItems = Array.isArray(data.messages) ? data.messages : [];
+      all.push(...pageItems);
+      if (baselineTurnId && all.some(item => item.turnId === baselineTurnId)) foundBaseline = true;
+      const completedCount = new Set(
+        all.filter(isCompletedAssistant).map(item => item.parentTurnId).filter(Boolean)
+      ).size;
+      if ((baselineTurnId && foundBaseline) || (!baselineTurnId && completedCount >= desiredPairs + 2)) break;
+      if (!data.hasNext || !data.nextCursor || pageItems.length === 0) break;
+      cursor = data.nextCursor;
     }
 
-    // --- 무제한(0) 호출을 지원하는 최적화된 메시지 불러오기 로직 ---
-    async function fetchRecentMessages(limit) {
-        let allMessages = [];
-        let currentCursor = null;
-        let requestedLimit = parseInt(limit, 10);
-
-        // 숫자가 아니면 기본값 15, 0이면 무제한으로 설정
-        if (isNaN(requestedLimit)) requestedLimit = 15;
-        const isUnlimited = requestedLimit === 0;
-
-        while (true) {
-            // 한 번에 가져올 개수는 최대 50개 (서버 효율을 위해 분할 요청)
-            let fetchLimit = isUnlimited ? 50 : Math.min(requestedLimit - allMessages.length, 50);
-            let path = '/messages?limit=' + fetchLimit;
-
-            if (currentCursor) {
-                path += '&cursor=' + encodeURIComponent(currentCursor);
-            }
-
-            let res = await apiCall('GET', path);
-
-            // 더 이상 가져올 데이터가 없으면 중단
-            if (!res || !res.data || !res.data.messages || res.data.messages.length === 0) {
-                break;
-            }
-
-            allMessages = allMessages.concat(res.data.messages);
-
-            // 제한이 걸려있고, 목표치에 도달했으면 중단
-            if (!isUnlimited && allMessages.length >= requestedLimit) {
-                break;
-            }
-
-            // 다음 페이지가 존재하면 커서를 갱신하고 계속 진행
-            if (res.data.hasNext && res.data.nextCursor) {
-                currentCursor = res.data.nextCursor;
-            } else {
-                break;
-            }
-        }
-
-        // 제한이 설정된 경우 초과된 부분 정확히 자르기
-        if (!isUnlimited) {
-            allMessages = allMessages.slice(0, requestedLimit);
-        }
-
-        if (allMessages.length === 0) return null;
-
-        // 과거 -> 최신 순으로 정렬하기 위해 배열 뒤집기
-        let msgs = allMessages.reverse();
-        let chatText = msgs.map(m => {
-            let role = m.role === 'user' ? 'User' : 'Character';
-            return `${role}: ${m.content}`;
-        }).join('\n\n');
-
-        return chatText;
+    let scope = all;
+    if (baselineTurnId) {
+      const baselineIndex = all.findIndex(item => item.turnId === baselineTurnId);
+      if (baselineIndex < 0) return { pairs: [], baselineFound: false, all };
+      scope = all.slice(0, baselineIndex);
     }
 
-async function callGeminiApi(apiKey, model, chatLog, turns) {
-        const currentPrompt = localStorage.getItem('shipidle_crack_summary_custom_prompt') || DEFAULT_PROMPT;
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-        // 🔥 태업 방지용 강력 지시문 추가
-        const reinforcedPrompt = `[초강력 지시사항]
-제공된 대화는 총 ${turns}턴 분량입니다.
-당신은 대화의 일부(예: 15턴)만 요약하고 출력을 중단해서는 절대 안 됩니다.
-제공된 [채팅 내역]의 처음부터 끝까지 모든 흐름을 파악하고, 누락되는 사건 없이 전부 요약하세요. 분량이 길더라도 태업하지 말고 끝까지 요약본을 생성해야 합니다.
-
-[채팅 내역 시작]
-${chatLog}
-[채팅 내역 끝]`;
-
-        const payload = {
-            system_instruction: { parts: [{ text: currentPrompt }] },
-            contents: [{ role: "user", parts: [{ text: reinforcedPrompt }] }],
-            generationConfig: {
-                temperature: 0.2, // 딴짓 못하게 온도 낮춤
-                topK: 40,
-                topP: 0.8
-            }
-        };
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error?.message || 'Gemini API 에러');
-        }
-        const data = await response.json();
-        return data.candidates[0].content.parts[0].text;
-    }
-
-    // --- Firebase Vertex AI 파싱 및 호출 로직 ---
-    function parseVertexContent(scriptStr) {
-        try {
-            const match = scriptStr.match(/firebaseConfig\s*=\s*(\{[\s\S]*?\});/);
-            if (match && match[1]) {
-                return new Function("return " + match[1])();
-            }
-            if (scriptStr.includes("apiKey")) {
-                const startText = "firebaseConfig = {";
-                const startIndex = scriptStr.indexOf(startText);
-                if (startIndex !== -1) {
-                    const endIndex = scriptStr.indexOf("}", startIndex);
-                    if (endIndex !== -1) {
-                        const objStr = scriptStr.substring(startIndex + startText.length - 1, endIndex + 1);
-                        return new Function("return " + objStr)();
-                    }
-                }
-            }
-        } catch(e) {}
-        return null;
-    }
-
-async function callFirebaseApi(scriptStr, modelId, chatLog, turns) {
-        const config = parseVertexContent(scriptStr);
-        if (!config) {
-            throw new Error("Firebase 스크립트 형식이 올바르지 않습니다. firebaseConfig = { ... }; 부분을 포함해주세요.");
-        }
-        const currentPrompt = localStorage.getItem('shipidle_crack_summary_custom_prompt') || DEFAULT_PROMPT;
-
-        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js");
-        const { getAI, getGenerativeModel, VertexAIBackend, HarmBlockThreshold, HarmCategory } = await import("https://www.gstatic.com/firebasejs/12.8.0/firebase-ai.js");
-
-        let app;
-        try {
-            app = initializeApp(config, "shipidle-crack-summary-" + Date.now());
-        } catch(e) {
-            throw new Error("Firebase 초기화 실패: " + e.message);
-        }
-
-        const ai = getAI(app, { backend: new VertexAIBackend('global') });
-        const safetySettings = [
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.OFF },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.OFF },
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.OFF },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.OFF }
-        ];
-
-        const modelWithSys = getGenerativeModel(ai, {
-            model: modelId,
-            systemInstruction: currentPrompt,
-            safetySettings,
-            generationConfig: {
-                temperature: 0.2,
-                topK: 40,
-                topP: 0.8
-            }
-        });
-
-        // 🔥 태업 방지용 강력 지시문 추가
-        const reinforcedPrompt = `[초강력 지시사항]
-제공된 대화는 총 ${turns}턴 분량입니다.
-당신은 대화의 일부(예: 15턴)만 요약하고 출력을 중단해서는 절대 안 됩니다.
-제공된 [채팅 내역]의 처음부터 끝까지 모든 흐름을 파악하고, 누락되는 사건 없이 전부 요약하세요. 분량이 길더라도 태업하지 말고 끝까지 요약본을 생성해야 합니다.
-
-[채팅 내역 시작]
-${chatLog}
-[채팅 내역 끝]`;
-
-        const result = await modelWithSys.generateContent(reinforcedPrompt);
-        const response = await result.response;
-        return response.text();
-    }
-
-    function injectAiStyles() {
-        if (document.getElementById('shipidle-crack-summary-ai-css')) return;
-        const s = document.createElement('style');
-        s.id = 'shipidle-crack-summary-ai-css';
-        s.textContent = `
-            .shipidle-crack-summary-ai-overlay { background:rgba(0,0,0,.5); z-index:100000; pointer-events:auto !important; }
-            .shipidle-crack-summary-ai-modal { background:#fff !important; border-radius:16px; padding:28px; width:600px; max-width:90vw; max-height: 90vh; overflow-y: auto; box-shadow:0 8px 40px rgba(0,0,0,.2); pointer-events:auto !important; color:#222 !important; }
-            .shipidle-crack-summary-ai-modal-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
-            .shipidle-crack-summary-ai-modal-header h3 { margin: 0; color:#222 !important; font-size: 17px; font-weight: 700; }
-            .shipidle-crack-summary-ai-modal label { display:flex; font-size:13px; font-weight:600; margin-bottom:6px; color:#333 !important; align-items:center; justify-content:space-between;}
-            .shipidle-crack-summary-ai-modal input, .shipidle-crack-summary-ai-modal textarea, .shipidle-crack-summary-ai-modal select { width:100%; padding:10px 12px; border:1px solid #ddd !important; border-radius:8px; font-size:14px; box-sizing:border-box; font-family:inherit; pointer-events:auto !important; background-color:#fff !important; color:#222 !important; }
-            .shipidle-crack-summary-ai-modal input::placeholder, .shipidle-crack-summary-ai-modal textarea::placeholder { color:#999 !important; }
-            .shipidle-crack-summary-ai-modal-btns { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
-            .shipidle-crack-summary-ai-mbtn { padding:10px 24px; border-radius:8px; border:1px solid #ddd !important; background:#fff !important; color:#222 !important; cursor:pointer; font-size:14px; font-weight:600; transition: background 0.2s;}
-            .shipidle-crack-summary-ai-mbtn:hover { background: #f5f5f5 !important; }
-            .shipidle-crack-summary-ai-mbtn-p { background:#222 !important; color:#fff !important; border-color:#222 !important; }
-            .shipidle-crack-summary-ai-mbtn-p:hover { background:#444 !important; }
-            .shipidle-crack-summary-ai-mbtn-p:disabled { background:#ccc !important; border-color:#ccc !important; color:#666 !important; cursor:not-allowed; }
-            .crack-flex-ai-row { display:flex; gap:12px; margin-bottom: 16px; }
-            .crack-flex-ai-row .fg { flex:1; }
-
-            #shipidle-ai-summary-preview-container { margin-top: 12px; }
-            #shipidle-ai-summary-card-nav { display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom: 8px; font-size: 13px; font-weight: bold; }
-            #shipidle-ai-summary-card-nav button { cursor:pointer; background:#f0f0f0; border:1px solid #ddd; border-radius:6px; padding:4px 10px; font-size:12px; transition: background 0.2s; color:#333; }
-            #shipidle-ai-summary-card-nav button:hover { background:#e4e4e4; }
-
-            .shipidle-crack-summary-session-card { background:#f9f9f9 !important; border:1px solid #eee !important; border-radius:8px; padding:12px; font-size:13px; }
-            .shipidle-crack-summary-session-title { font-weight:bold; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
-            .shipidle-crack-summary-session-content { color:#555 !important; line-height:1.4; white-space: pre-wrap; word-break: break-all; }
-            .shipidle-crack-summary-char-count { font-size:11px; font-weight:normal; color: #777; }
-            .shipidle-crack-summary-count-error { color: #e74c3c !important; font-weight:bold; }
-
-            .shipidle-crack-summary-header-ai-btn { width:auto; height:32px; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:1px solid #c5b9e7 !important; border-radius:8px; background:#e7e0fa !important; color:#4b3f68 !important; padding:0 10px; font-weight:650; font-size:12px; box-shadow:none; white-space:nowrap !important; cursor:pointer; transition:background 0.2s; }
-            .shipidle-crack-summary-header-ai-btn:hover { background:#dcd2f5 !important; }
-
-            body[data-theme="dark"] .shipidle-crack-summary-ai-modal { background: #242321 !important; color: #F0EFEB !important; }
-            body[data-theme="dark"] .shipidle-crack-summary-ai-modal-header h3, body[data-theme="dark"] .shipidle-crack-summary-ai-modal label { color: #F0EFEB !important; }
-            body[data-theme="dark"] .shipidle-crack-summary-ai-modal input, body[data-theme="dark"] .shipidle-crack-summary-ai-modal textarea, body[data-theme="dark"] .shipidle-crack-summary-ai-modal select { background: #141413 !important; color: #F0EFEB !important; border: 1px solid #42413D !important; }
-
-            body[data-theme="dark"] #shipidle-ai-summary-card-nav button { background: #2E2D2B !important; color: #F0EFEB !important; border: 1px solid #42413D !important; }
-            body[data-theme="dark"] #shipidle-ai-summary-card-nav button:hover { background: #42413D !important; }
-
-            body[data-theme="dark"] .shipidle-crack-summary-session-card { background: #1a1918 !important; border: 1px solid #42413D !important; }
-            body[data-theme="dark"] .shipidle-crack-summary-session-content { color: #ccc !important; }
-            body[data-theme="dark"] .shipidle-crack-summary-ai-mbtn { background: #2E2D2B !important; color: #F0EFEB !important; border: 1px solid #42413D !important; }
-            body[data-theme="dark"] .shipidle-crack-summary-ai-mbtn-p { background: #F0EFEB !important; color: #1A1918 !important; }
-            body[data-theme="dark"] .shipidle-crack-summary-count-error { color: #ff6b6b !important; }
-        `;
-        document.head.appendChild(s);
-    }
-
-    function showToast(message) {
-        var old = document.getElementById('shipidle-crack-summary-toast');
-        if (old) old.remove();
-        var toast = document.createElement('div');
-        toast.id = 'shipidle-crack-summary-toast';
-        toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-10px);z-index:999999999;background:#1a1a1a;color:#fff;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,0.25);transition:opacity 0.3s,transform 0.3s;';
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateX(-50%) translateY(0)'; });
-        setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(-50%) translateY(-10px)'; setTimeout(() => toast.remove(), 300); }, 3000);
-    }
-
-    function refreshCurrentTab(dialog) {
-        var btns = dialog.querySelectorAll('button'), activeBtn = null, otherBtn = null;
-        for (var i = 0; i < btns.length; i++) {
-            var txt = btns[i].textContent.trim();
-            if (txt === '단기 기억' || txt === '장기 기억') {
-                var bg = getComputedStyle(btns[i]).backgroundColor;
-                var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)\)/);
-                if (m && (parseInt(m[1]) + parseInt(m[2]) + parseInt(m[3])) / 3 < 128) activeBtn = btns[i];
-                else if (txt === '장기 기억') otherBtn = btns[i];
-            }
-        }
-        if (!activeBtn) return;
-        if (otherBtn) { otherBtn.click(); setTimeout(() => { activeBtn.click(); }, 150); }
-        else { activeBtn.click(); }
-    }
-
-    function showAiSummaryModal() {
-        var overlay = document.createElement('div');
-        overlay.className = 'shipidle-crack-summary-ai-overlay';
-        overlay.style.position = 'fixed'; overlay.style.inset = '0'; overlay.style.display = 'flex'; overlay.style.alignItems = 'center'; overlay.style.justifyContent = 'center';
-
-        const savedApiKey = localStorage.getItem('shipidle_crack_summary_gemini_key') || '';
-        const savedModel = localStorage.getItem('shipidle_crack_summary_gemini_model') || 'gemini-3.1-pro-preview';
-        const savedTurnCount = localStorage.getItem('shipidle_crack_summary_turn_count') || '15';
-        const savedProvider = localStorage.getItem('shipidle_crack_summary_api_provider') || 'google';
-        const savedFirebaseScript = localStorage.getItem('shipidle_crack_summary_firebase_script') || '';
-
-        let isPromptMode = false;
-        let tempResultContent = "";
-
-        let parsedCards = [];
-        let currentCardIndex = 0;
-
-        var html = '<div class="shipidle-crack-summary-ai-modal">';
-        html += '<div class="shipidle-crack-summary-ai-modal-header"><h3>✨ AI 요약 / 장기 기억 추가</h3></div>';
-
-        html += '<div class="crack-flex-ai-row" id="shipidle-ai-summary-top-settings">';
-        html += '<div class="fg" style="flex: 1.2;"><label>API</label><select id="shipidle-ai-summary-provider"><option value="google" ' + (savedProvider==='google'?'selected':'') + '>Google</option><option value="firebase" ' + (savedProvider==='firebase'?'selected':'') + '>Firebase</option></select></div>';
-        html += '<div class="fg" id="shipidle-ai-summary-key-container" style="flex: 2;' + (savedProvider==='google'?'':'display:none;') + '"><label>API Key</label><input type="password" id="shipidle-ai-summary-key" value="' + escapeHtml(savedApiKey) + '"></div>';
-        html += '<div class="fg" style="flex: 1.5;"><label>모델</label><select id="shipidle-ai-summary-model">';
-        html += '<option value="gemini-3.1-pro-preview" ' + (savedModel==='gemini-3.1-pro-preview'?'selected':'') + '>3.1 Pro Preview</option>';
-        html += '<option value="gemini-3-flash-preview" ' + (savedModel==='gemini-3-flash-preview'?'selected':'') + '>3 Flash Preview</option>';
-        html += '<option value="gemini-3.1-flash-lite-preview" ' + (savedModel==='gemini-3.1-flash-lite-preview'?'selected':'') + '>3.1 Flash-Lite</option>';
-        html += '<option value="gemini-2.5-pro" ' + (savedModel==='gemini-2.5-pro'?'selected':'') + '>2.5 Pro</option>';
-        html += '<option value="gemini-2.5-flash" ' + (savedModel==='gemini-2.5-flash'?'selected':'') + '>2.5 Flash</option>';
-        html += '<option value="gemini-2.5-flash-lite" ' + (savedModel==='gemini-2.5-flash-lite'?'selected':'') + '>2.5 Flash-Lite</option>';
-        html += '</select></div>';
-        html += '<div class="fg" style="flex: 0.8;"><label>턴 수</label><input type="number" id="shipidle-ai-summary-turns" value="' + escapeHtml(savedTurnCount) + '" min="0"></div>';
-        html += '</div>';
-
-        html += '<div class="crack-flex-ai-row" id="shipidle-ai-summary-firebase-container" style="margin-bottom:16px;' + (savedProvider==='firebase'?'':'display:none;') + '">';
-        html += '<div class="fg" style="flex: 1;"><label>Firebase Vertex AI 스크립트</label><textarea id="shipidle-ai-summary-firebase-script" rows="2" placeholder="firebaseConfig = { ... }; 형식의 스크립트를 입력해주세요.">' + escapeHtml(savedFirebaseScript) + '</textarea></div>';
-        html += '</div>';
-
-        html += '<div class="fg"><label id="shipidle-ai-summary-result-label-wrapper" style="display:flex; justify-content:space-between;">';
-        html += '<span id="shipidle-ai-summary-result-label">생성 결과</span>';
-        html += '<div style="display:flex; align-items:center; gap:10px;">';
-        html += '<span id="shipidle-ai-summary-selection-counter" style="color:#a777e3; font-size:12px; font-weight:normal;"></span>';
-        html += '<button id="shipidle-ai-summary-toggle-prompt" style="font-size:12px; background:none; border:1px solid #ddd; padding:4px 8px; border-radius:4px; cursor:pointer;">⚙️ 프롬프트 설정</button>';
-        html += '</div></label>';
-
-        html += '<textarea id="shipidle-ai-summary-result" rows="7" placeholder="생성 버튼을 누르면 요약 결과가 나오고, 직접 써서 추가할 수도 있습니다. 여러 개의 사건을 [제목] 내용 형식으로 적어주면 자동으로 분리해서 추가됩니다."></textarea>';
-
-        html += '<div id="shipidle-ai-summary-preview-container">';
-        html += '<div id="shipidle-ai-summary-card-nav" style="display:none;"><button id="shipidle-ai-summary-card-prev">◀</button><span id="shipidle-ai-summary-card-page">1 / 1</span><button id="shipidle-ai-summary-card-next">▶</button></div>';
-        html += '<div id="shipidle-ai-summary-preview-cards"></div>';
-        html += '</div></div>';
-
-        html += '<div class="shipidle-crack-summary-ai-modal-btns" style="justify-content: space-between; align-items: flex-end;">';
-        html += '<div><button class="shipidle-crack-summary-ai-mbtn" id="shipidle-ai-summary-generate">요약 생성</button></div>';
-        html += '<div style="display:flex; gap:8px;"><button class="shipidle-crack-summary-ai-mbtn" id="shipidle-ai-summary-cancel">취소</button><button class="shipidle-crack-summary-ai-mbtn shipidle-crack-summary-ai-mbtn-p" id="shipidle-ai-summary-save">추가하기</button></div></div></div>';
-
-        overlay.innerHTML = html;
-        document.body.appendChild(overlay);
-
-        const txtResult = overlay.querySelector('#shipidle-ai-summary-result');
-        const selCounter = overlay.querySelector('#shipidle-ai-summary-selection-counter');
-        const previewCards = overlay.querySelector('#shipidle-ai-summary-preview-cards');
-        const cardNav = overlay.querySelector('#shipidle-ai-summary-card-nav');
-        const spanCardPage = overlay.querySelector('#shipidle-ai-summary-card-page');
-        const btnCardPrev = overlay.querySelector('#shipidle-ai-summary-card-prev');
-        const btnCardNext = overlay.querySelector('#shipidle-ai-summary-card-next');
-        const btnSave = overlay.querySelector('#shipidle-ai-summary-save');
-
-        const selProvider = overlay.querySelector('#shipidle-ai-summary-provider');
-        const contKey = overlay.querySelector('#shipidle-ai-summary-key-container');
-        const contFirebase = overlay.querySelector('#shipidle-ai-summary-firebase-container');
-        const inputFirebaseScript = overlay.querySelector('#shipidle-ai-summary-firebase-script');
-
-        selProvider.onchange = () => {
-            if(selProvider.value === 'google') {
-                contKey.style.display = 'block';
-                contFirebase.style.display = 'none';
-            } else {
-                contKey.style.display = 'none';
-                contFirebase.style.display = 'flex';
-            }
-        };
-
-        function updateSelectionCount() {
-            const selectedText = txtResult.value.substring(txtResult.selectionStart, txtResult.selectionEnd);
-            selCounter.textContent = selectedText.length > 0 ? `(드래그: ${selectedText.length}자)` : '';
-        }
-        txtResult.addEventListener('select', updateSelectionCount);
-        txtResult.addEventListener('keyup', updateSelectionCount);
-        txtResult.addEventListener('mouseup', updateSelectionCount);
-
-        function updatePreviewCards() {
-            if(isPromptMode) { previewCards.innerHTML = ''; cardNav.style.display = 'none'; return; }
-            const content = txtResult.value.trim();
-            if(!content) { previewCards.innerHTML = ''; cardNav.style.display = 'none'; parsedCards = []; return; }
-
-            const blocks = content.split(/\[(.*?)\]/);
-            parsedCards = [];
-
-            for (let i = 1; i < blocks.length; i += 2) {
-                let title = blocks[i].trim();
-                let summary = blocks[i+1] ? blocks[i+1].replace(/^[\s\n]*[-*]?\s*/, '').trim() : '';
-                if (title || summary) parsedCards.push({ title, summary });
-            }
-
-            if (parsedCards.length === 0 && content) {
-                let summary = content.replace(/^[\s\n]*[-*]?\s*/, '').trim();
-                parsedCards.push({ title: "수동 요약", summary });
-            }
-
-            if (parsedCards.length === 0) {
-                previewCards.innerHTML = ''; cardNav.style.display = 'none'; return;
-            }
-
-            if (currentCardIndex >= parsedCards.length) currentCardIndex = parsedCards.length - 1;
-            if (currentCardIndex < 0) currentCardIndex = 0;
-
-            if (parsedCards.length > 1) {
-                cardNav.style.display = 'flex';
-                spanCardPage.textContent = `${currentCardIndex + 1} / ${parsedCards.length}`;
-            } else {
-                cardNav.style.display = 'none';
-            }
-
-            let mem = parsedCards[currentCardIndex];
-            let tClass = mem.title.length > 20 ? 'shipidle-crack-summary-count-error' : '';
-            let sClass = mem.summary.length > 300 ? 'shipidle-crack-summary-count-error' : '';
-
-            let cardHtml = '<div class="shipidle-crack-summary-session-card">' +
-                '<div class="shipidle-crack-summary-session-title">' +
-                '<div><span style="color:#888;">[ </span>' + escapeHtml(mem.title) + '<span style="color:#888;"> ]</span></div>' +
-                '<span class="shipidle-crack-summary-char-count ' + tClass + '">(' + mem.title.length + '/20자)</span>' +
-                '</div>' +
-                '<div class="shipidle-crack-summary-session-content">' + escapeHtml(mem.summary) +
-                '<div style="text-align:right; margin-top:8px;"><span class="shipidle-crack-summary-char-count ' + sClass + '">(' + mem.summary.length + '/300자)</span></div>' +
-                '</div>' +
-                '</div>';
-
-            previewCards.innerHTML = cardHtml;
-        }
-
-        txtResult.addEventListener('input', updatePreviewCards);
-
-        btnCardPrev.onclick = (e) => { e.preventDefault(); if (currentCardIndex > 0) { currentCardIndex--; updatePreviewCards(); } };
-        btnCardNext.onclick = (e) => { e.preventDefault(); if (currentCardIndex < parsedCards.length - 1) { currentCardIndex++; updatePreviewCards(); } };
-
-        const btnGen = overlay.querySelector('#shipidle-ai-summary-generate'), btnCancel = overlay.querySelector('#shipidle-ai-summary-cancel');
-        const inputKey = overlay.querySelector('#shipidle-ai-summary-key'), inputModel = overlay.querySelector('#shipidle-ai-summary-model'), inputTurns = overlay.querySelector('#shipidle-ai-summary-turns');
-        const btnTogglePrompt = overlay.querySelector('#shipidle-ai-summary-toggle-prompt');
-
-        btnTogglePrompt.onclick = (e) => {
-            e.stopPropagation(); e.preventDefault();
-            isPromptMode = !isPromptMode;
-            if (isPromptMode) {
-                tempResultContent = txtResult.value;
-                txtResult.value = localStorage.getItem('shipidle_crack_summary_custom_prompt') || DEFAULT_PROMPT;
-                btnTogglePrompt.textContent = '돌아가기';
-                overlay.querySelector('#shipidle-ai-summary-top-settings').style.display = 'none';
-                if(overlay.querySelector('#shipidle-ai-summary-firebase-container')) overlay.querySelector('#shipidle-ai-summary-firebase-container').style.display = 'none';
-                btnSave.style.display = 'none'; btnGen.style.display = 'none';
-                updatePreviewCards();
-            } else {
-                localStorage.setItem('shipidle_crack_summary_custom_prompt', txtResult.value.trim());
-                txtResult.value = tempResultContent;
-                btnTogglePrompt.textContent = '⚙️ 프롬프트 설정';
-                overlay.querySelector('#shipidle-ai-summary-top-settings').style.display = 'flex';
-                if(selProvider.value === 'firebase') overlay.querySelector('#shipidle-ai-summary-firebase-container').style.display = 'flex';
-                btnSave.style.display = 'block'; btnGen.style.display = 'block';
-                updatePreviewCards();
-            }
-        };
-
-        btnCancel.onclick = e => { e.stopPropagation(); overlay.remove(); };
-        ['click', 'mousedown', 'mouseup'].forEach(evt => overlay.addEventListener(evt, e => e.stopPropagation()));
-
-        btnGen.onclick = async (e) => {
-            e.stopPropagation();
-            const provider = selProvider.value;
-            const apiKey = inputKey.value.trim();
-            const firebaseScript = inputFirebaseScript.value.trim();
-            const model = inputModel.value;
-            const turnsVal = parseInt(inputTurns.value, 10);
-            const turns = isNaN(turnsVal) ? 15 : turnsVal;
-
-            if (provider === 'google' && !apiKey) return alert("API Key를 입력해주세요.");
-            if (provider === 'firebase' && !firebaseScript) return alert("Firebase 스크립트를 입력해주세요.");
-
-            localStorage.setItem('shipidle_crack_summary_api_provider', provider);
-            localStorage.setItem('shipidle_crack_summary_gemini_key', apiKey);
-            localStorage.setItem('shipidle_crack_summary_firebase_script', firebaseScript);
-            localStorage.setItem('shipidle_crack_summary_gemini_model', model);
-            localStorage.setItem('shipidle_crack_summary_turn_count', turns.toString());
-
-            btnGen.disabled = true; btnSave.disabled = true; txtResult.value = "요약 중..."; currentCardIndex = 0; updatePreviewCards();
-
-            try {
-                const chatLog = await fetchRecentMessages(turns);
-                if (!chatLog) throw new Error("내역을 불러올 수 없습니다.");
-
-                let finalResult = "";
-                if (provider === 'google') {
-                    // turns 변수 추가
-                    finalResult = await callGeminiApi(apiKey, model, chatLog, turns);
-                } else {
-                    // turns 변수 추가
-                    finalResult = await callFirebaseApi(firebaseScript, model, chatLog, turns);
-                }
-
-                txtResult.value = finalResult.trim();
-            } catch (err) {
-                txtResult.value = "오류: " + err.message;
-            } finally {
-                btnGen.disabled = false; btnSave.disabled = false; btnGen.textContent = "재생성 (리롤)"; updatePreviewCards();
-            }
-        };
-
-        btnSave.onclick = async (e) => {
-            e.stopPropagation();
-            const content = txtResult.value.trim();
-            if (!content) return alert("결과가 비어있습니다.");
-
-            let isExceeded = false;
-            let errorIndex = -1;
-
-            for (let i = 0; i < parsedCards.length; i++) {
-                if (parsedCards[i].title.length > 20 || parsedCards[i].summary.length > 300) {
-                    isExceeded = true;
-                    errorIndex = i;
-                    break;
-                }
-            }
-
-            if (isExceeded) {
-                currentCardIndex = errorIndex;
-                updatePreviewCards();
-                alert("글자 수 제한(제목 20자, 내용 300자)을 초과한 항목이 있습니다.\n붉은색으로 표시된 내용을 수정해 주세요.");
-                return;
-            }
-
-            btnSave.disabled = true; btnCancel.disabled = true;
-            let successCount = 0;
-
-            for (let i = 0; i < parsedCards.length; i++) {
-                btnSave.textContent = `추가 중... (${i + 1}/${parsedCards.length})`;
-                await new Promise(resolve => setTimeout(resolve, 50));
-                const res = await apiCall('POST', '/summaries', { type: 'shortTerm', title: parsedCards[i].title, summary: parsedCards[i].summary });
-                if (res) successCount++;
-                else alert(`[${parsedCards[i].title}] 추가 중 오류 발생`);
-            }
-
-            if (successCount > 0) {
-                showToast(`✅ ${successCount}개의 요약이 장기 기억에 추가되었습니다.`);
-                overlay.remove();
-                var dialogEl = document.querySelector('[role="dialog"]');
-                if (dialogEl) refreshCurrentTab(dialogEl);
-            } else {
-                btnSave.textContent = "추가하기"; btnSave.disabled = false; btnCancel.disabled = false;
-            }
-        };
-    }
-
-    // ------------------------------------------------------------------
-    //  UI 주입 최적화 v1.5.4
-    //  - body 전체 상시 감시 금지
-    //  - 방 이동 직후 React 헤더 재마운트로 버튼이 날아가는 문제 보강
-    //  - route 변경 후 몇 초 동안만 짧은 burst 재주입 + transient observer 유지
-    // ------------------------------------------------------------------
-    const SHIPIDLE_AI_SUMMARY_BTN_CLASS = 'shipidle-crack-summary-header-ai-btn';
-    const TRANSIENT_OBSERVER_MS = 9500;
-    const ROUTE_RETRY_DELAYS = [80, 180, 360, 700, 1100, 1700, 2500, 3600, 5200, 7600, 9400];
-
-    let lastUrlKey = getUrlKey();
-    let transientObserver = null;
-    let transientObserverTimer = 0;
-    let injectRaf = 0;
-    let burstTimers = [];
-    let lastInteractionKick = 0;
-
-    function getUrlKey() {
-        return location.pathname + location.search + location.hash;
-    }
-
-    function isEpisodePage() {
-        return /\/episodes\//.test(location.pathname);
-    }
-
-    function clearBurstTimers() {
-        burstTimers.forEach(timer => clearTimeout(timer));
-        burstTimers = [];
-    }
-
-    function isBadContainer(el) {
-        return !el || !el.isConnected ||
-            !!el.closest('.shipidle-crack-summary-ai-modal, .shipidle-crack-summary-ai-overlay, [data-message-group-id], .ProseMirror, textarea, input');
-    }
-
-    function isLikelyTopHeaderContainer(el) {
-        if (isBadContainer(el)) return false;
-
-        const buttonCount = el.querySelectorAll('button').length;
-        if (buttonCount < 1) return false;
-
-        const text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
-        if (text.length > 120) return false;
-
-        // 헤더는 보통 화면 상단에 있으므로, 하단 입력창/채팅 본문 오인식을 줄인다.
-        try {
-            const rect = el.getBoundingClientRect();
-            if (rect && Number.isFinite(rect.top) && rect.top > 180) return false;
-        } catch (_) {}
-
+    const byTurnId = new Map(all.filter(item => item?.turnId).map(item => [item.turnId, item]));
+    const seenParents = new Set();
+    const pairsNewestFirst = scope
+      .filter(isCompletedAssistant)
+      .filter(assistant => {
+        if (!assistant.parentTurnId || seenParents.has(assistant.parentTurnId)) return false;
+        seenParents.add(assistant.parentTurnId);
         return true;
+      })
+      .map(assistant => ({ assistant, user: byTurnId.get(assistant.parentTurnId) }))
+      .filter(pair => pair.user?.role === 'user' && pair.user.status === 'end');
+
+    return { pairs: pairsNewestFirst.reverse(), baselineFound: foundBaseline, all };
+  }
+
+  function pairsToChatLog(pairs) {
+    return pairs.map((pair, index) => (
+      `[왕복 ${index + 1}]\nUser: ${pair.user.content}\n\nCharacter: ${pair.assistant.content}`
+    )).join('\n\n---\n\n');
+  }
+
+  function parseFirebaseConfig(scriptText) {
+    const text = String(scriptText || '');
+    const match = text.match(/firebaseConfig\s*=\s*(\{[\s\S]*?\})\s*;?/);
+    if (!match) throw new Error('Firebase 스크립트에서 firebaseConfig 객체를 찾을 수 없음.');
+    try {
+      return Function(`"use strict"; return (${match[1]});`)();
+    } catch (_) {
+      throw new Error('Firebase 설정 객체 형식이 올바르지 않음.');
+    }
+  }
+
+  function responseTextFromGemini(data) {
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    return parts.map(part => part?.text || '').join('').trim();
+  }
+
+  function estimateUsage(promptText, outputText) {
+    return {
+      promptTokenCount: Math.ceil(String(promptText || '').length / 2.2),
+      candidatesTokenCount: Math.ceil(String(outputText || '').length / 2.2),
+      thoughtsTokenCount: 0,
+      estimated: true,
+    };
+  }
+
+  function calculateCost(usage, model) {
+    const price = MODEL_PRICES[model] || MODEL_PRICES['gemini-3.1-flash-lite'];
+    const inputTokens = Number(usage?.promptTokenCount || 0);
+    const outputTokens = Number(usage?.candidatesTokenCount || 0) + Number(usage?.thoughtsTokenCount || 0);
+    return ((inputTokens * price.input + outputTokens * price.output) / 1_000_000) * KRW_PER_USD;
+  }
+
+  function recordCost(chatId, usage, promptText, outputText) {
+    const state = stateFor(chatId);
+    const normalizedUsage = usage?.totalTokenCount ? usage : estimateUsage(promptText, outputText);
+    const cost = calculateCost(normalizedUsage, config.model);
+    state.lastCostKrw = cost;
+    state.totalCostKrw = Number(state.totalCostKrw || 0) + cost;
+    persistStates();
+    return cost;
+  }
+
+  async function callGoogle(systemPrompt, userPrompt, schema) {
+    if (!config.apiKey) throw new Error('Google API Key를 설정해줘.');
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
+    const payload = {
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        topP: 0.8,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+        responseSchema: schema,
+      },
+    };
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || `Gemini HTTP ${response.status}`);
+    const text = responseTextFromGemini(data);
+    if (!text) throw new Error('Gemini가 빈 응답을 반환함.');
+    return { text, usage: data.usageMetadata || null };
+  }
+
+  async function callFirebase(systemPrompt, userPrompt, schema) {
+    if (!config.firebaseScript) throw new Error('Firebase Vertex AI 스크립트를 설정해줘.');
+    const firebaseConfig = parseFirebaseConfig(config.firebaseScript);
+    const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js');
+    const { getAI, getGenerativeModel, VertexAIBackend, HarmBlockThreshold, HarmCategory } = await import('https://www.gstatic.com/firebasejs/12.8.0/firebase-ai.js');
+    const appName = 'shipidle-crack-memory-manager';
+    const app = getApps().find(item => item.name === appName) || initializeApp(firebaseConfig, appName);
+    const ai = getAI(app, { backend: new VertexAIBackend('global') });
+    const model = getGenerativeModel(ai, {
+      model: config.model,
+      systemInstruction: systemPrompt,
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.OFF },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.OFF },
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.OFF },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.OFF },
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        topP: 0.8,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+        responseSchema: schema,
+      },
+    });
+    const result = await model.generateContent(userPrompt);
+    const response = await result.response;
+    const text = response.text().trim();
+    if (!text) throw new Error('Firebase AI가 빈 응답을 반환함.');
+    return { text, usage: response.usageMetadata || null };
+  }
+
+  async function callModel(chatId, systemPrompt, userPrompt, schema) {
+    const combinedSystem = `${systemPrompt}${config.extraPrompt ? `\n\n[사용자 추가 지침]\n${config.extraPrompt}` : ''}`;
+    const result = config.provider === 'firebase'
+      ? await callFirebase(combinedSystem, userPrompt, schema)
+      : await callGoogle(combinedSystem, userPrompt, schema);
+    recordCost(chatId, result.usage, `${combinedSystem}\n${userPrompt}`, result.text);
+    return result.text;
+  }
+
+  function parseJsonOutput(text) {
+    const cleaned = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    const parsed = JSON.parse(cleaned);
+    if (!Array.isArray(parsed)) throw new Error('AI 응답이 배열이 아님.');
+    return parsed.map(item => ({
+      title: String(item?.title || '').trim(),
+      summary: String(item?.summary || '').trim(),
+    }));
+  }
+
+  function validateItems(items, mode = 'normal') {
+    const errors = [];
+    const expected = mode === 'compact' ? 10 : null;
+    if (!Array.isArray(items)) return ['결과가 배열이 아님.'];
+    if (expected !== null && items.length !== expected) errors.push(`항목 수 ${items.length}/10`);
+    if (mode === 'normal' && (items.length < 2 || items.length > 3)) errors.push(`항목 수 ${items.length}/2~3`);
+    items.forEach((item, index) => {
+      const titleLength = charCount(item.title);
+      const summaryLength = charCount(item.summary);
+      if (!titleLength || titleLength > MAX_TITLE_LENGTH) errors.push(`${index + 1}번 제목 ${titleLength}/20자`);
+      if (!summaryLength || summaryLength > MAX_SUMMARY_LENGTH) errors.push(`${index + 1}번 내용 ${summaryLength}/300자`);
+      if (mode === 'compact' && titleLength < 10) errors.push(`${index + 1}번 제목 ${titleLength}/최소 10자`);
+      if (mode === 'compact' && summaryLength < 200) errors.push(`${index + 1}번 내용 ${summaryLength}/최소 200자`);
+      if (mode === 'compact' && !new RegExp(`^${index + 1}\\.`).test(item.title)) errors.push(`${index + 1}번 제목 번호 형식 오류`);
+    });
+    return errors;
+  }
+
+  async function generateValidatedItems(chatId, mode, sourceText) {
+    const compact = mode === 'compact';
+    const systemPrompt = compact ? COMPACT_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT;
+    const schema = compact ? COMPACT_SCHEMA : NORMAL_SCHEMA;
+    let prompt = compact
+      ? `[기존 장기기억 시작]\n${sourceText}\n[기존 장기기억 끝]`
+      : `[20턴 채팅 시작]\n${sourceText}\n[20턴 채팅 끝]`;
+    let lastErrors = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0) {
+        prompt += `\n\n[재작성 지시]\n직전 출력 오류: ${lastErrors.join(', ')}\n전체를 처음부터 다시 작성하고 글자 수를 직접 센 뒤 JSON 배열만 출력하세요.`;
+      }
+      const text = await callModel(chatId, systemPrompt, prompt, schema);
+      let items;
+      try { items = parseJsonOutput(text); } catch (error) {
+        lastErrors = [shortError(error)];
+        continue;
+      }
+      lastErrors = validateItems(items, mode);
+      if (lastErrors.length === 0) return items;
+    }
+    throw new Error(`AI 출력 검증 실패: ${lastErrors.join(', ')}`);
+  }
+
+  function backupsFor(chatId) {
+    const all = loadJson(BACKUP_KEY, {});
+    return Array.isArray(all[chatId]) ? all[chatId] : [];
+  }
+
+  function saveBackup(chatId, reason, entries) {
+    const all = loadJson(BACKUP_KEY, {});
+    const list = Array.isArray(all[chatId]) ? all[chatId] : [];
+    list.unshift({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      reason,
+      createdAt: new Date().toISOString(),
+      entries: entries.map(item => ({
+        _id: item._id || '', title: item.title || '', summary: item.summary || '',
+        createdBy: item.createdBy || '', createdAt: item.createdAt || '', updatedAt: item.updatedAt || '',
+      })),
+    });
+    all[chatId] = list.slice(0, MAX_BACKUPS_PER_CHAT);
+    saveJson(BACKUP_KEY, all);
+    return all[chatId][0];
+  }
+
+  function acquireLock(chatId) {
+    const key = `${LOCK_PREFIX}${chatId}`;
+    const now = Date.now();
+    const existing = loadJson(key, null);
+    if (existing && existing.owner !== ownerId && Number(existing.expiresAt || 0) > now) return false;
+    saveJson(key, { owner: ownerId, expiresAt: now + LOCK_TTL_MS });
+    return loadJson(key, null)?.owner === ownerId;
+  }
+
+  function releaseLock(chatId) {
+    const key = `${LOCK_PREFIX}${chatId}`;
+    if (loadJson(key, null)?.owner === ownerId) localStorage.removeItem(key);
+  }
+
+  async function createPendingBatch(chatId, pairs) {
+    const state = stateFor(chatId);
+    const before = await fetchSummaries('longTerm');
+    const items = await generateValidatedItems(chatId, 'normal', pairsToChatLog(pairs));
+    state.pendingBatch = {
+      firstTurnId: pairs[0].assistant.turnId,
+      lastTurnId: pairs[pairs.length - 1].assistant.turnId,
+      items,
+      createdIds: [],
+      preExistingIds: before.items.map(item => item._id),
+      startedAt: Date.now(),
+    };
+    persistStates();
+    return state.pendingBatch;
+  }
+
+  async function resumePendingBatch(chatId) {
+    const state = stateFor(chatId);
+    const job = state.pendingBatch;
+    if (!job) return false;
+    const currentBeforeCreate = await fetchSummaries('longTerm');
+    const preExistingIds = new Set(job.preExistingIds || []);
+    const alreadyTracked = new Set(job.createdIds);
+    for (let index = job.createdIds.length; index < job.items.length; index += 1) {
+      setStatus(`장기기억 저장 중 ${index + 1}/${job.items.length}...`);
+      const expected = job.items[index];
+      const recovered = currentBeforeCreate.items.find(item => (
+        item.createdBy === 'user'
+        && !preExistingIds.has(item._id)
+        && !alreadyTracked.has(item._id)
+        && item.title === expected.title
+        && item.summary === expected.summary
+      ));
+      const id = recovered?._id || await createSummary(expected);
+      if (!id) throw new Error(`${index + 1}번 장기기억 저장 응답에 ID가 없음.`);
+      job.createdIds.push(id);
+      alreadyTracked.add(id);
+      persistStates();
+    }
+    const current = await fetchSummaries('longTerm');
+    const byId = new Map(current.items.map(item => [item._id, item]));
+    for (let index = 0; index < job.createdIds.length; index += 1) {
+      const saved = byId.get(job.createdIds[index]);
+      const expected = job.items[index];
+      if (!saved || saved.createdBy !== 'user' || saved.title !== expected.title || saved.summary !== expected.summary) {
+        throw new Error(`${index + 1}번 장기기억 저장 검증 실패. 기존 데이터는 삭제하지 않음.`);
+      }
+    }
+    state.baselineTurnId = job.lastTurnId;
+    state.lastRunAt = Date.now();
+    state.pendingBatch = null;
+    state.progress = 0;
+    persistStates();
+    showToast(`✅ ${job.items.length}개 장기기억 저장 완료`);
+    return true;
+  }
+
+  async function cleanupAssistantLongTerms(chatId) {
+    const state = stateFor(chatId);
+    const current = await fetchSummaries('longTerm');
+    const targets = current.items.filter(item => item.createdBy === 'assistant');
+    const protectedItems = current.items.filter(item => item.createdBy === 'user');
+    if (targets.length === 0) return;
+
+    if (!state.cleanupApproved) {
+      const approved = window.confirm(
+        `자동 생성 장기기억 ${targets.length}개를 발견함.\n\n` +
+        `보호되는 사용자 장기기억: ${protectedItems.length}개\n` +
+        `단기기억은 건드리지 않음.\n\n` +
+        `자동 생성 장기기억만 삭제할까? 최초 1회 확인이며 이후 같은 기준으로 자동 정리됨.`
+      );
+      if (!approved) {
+        setStatus('자동 장기기억 삭제 승인이 보류됨. 사용자 장기기억은 그대로 보존됨.', 'warn');
+        return;
+      }
+      state.cleanupApproved = true;
+      persistStates();
     }
 
-    function findHeaderContainer() {
-        // 1순위: 기존 원본이 쓰던 정확한 상단 우측 버튼 묶음.
-        const directSelectors = [
-            '.absolute.z-\\[5\\] .flex.gap-3.items-center',
-            'header .flex.gap-3.items-center',
-            '[class*="z-"] .flex.gap-3.items-center'
-        ];
+    saveBackup(chatId, '자동 장기기억 삭제 전', current.items);
+    const protectedIds = new Set(protectedItems.map(item => item._id));
+    let deleted = 0;
+    for (const target of targets) {
+      if (target.createdBy !== 'assistant' || protectedIds.has(target._id)) {
+        throw new Error('삭제 대상 검증 실패. 남은 자동 삭제를 중단함.');
+      }
+      await deleteAssistantSummary(target);
+      deleted += 1;
+    }
+    const after = await fetchSummaries('longTerm');
+    const afterIds = new Set(after.items.map(item => item._id));
+    const missingProtected = [...protectedIds].filter(id => !afterIds.has(id));
+    if (missingProtected.length > 0) throw new Error('보호 대상 장기기억 검증 실패. 백업을 확인해줘.');
+    showToast(`🧹 자동 장기기억 ${deleted}개 정리 완료`);
+  }
 
-        for (const selector of directSelectors) {
-            const el = document.querySelector(selector);
-            if (isLikelyTopHeaderContainer(el)) return el;
+  function sameIdSet(a, b) {
+    if (a.length !== b.length) return false;
+    const set = new Set(a);
+    return b.every(id => set.has(id));
+  }
+
+  async function prepareCompaction(chatId) {
+    const state = stateFor(chatId);
+    if (state.compactionTxn) return resumeCompactionTransaction(chatId);
+    const current = await fetchSummaries('longTerm');
+    const userEntries = current.items.filter(item => item.createdBy === 'user');
+    if (current.userCreatedCount !== userEntries.length) {
+      throw new Error(`사용자 장기기억 개수 불일치(${current.userCreatedCount}/${userEntries.length}). 재정리 중단.`);
+    }
+    if (userEntries.length < 51) return false;
+    const sourceIds = userEntries.map(item => item._id);
+    if (state.pendingCompaction && sameIdSet(state.pendingCompaction.sourceIds || [], sourceIds)) {
+      if (state.compactionApproved) return applyCompaction(chatId);
+      renderPanel();
+      return true;
+    }
+
+    setStatus(`장기기억 ${userEntries.length}개를 10개로 재요약 중...`);
+    const sourceText = JSON.stringify(userEntries.map((item, index) => ({
+      order: index + 1, title: item.title, summary: item.summary,
+    })), null, 2);
+    const items = await generateValidatedItems(chatId, 'compact', sourceText);
+    state.pendingCompaction = { sourceIds, items, createdAt: Date.now() };
+    persistStates();
+    if (state.compactionApproved) return applyCompaction(chatId);
+    showToast('💾 51→10 재정리 초안 준비됨. 메모리 창에서 확인해줘.', 'warn');
+    openPanel();
+    renderPanel();
+    return true;
+  }
+
+  async function applyCompaction(chatId) {
+    const state = stateFor(chatId);
+    const draft = state.pendingCompaction;
+    if (!draft || validateItems(draft.items, 'compact').length > 0) throw new Error('유효한 재정리 초안이 없음.');
+    const current = await fetchSummaries('longTerm');
+    const currentUserEntries = current.items.filter(item => item.createdBy === 'user');
+    const currentIds = currentUserEntries.map(item => item._id);
+    if (!sameIdSet(draft.sourceIds, currentIds)) {
+      state.pendingCompaction = null;
+      persistStates();
+      throw new Error('초안 생성 후 장기기억이 변경됨. 안전을 위해 초안을 폐기했으니 다시 생성해줘.');
+    }
+
+    saveBackup(chatId, '51→10 재정리 전', current.items);
+    state.compactionTxn = { sourceIds: [...draft.sourceIds], newIds: [], items: draft.items, stage: 'create' };
+    persistStates();
+    return resumeCompactionTransaction(chatId);
+  }
+
+  async function resumeCompactionTransaction(chatId) {
+    const state = stateFor(chatId);
+    const txn = state.compactionTxn;
+    if (!txn) return false;
+    if (!Array.isArray(txn.items) || txn.items.length !== 10 || !Array.isArray(txn.sourceIds)) {
+      throw new Error('재정리 작업 기록이 손상됨. 기존 장기기억은 삭제하지 않음.');
+    }
+
+    let current = await fetchSummaries('longTerm');
+    const sourceSet = new Set(txn.sourceIds);
+    if (txn.stage === 'create') {
+      const currentById = new Map(current.items.map(item => [item._id, item]));
+      const missingSource = txn.sourceIds.some(id => currentById.get(id)?.createdBy !== 'user');
+      if (missingSource) throw new Error('기존 장기기억 구성이 바뀌어 신규 10개 생성을 중단함. 기존 항목은 더 삭제하지 않음.');
+
+      const tracked = new Set(txn.newIds || []);
+      for (let index = 0; index < txn.items.length; index += 1) {
+        const expected = txn.items[index];
+        const trackedId = txn.newIds[index];
+        if (trackedId) {
+          const saved = currentById.get(trackedId);
+          if (!saved || saved.createdBy !== 'user' || saved.title !== expected.title || saved.summary !== expected.summary) {
+            throw new Error(`${index + 1}번 신규 장기기억 기록이 달라 생성을 중단함. 기존 항목은 삭제하지 않음.`);
+          }
+          continue;
         }
 
-        // 2순위: 크랙 기본 헤더 버튼을 앵커로 삼아 부모 버튼 묶음을 찾는다.
-        // 사용자가 엔딩 힌트 버튼을 CSS로 숨겨도 DOM에는 남아 있을 수 있어 기준점으로 쓸 수 있다.
-        const anchorSelectors = [
-            'button[aria-label="엔딩 힌트"]',
-            'button[aria-label*="엔딩"]',
-            'button[aria-label*="힌트"]',
-            'button[aria-label*="공유"]',
-            'button[aria-label*="설정"]',
-            'button[aria-label*="메뉴"]'
-        ];
+        setStatus(`새 장기기억 생성 중 ${index + 1}/10...`);
+        const recovered = current.items.find(item => (
+          item.createdBy === 'user'
+          && !sourceSet.has(item._id)
+          && !tracked.has(item._id)
+          && item.title === expected.title
+          && item.summary === expected.summary
+        ));
+        const id = recovered?._id || await createSummary(expected);
+        if (!id) throw new Error(`${index + 1}번 신규 장기기억 ID를 받지 못함. 기존 항목은 삭제하지 않음.`);
+        txn.newIds.push(id);
+        tracked.add(id);
+        persistStates();
+      }
 
-        for (const selector of anchorSelectors) {
-            const anchor = document.querySelector(selector);
-            const container = anchor?.closest?.('.flex.gap-3.items-center, .flex.items-center, [class*="items-center"]');
-            if (isLikelyTopHeaderContainer(container)) return container;
+      current = await fetchSummaries('longTerm');
+      const verifiedMap = new Map(current.items.map(item => [item._id, item]));
+      const uniqueNewIds = new Set(txn.newIds);
+      if (txn.newIds.length !== 10 || uniqueNewIds.size !== 10) {
+        throw new Error('신규 장기기억 10개 ID 검증 실패. 기존 항목은 삭제하지 않음.');
+      }
+      txn.newIds.forEach((id, index) => {
+        const saved = verifiedMap.get(id);
+        const expected = txn.items[index];
+        if (!saved || saved.createdBy !== 'user' || sourceSet.has(id)
+          || saved.title !== expected.title || saved.summary !== expected.summary) {
+          throw new Error(`${index + 1}번 신규 장기기억 검증 실패. 기존 항목은 삭제하지 않음.`);
         }
-
-        // 3순위: 상단 영역 안의 버튼 묶음 중 가장 헤더답게 보이는 것을 선택.
-        const roots = Array.from(document.querySelectorAll('header, .absolute, [class*="z-"]'));
-        for (const root of roots) {
-            if (isBadContainer(root)) continue;
-            const candidates = Array.from(root.querySelectorAll('.flex.gap-3.items-center, .flex.items-center, [class*="items-center"]'));
-            const found = candidates.find(isLikelyTopHeaderContainer);
-            if (found) return found;
-        }
-
-        return null;
+      });
+      txn.stage = 'delete-old';
+      persistStates();
     }
 
-    function removeAiButtons() {
-        document.querySelectorAll('.' + SHIPIDLE_AI_SUMMARY_BTN_CLASS).forEach(btn => btn.remove());
+    if (txn.stage !== 'delete-old') return false;
+    current = await fetchSummaries('longTerm');
+    const byId = new Map(current.items.map(item => [item._id, item]));
+    const newIdSet = new Set(txn.newIds);
+    if (txn.newIds.length !== 10 || newIdSet.size !== 10 || txn.newIds.some((id, index) => {
+      const item = byId.get(id);
+      const expected = txn.items[index];
+      return item?.createdBy !== 'user' || sourceSet.has(id)
+        || item.title !== expected.title || item.summary !== expected.summary;
+    })) {
+      throw new Error('신규 10개 검증에 실패하여 기존 장기기억 삭제를 중단함.');
     }
-
-    function createAiButton() {
-        const aiBtn = document.createElement('button');
-        aiBtn.className = SHIPIDLE_AI_SUMMARY_BTN_CLASS;
-        aiBtn.type = 'button';
-        aiBtn.innerHTML = '✨요약';
-        aiBtn.dataset.ceAiSummary = 'true';
-        aiBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            showAiSummaryModal();
-        });
-        return aiBtn;
+    let deleted = 0;
+    for (const id of txn.sourceIds) {
+      if (!byId.has(id)) continue;
+      if (byId.get(id)?.createdBy !== 'user' || !sourceSet.has(id) || newIdSet.has(id)) {
+        throw new Error('재정리 삭제 대상 검증 실패.');
+      }
+      setStatus(`기존 장기기억 정리 중 ${deleted + 1}/${txn.sourceIds.length}...`);
+      await deleteTrackedUserSummary(id, sourceSet);
+      deleted += 1;
     }
+    state.compactionTxn = null;
+    state.pendingCompaction = null;
+    state.compactionApproved = true;
+    persistStates();
+    showToast('✅ 장기기억 51→10 재정리 완료');
+    setStatus('장기기억을 안전하게 10개로 재정리함.');
+    return true;
+  }
 
-    function injectTopHeaderBtn() {
-        if (!isEpisodePage()) {
-            removeAiButtons();
-            return true;
-        }
+  async function postBatchMaintenance(chatId) {
+    try { await cleanupAssistantLongTerms(chatId); }
+    catch (error) { setStatus(`자동 장기기억 정리 실패: ${shortError(error)}`, 'error'); return; }
+    try { await prepareCompaction(chatId); }
+    catch (error) { setStatus(`51→10 재정리 중단: ${shortError(error)}`, 'error'); }
+  }
 
-        const headerContainer = findHeaderContainer();
-        if (!headerContainer) return false;
+  async function initializeBaseline(chatId) {
+    const state = stateFor(chatId);
+    if (state.baselineTurnId) return;
+    const recent = await fetchMessagesForPairs('', 1);
+    const latestPair = recent.pairs.at(-1);
+    state.baselineTurnId = latestPair?.assistant?.turnId || '__empty__';
+    state.progress = 0;
+    persistStates();
+    setStatus('현재 시점을 기준으로 자동 20턴 카운트를 시작함.');
+  }
 
-        const existingInHeader = headerContainer.querySelector('.' + SHIPIDLE_AI_SUMMARY_BTN_CLASS);
-        if (existingInHeader) {
-            existingInHeader.style.display = 'inline-flex';
-            return true;
-        }
-
-        // 다른 위치에 잘못 붙은 기존 버튼은 정리하고 현재 헤더에 새로 붙인다.
-        removeAiButtons();
-        headerContainer.prepend(createAiButton());
-        return true;
+  async function runAutoCheck(reason = 'timer') {
+    const chatId = getChatId();
+    if (!chatId || !config.autoEnabled || document.hidden) return;
+    if (!acquireLock(chatId)) return;
+    try {
+      const state = stateFor(chatId);
+      if (state.compactionTxn) await resumeCompactionTransaction(chatId);
+      if (state.pendingBatch) {
+        await resumePendingBatch(chatId);
+        await postBatchMaintenance(chatId);
+        return;
+      }
+      await initializeBaseline(chatId);
+      const result = state.baselineTurnId === '__empty__'
+        ? await fetchMessagesForPairs('', AUTO_TURN_COUNT)
+        : await fetchMessagesForPairs(state.baselineTurnId, AUTO_TURN_COUNT);
+      if (state.baselineTurnId !== '__empty__' && !result.baselineFound) {
+        const latest = await fetchMessagesForPairs('', 1);
+        state.baselineTurnId = latest.pairs.at(-1)?.assistant?.turnId || state.baselineTurnId;
+        state.progress = 0;
+        persistStates();
+        setStatus('이전 기준 메시지를 찾지 못해 현재 시점부터 다시 셈. 과거 대화는 중복 요약하지 않음.', 'warn');
+        return;
+      }
+      state.progress = result.pairs.length;
+      persistStates();
+      dashboard.progress = Math.min(result.pairs.length, AUTO_TURN_COUNT);
+      if (result.pairs.length < AUTO_TURN_COUNT) {
+        if (panel && activeTab === 'overview') renderPanel();
+        return;
+      }
+      setStatus(`완료된 왕복 20턴을 ${config.model}로 요약 중...`);
+      await createPendingBatch(chatId, result.pairs.slice(0, AUTO_TURN_COUNT));
+      await resumePendingBatch(chatId);
+      await postBatchMaintenance(chatId);
+      if (result.pairs.length >= AUTO_TURN_COUNT * 2) setTimeout(() => runAutoCheck('backlog'), 5000);
+    } catch (error) {
+      console.error('[Crack Memory Manager]', reason, error);
+      setStatus(`자동 처리 중단: ${shortError(error)}`, 'error');
+      showToast(`⚠️ ${shortError(error)}`, 'error');
+    } finally {
+      releaseLock(chatId);
+      if (panel && activeTab === 'overview') refreshDashboard().catch(() => {});
     }
+  }
 
-    function inject() {
-        injectAiStyles();
-        return injectTopHeaderBtn();
+  async function summarizeRecentTwenty() {
+    const chatId = getChatId();
+    if (!chatId) throw new Error('채팅방에서 실행해줘.');
+    if (!acquireLock(chatId)) throw new Error('다른 탭에서 메모리 작업 중임.');
+    try {
+      const result = await fetchMessagesForPairs('', AUTO_TURN_COUNT);
+      const pairs = result.pairs.slice(-AUTO_TURN_COUNT);
+      if (pairs.length < AUTO_TURN_COUNT) throw new Error(`완료된 왕복이 ${pairs.length}/20턴뿐임.`);
+      const state = stateFor(chatId);
+      if (state.pendingBatch) await resumePendingBatch(chatId);
+      await createPendingBatch(chatId, pairs);
+      await resumePendingBatch(chatId);
+      await postBatchMaintenance(chatId);
+    } finally {
+      releaseLock(chatId);
     }
+  }
 
-    function scheduleInject(reason = 'schedule') {
-        if (injectRaf) return;
-        injectRaf = requestAnimationFrame(() => {
-            injectRaf = 0;
-            inject();
-        });
+  function parseEditorText(text) {
+    return String(text || '').split(/\n\s*\n/).map(block => block.trim()).filter(Boolean).map(block => {
+      const lines = block.split('\n');
+      const header = lines.shift()?.trim() || '';
+      const match = header.match(/^\[(.*?)\](?:\s*@([a-f0-9]+))?$/i);
+      return {
+        title: match ? match[1].trim() : header,
+        id: match?.[2] || '',
+        summary: lines.join('\n').trim(),
+        validFormat: !!match,
+      };
+    });
+  }
+
+  function editorText(entries) {
+    return entries.map(item => `[${item.title}] @${item._id}\n${item.summary}`).join('\n\n');
+  }
+
+  async function loadEditor() {
+    const current = await fetchSummaries('longTerm');
+    editorOriginal = current.items.filter(item => item.createdBy === 'user');
+    editorLoaded = true;
+    renderPanel();
+  }
+
+  function editorAnalysis(text) {
+    const parsed = parseEditorText(text);
+    const errors = [];
+    const originalMap = new Map(editorOriginal.map(item => [item._id, item]));
+    const ids = new Set();
+    parsed.forEach((item, index) => {
+      if (!item.validFormat) errors.push(`${index + 1}번 형식 오류`);
+      if (!item.title || charCount(item.title) > MAX_TITLE_LENGTH) errors.push(`${index + 1}번 제목 ${charCount(item.title)}/20자`);
+      if (!item.summary || charCount(item.summary) > MAX_SUMMARY_LENGTH) errors.push(`${index + 1}번 내용 ${charCount(item.summary)}/300자`);
+      if (item.id) {
+        if (!originalMap.has(item.id)) errors.push(`${index + 1}번 알 수 없는 ID`);
+        if (ids.has(item.id)) errors.push(`${index + 1}번 중복 ID`);
+        ids.add(item.id);
+      }
+    });
+    const add = parsed.filter(item => !item.id).length;
+    const update = parsed.filter(item => item.id && originalMap.has(item.id) && (
+      originalMap.get(item.id).title !== item.title || originalMap.get(item.id).summary !== item.summary
+    )).length;
+    const remove = editorOriginal.filter(item => !ids.has(item._id)).length;
+    return { parsed, errors, add, update, remove };
+  }
+
+  async function saveEditor() {
+    const textarea = panel?.querySelector('#cmm-editor');
+    if (!textarea) throw new Error('편집기를 찾을 수 없음.');
+    const analysis = editorAnalysis(textarea.value);
+    if (analysis.errors.length) throw new Error(analysis.errors.join(', '));
+    if (!window.confirm(`추가 ${analysis.add} · 수정 ${analysis.update} · 삭제 ${analysis.remove}\n\n사용자 장기기억만 변경함. 저장할까?`)) return;
+
+    const chatId = getChatId();
+    const current = await fetchSummaries('longTerm');
+    const currentUser = current.items.filter(item => item.createdBy === 'user');
+    if (!sameIdSet(currentUser.map(item => item._id), editorOriginal.map(item => item._id))) {
+      throw new Error('편집창을 연 뒤 장기기억이 변경됨. 다시 불러와줘.');
     }
+    saveBackup(chatId, '수동 편집 전', current.items);
+    const originalMap = new Map(editorOriginal.map(item => [item._id, item]));
+    const parsedIds = new Set(analysis.parsed.map(item => item.id).filter(Boolean));
 
-    function stopTransientObserver() {
-        if (transientObserver) {
-            transientObserver.disconnect();
-            transientObserver = null;
-        }
-        clearTimeout(transientObserverTimer);
-        transientObserverTimer = 0;
+    for (const item of analysis.parsed.filter(item => !item.id)) await createSummary(item);
+    for (const item of analysis.parsed.filter(item => item.id)) {
+      const original = originalMap.get(item.id);
+      if (original.title !== item.title || original.summary !== item.summary) await updateSummary(item.id, item);
     }
+    const allowedDelete = new Set(editorOriginal.filter(item => !parsedIds.has(item._id)).map(item => item._id));
+    for (const id of allowedDelete) await deleteTrackedUserSummary(id, allowedDelete);
+    await loadEditor();
+    showToast('✅ 사용자 장기기억 편집 저장 완료');
+  }
 
-    function startTransientObserver(reason = 'route') {
-        stopTransientObserver();
-        if (!document.body) return;
-
-        transientObserver = new MutationObserver(() => {
-            scheduleInject(reason + ':observer');
-        });
-
-        // 상시 감시가 아니라 방 이동/부팅 직후에만 잠깐 켜진다. attributes/characterData는 보지 않는다.
-        transientObserver.observe(document.body, { childList: true, subtree: true });
-        transientObserverTimer = setTimeout(stopTransientObserver, TRANSIENT_OBSERVER_MS);
+  async function refreshDashboard() {
+    const chatId = getChatId();
+    if (!chatId) return;
+    const state = stateFor(chatId);
+    if (!state.baselineTurnId) await initializeBaseline(chatId);
+    const [longTerms, shortTerms] = await Promise.all([
+      fetchSummaries('longTerm'),
+      fetchSummaries('shortTerm').catch(() => ({ items: [], totalCount: 0 })),
+    ]);
+    let progress = 0;
+    if (state.baselineTurnId === '__empty__') {
+      const result = await fetchMessagesForPairs('', AUTO_TURN_COUNT);
+      progress = Math.min(result.pairs.length, AUTO_TURN_COUNT);
+    } else if (state.baselineTurnId) {
+      const result = await fetchMessagesForPairs(state.baselineTurnId, AUTO_TURN_COUNT);
+      if (result.baselineFound) progress = Math.min(result.pairs.length, AUTO_TURN_COUNT);
     }
+    dashboard = {
+      progress,
+      userCount: longTerms.items.filter(item => item.createdBy === 'user').length,
+      autoCount: longTerms.items.filter(item => item.createdBy === 'assistant').length,
+      shortCount: shortTerms.totalCount || shortTerms.items.length,
+    };
+    state.progress = progress;
+    persistStates();
+    if (panel && activeTab === 'overview') renderPanel();
+  }
 
-    function runInjectBurst(reason = 'burst') {
-        clearBurstTimers();
-        ROUTE_RETRY_DELAYS.forEach(delay => {
-            const timer = setTimeout(() => scheduleInject(reason + ':' + delay), delay);
-            burstTimers.push(timer);
-        });
+  const styles = `
+    #cmm-header-button { width:32px; min-width:32px; height:32px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid #c6c6c6; border-radius:8px; background:#dddddd; color:#303030; box-shadow:none; font:15px/1 Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; cursor:pointer; }
+    #cmm-header-button:hover { background:#d1d1d1; }
+    #cmm-header-button:active { background:#c7c7c7; transform:translateY(1px); }
+    #shipidle-summary-editor-editor-btn { display:none !important; }
+    #cmm-overlay { position:fixed; inset:0; z-index:2147483000; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(20,30,38,.36); font-family:Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; }
+    #cmm-panel { width:min(660px,100%); max-height:min(820px,92vh); overflow:hidden; display:flex; flex-direction:column; box-sizing:border-box; color:#25313a; background:#fff; border:1px solid #d8dde1; border-radius:16px; box-shadow:0 24px 70px rgba(32,49,61,.22); }
+    #cmm-panel * { box-sizing:border-box; }
+    .cmm-head { display:flex; align-items:center; justify-content:space-between; padding:16px 18px 12px; border-bottom:1px solid #e8ecef; background:#fff; }
+    .cmm-title { font-size:16px; font-weight:760; color:#26343e; }
+    .cmm-close { width:30px; height:30px; border:0; border-radius:8px; background:#f2f3f4; color:#59656d; font-size:20px; line-height:1; cursor:pointer; }
+    .cmm-tabs { display:flex; align-items:center; gap:6px; padding:10px 14px; border-bottom:1px solid #edf0f2; background:#fff; overflow-x:auto; }
+    .cmm-tab { flex:0 0 auto; min-height:34px; padding:0 11px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #d9e1e6; border-radius:8px; background:#f7f8f9; color:#56636c; font-family:Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; font-size:12px; font-weight:650; line-height:1; -webkit-appearance:none; appearance:none; cursor:pointer; }
+    .cmm-tab.active { border-color:#b9d8eb; background:#eaf6ff; color:#245a78; }
+    .cmm-body { padding:16px; overflow:auto; background:#fff; }
+    .cmm-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .cmm-card { padding:13px; border:1px solid #e0e5e8; border-radius:12px; background:#fff; }
+    .cmm-card.accent { border-color:#cbdfea; background:#f8fcff; }
+    .cmm-label { margin-bottom:5px; color:#73808a; font-size:11px; font-weight:650; }
+    .cmm-value { color:#26343d; font-size:15px; font-weight:760; }
+    .cmm-sub { margin-top:5px; color:#7a8790; font-size:10px; line-height:1.5; }
+    .cmm-section { margin-top:12px; padding:13px; border:1px solid #e1e6e9; border-radius:12px; background:#fff; }
+    .cmm-section h3 { margin:0 0 9px; color:#34434d; font-size:13px; }
+    .cmm-row { display:flex; flex-wrap:wrap; gap:7px; align-items:center; }
+    .cmm-btn { padding:8px 11px; border:1px solid #bfd9e8; border-radius:8px; background:#eaf6ff; color:#285c78; font:650 12px Pretendard,sans-serif; cursor:pointer; }
+    .cmm-btn:hover { background:#dceffc; }
+    .cmm-btn.gray { border-color:#d5dadd; background:#f3f4f5; color:#536069; }
+    .cmm-btn.danger { border-color:#e6c4c8; background:#fff5f5; color:#9b4650; }
+    .cmm-btn:disabled { opacity:.5; cursor:not-allowed; }
+    .cmm-status { margin-top:12px; padding:10px 11px; border-radius:9px; background:#eef6fb; color:#315d77; font-size:12px; line-height:1.5; white-space:pre-line; }
+    .cmm-status.warn { background:#fff8e8; color:#7c622d; }
+    .cmm-status.error { background:#fff1f1; color:#963f49; }
+    .cmm-field { display:block; margin:10px 0; color:#596771; font-size:11px; font-weight:650; }
+    .cmm-field input,.cmm-field select,.cmm-field textarea { width:100%; margin-top:5px; padding:9px 10px; border:1px solid #d2d9de; border-radius:8px; background:#fff; color:#26343d; font:13px/1.5 Pretendard,sans-serif; }
+    .cmm-field input:focus,.cmm-field select:focus,.cmm-field textarea:focus { outline:2px solid #cfe8f7; border-color:#a9cfe5; }
+    #cmm-editor { min-height:360px; resize:vertical; font-family:Pretendard,monospace; }
+    .cmm-editor-meta { margin:8px 0; color:#697780; font-size:11px; white-space:pre-line; }
+    .cmm-preview-item { margin:8px 0; padding:10px; border:1px solid #dce5ea; border-radius:9px; background:#fbfdfe; }
+    .cmm-preview-title { display:flex; justify-content:space-between; gap:8px; color:#2b4454; font-size:12px; font-weight:700; }
+    .cmm-preview-body { margin-top:6px; color:#4c5c66; font-size:11px; line-height:1.55; white-space:pre-wrap; }
+    .cmm-error { color:#b44450 !important; font-weight:750; }
+    .cmm-backup { margin:8px 0; padding:11px; border:1px solid #e0e5e8; border-radius:10px; background:#fff; }
+    .cmm-check { display:flex; align-items:center; gap:7px; margin:10px 0; color:#45545e; font-size:12px; }
+    #cmm-toast { position:fixed; top:18px; left:50%; z-index:2147483646; transform:translate(-50%,-10px); opacity:0; max-width:min(460px,90vw); padding:10px 15px; border-radius:10px; background:#28343c; color:#fff; box-shadow:0 8px 30px rgba(0,0,0,.2); font:650 12px/1.5 Pretendard,sans-serif; transition:.22s; }
+    #cmm-toast.show { transform:translate(-50%,0); opacity:1; }
+    #cmm-toast.warn { background:#775f2e; }
+    #cmm-toast.error { background:#8f3d47; }
+    @media (max-width:560px) { #cmm-overlay{padding:8px}.cmm-grid{grid-template-columns:1fr}#cmm-panel{max-height:96vh;border-radius:13px}.cmm-body{padding:12px} }
+  `;
+
+  function injectStyles() {
+    if (document.getElementById('cmm-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'cmm-styles';
+    style.textContent = styles;
+    document.head.appendChild(style);
+  }
+
+  function closePanel() {
+    panel?.remove();
+    panel = null;
+  }
+
+  function tabButton(id, label) {
+    return `<button class="cmm-tab ${activeTab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`;
+  }
+
+  function overviewHtml() {
+    const chatId = getChatId();
+    const state = chatId ? stateFor(chatId) : { lastCostKrw: 0, totalCostKrw: 0 };
+    const pending = state.pendingCompaction;
+    let html = `
+      <div class="cmm-grid">
+        <div class="cmm-card accent"><div class="cmm-label">자동 요약</div><div class="cmm-value">${config.autoEnabled ? '켜짐' : '꺼짐'}</div><div class="cmm-sub">완료된 유저+캐릭터 왕복 기준</div></div>
+        <div class="cmm-card"><div class="cmm-label">진행도</div><div class="cmm-value">${dashboard.progress} / ${AUTO_TURN_COUNT}턴</div><div class="cmm-sub">답변 생성 중·프롤로그·리롤 제외</div></div>
+        <div class="cmm-card"><div class="cmm-label">사용자 장기기억</div><div class="cmm-value">${dashboard.userCount} / 51개</div><div class="cmm-sub">직접 추가 + 이 스크립트 생성분</div></div>
+        <div class="cmm-card"><div class="cmm-label">자동 메모리</div><div class="cmm-value">장기 ${dashboard.autoCount} · 단기 ${dashboard.shortCount}</div><div class="cmm-sub">자동 장기만 승인 후 삭제 · 단기는 제외</div></div>
+        <div class="cmm-card"><div class="cmm-label">모델</div><div class="cmm-value" style="font-size:13px">${escapeHtml(MODEL_OPTIONS.find(([id]) => id === config.model)?.[1] || config.model)}</div><div class="cmm-sub">${config.provider === 'firebase' ? 'Firebase Vertex AI' : 'Google Gemini API'}</div></div>
+        <div class="cmm-card accent"><div class="cmm-label">예상 비용</div><div class="cmm-value">이번 ${formatWon(state.lastCostKrw)}원</div><div class="cmm-sub">누적 ${formatWon(state.totalCostKrw)}원 · 환율 1,500원</div></div>
+      </div>
+      <div class="cmm-section"><h3>작업</h3><div class="cmm-row">
+        <button class="cmm-btn" data-action="summarize-now">최근 20턴 지금 요약</button>
+        <button class="cmm-btn gray" data-action="refresh">새로고침</button>
+      </div></div>`;
+    if (pending) {
+      html += `<div class="cmm-section"><h3>51→10 재정리 미리보기</h3>
+        <div class="cmm-sub">기존 ${pending.sourceIds.length}개는 신규 10개가 모두 저장·검증되기 전까지 삭제하지 않음.</div>
+        ${pending.items.map(item => `<div class="cmm-preview-item"><div class="cmm-preview-title"><span>${escapeHtml(item.title)}</span><span>${charCount(item.title)}/20</span></div><div class="cmm-preview-body">${escapeHtml(item.summary)}</div><div class="cmm-sub">${charCount(item.summary)}/300자</div></div>`).join('')}
+        <div class="cmm-row"><button class="cmm-btn" data-action="apply-compaction">검증 후 10개로 적용</button><button class="cmm-btn gray" data-action="discard-compaction">초안 폐기</button></div>
+      </div>`;
     }
+    html += `<div id="cmm-status" class="cmm-status ${latestStatusTone}">${escapeHtml(latestStatus)}</div>`;
+    return html;
+  }
 
-    function handleRouteRefresh(reason = 'route', options = {}) {
-        const urlChanged = getUrlKey() !== lastUrlKey;
-        if (urlChanged) {
-            lastUrlKey = getUrlKey();
-            // 이전 방 헤더에 붙어 있던 버튼 때문에 "성공"으로 오판하지 않도록 먼저 지운다.
-            removeAiButtons();
-        }
+  function editorHtml() {
+    if (!editorLoaded) return `<div class="cmm-section"><h3>사용자 장기기억 편집</h3><p class="cmm-sub">createdBy:user 항목만 불러오며 자동 장기기억과 단기기억은 편집하지 않음.</p><button class="cmm-btn" data-action="load-editor">불러오기</button></div>`;
+    const value = editorText(editorOriginal);
+    return `<div class="cmm-section"><h3>사용자 장기기억 텍스트 편집</h3>
+      <p class="cmm-sub">형식: [제목] @id 다음 줄에 내용. 블록 사이 빈 줄 1개. 제목 20자·내용 300자 제한.</p>
+      <label class="cmm-field"><textarea id="cmm-editor" spellcheck="false">${escapeHtml(value)}</textarea></label>
+      <div id="cmm-editor-meta" class="cmm-editor-meta">변경 내용을 입력하면 검사함.</div>
+      <div class="cmm-row"><button class="cmm-btn gray" data-action="reload-editor">다시 불러오기</button><button class="cmm-btn" data-action="save-editor">검사 후 저장</button></div>
+    </div>`;
+  }
 
-        if (options.full || urlChanged) {
-            startTransientObserver(reason);
-            runInjectBurst(reason);
-        } else {
-            scheduleInject(reason);
-        }
+  function settingsHtml() {
+    return `<div class="cmm-section"><h3>AI 설정</h3>
+      <label class="cmm-check"><input id="cmm-auto" type="checkbox" ${config.autoEnabled ? 'checked' : ''}> 자동 20턴 요약 켜기</label>
+      <label class="cmm-field">API 방식<select id="cmm-provider"><option value="google" ${config.provider === 'google' ? 'selected' : ''}>Google Gemini API</option><option value="firebase" ${config.provider === 'firebase' ? 'selected' : ''}>Firebase Vertex AI</option></select></label>
+      <label class="cmm-field">모델<select id="cmm-model">${MODEL_OPTIONS.map(([id, label]) => `<option value="${id}" ${config.model === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="cmm-field">Google API Key<input id="cmm-api-key" type="password" value="${escapeHtml(config.apiKey)}" autocomplete="off"></label>
+      <label class="cmm-field">Firebase 스크립트<textarea id="cmm-firebase" rows="4" placeholder="firebaseConfig = { ... };">${escapeHtml(config.firebaseScript)}</textarea></label>
+      <label class="cmm-field">추가 지침<textarea id="cmm-extra" rows="5" placeholder="기본 300자·사실성 규칙 뒤에 추가할 개인 지침">${escapeHtml(config.extraPrompt)}</textarea></label>
+      <div class="cmm-row"><button class="cmm-btn" data-action="save-settings">설정 저장</button><button class="cmm-btn gray" data-action="reset-baseline">지금부터 20턴 다시 세기</button></div>
+    </div>`;
+  }
+
+  function backupsHtml() {
+    const chatId = getChatId();
+    const backups = chatId ? backupsFor(chatId) : [];
+    if (!backups.length) return `<div class="cmm-section"><h3>자동 백업</h3><p class="cmm-sub">아직 백업이 없음. 자동 삭제·재정리·수동 편집 직전에 최대 5개를 저장함.</p></div>`;
+    return `<div class="cmm-section"><h3>자동 백업</h3><p class="cmm-sub">복구는 현재 내용을 지우지 않고 누락된 항목만 추가함.</p>
+      ${backups.map(item => `<div class="cmm-backup"><div class="cmm-preview-title"><span>${escapeHtml(item.reason)}</span><span>${item.entries.length}개</span></div><div class="cmm-sub">${new Date(item.createdAt).toLocaleString()}</div><div class="cmm-row" style="margin-top:8px"><button class="cmm-btn gray" data-action="copy-backup" data-id="${item.id}">JSON 복사</button><button class="cmm-btn" data-action="restore-backup" data-id="${item.id}">누락분 복구</button></div></div>`).join('')}
+    </div>`;
+  }
+
+  function renderPanel() {
+    if (!panel) return;
+    const body = panel.querySelector('.cmm-body');
+    if (!body) return;
+    panel.querySelectorAll('.cmm-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === activeTab));
+    if (activeTab === 'overview') body.innerHTML = overviewHtml();
+    else if (activeTab === 'editor') body.innerHTML = editorHtml();
+    else if (activeTab === 'settings') body.innerHTML = settingsHtml();
+    else body.innerHTML = backupsHtml();
+    if (activeTab === 'editor' && editorLoaded) {
+      const textarea = panel.querySelector('#cmm-editor');
+      textarea?.addEventListener('input', updateEditorMeta);
+      updateEditorMeta();
     }
+  }
 
-    function installRouteWatcher() {
-        if (window.__ceAiSummaryRouteWatcher154) return;
-        window.__ceAiSummaryRouteWatcher154 = true;
+  function updateEditorMeta() {
+    const textarea = panel?.querySelector('#cmm-editor');
+    const meta = panel?.querySelector('#cmm-editor-meta');
+    if (!textarea || !meta) return;
+    const analysis = editorAnalysis(textarea.value);
+    meta.textContent = analysis.errors.length
+      ? `오류: ${analysis.errors.join(', ')}\n추가 ${analysis.add} · 수정 ${analysis.update} · 삭제 ${analysis.remove}`
+      : `정상 · 추가 ${analysis.add} · 수정 ${analysis.update} · 삭제 ${analysis.remove}`;
+    meta.classList.toggle('cmm-error', analysis.errors.length > 0);
+  }
 
-        ['pushState', 'replaceState'].forEach(method => {
-            const original = history[method];
-            if (typeof original !== 'function' || original.__ceAiSummaryWrapped154) return;
-
-            const wrapped = function () {
-                const result = original.apply(this, arguments);
-                setTimeout(() => handleRouteRefresh(method, { full: true }), 0);
-                return result;
-            };
-            wrapped.__ceAiSummaryWrapped154 = true;
-            history[method] = wrapped;
-        });
-
-        window.addEventListener('popstate', () => setTimeout(() => handleRouteRefresh('popstate', { full: true }), 0), { passive: true });
-        window.addEventListener('hashchange', () => setTimeout(() => handleRouteRefresh('hashchange', { full: true }), 0), { passive: true });
-        window.addEventListener('pageshow', () => handleRouteRefresh('pageshow', { full: true }), { passive: true });
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) handleRouteRefresh('visible', { full: true });
-        }, { passive: true });
-
-        // 방 이동 후 첫 클릭/포커스 때 헤더가 늦게 살아나는 케이스 보정.
-        // 클릭마다 무거운 탐색을 하지 않도록 900ms로 제한한다.
-        document.addEventListener('focusin', () => {
-            const now = Date.now();
-            if (now - lastInteractionKick < 900) return;
-            lastInteractionKick = now;
-            handleRouteRefresh('focusin');
-        }, { passive: true });
-
-        document.addEventListener('click', () => {
-            const now = Date.now();
-            if (now - lastInteractionKick < 900) return;
-            lastInteractionKick = now;
-            handleRouteRefresh('click');
-        }, { passive: true, capture: true });
+  async function restoreBackup(id) {
+    const chatId = getChatId();
+    const backup = backupsFor(chatId).find(item => item.id === id);
+    if (!backup) throw new Error('백업을 찾을 수 없음.');
+    if (!window.confirm('현재 장기기억은 삭제하지 않고, 제목과 내용이 모두 같은 항목이 없을 때만 백업 항목을 추가함. 계속할까?')) return;
+    const current = await fetchSummaries('longTerm');
+    const fingerprints = new Set(current.items.filter(item => item.createdBy === 'user').map(item => `${item.title}\u0000${item.summary}`));
+    let restored = 0;
+    for (const item of backup.entries.filter(entry => entry.createdBy === 'user')) {
+      const fingerprint = `${item.title}\u0000${item.summary}`;
+      if (fingerprints.has(fingerprint)) continue;
+      await createSummary(item);
+      fingerprints.add(fingerprint);
+      restored += 1;
     }
+    showToast(`✅ 백업 누락분 ${restored}개 복구 완료`);
+  }
 
-    function start() {
-        injectAiStyles();
-        installRouteWatcher();
-        startTransientObserver('start');
-        runInjectBurst('start');
-        scheduleInject('start');
+  async function handleAction(action, target) {
+    const chatId = getChatId();
+    if (action === 'refresh') return refreshDashboard();
+    if (action === 'summarize-now') return summarizeRecentTwenty();
+    if (action === 'load-editor' || action === 'reload-editor') return loadEditor();
+    if (action === 'save-editor') return saveEditor();
+    if (action === 'save-settings') {
+      config.autoEnabled = !!panel.querySelector('#cmm-auto')?.checked;
+      config.provider = panel.querySelector('#cmm-provider')?.value || 'google';
+      config.model = panel.querySelector('#cmm-model')?.value || 'gemini-3.1-flash-lite';
+      config.apiKey = panel.querySelector('#cmm-api-key')?.value.trim() || '';
+      config.firebaseScript = panel.querySelector('#cmm-firebase')?.value.trim() || '';
+      config.extraPrompt = panel.querySelector('#cmm-extra')?.value.trim() || '';
+      persistConfig();
+      showToast('✅ 설정 저장 완료');
+      return renderPanel();
     }
+    if (action === 'reset-baseline') {
+      if (!window.confirm('과거 대화는 요약하지 않고 현재 최신 답변부터 20턴을 다시 셈. 계속할까?')) return;
+      const recent = await fetchMessagesForPairs('', 1);
+      const state = stateFor(chatId);
+      state.baselineTurnId = recent.pairs.at(-1)?.assistant?.turnId || '__empty__';
+      state.progress = 0;
+      persistStates();
+      showToast('✅ 현재 시점부터 다시 카운트함');
+      return refreshDashboard();
+    }
+    if (action === 'apply-compaction') {
+      if (!window.confirm('신규 10개를 먼저 저장·검증한 뒤 기존 사용자 장기기억을 삭제함. 자동 백업도 저장함. 적용할까?')) return;
+      await applyCompaction(chatId);
+      return refreshDashboard();
+    }
+    if (action === 'discard-compaction') {
+      const state = stateFor(chatId);
+      state.pendingCompaction = null;
+      persistStates();
+      return renderPanel();
+    }
+    if (action === 'copy-backup') {
+      const backup = backupsFor(chatId).find(item => item.id === target.dataset.id);
+      if (!backup) throw new Error('백업을 찾을 수 없음.');
+      await navigator.clipboard.writeText(JSON.stringify(backup, null, 2));
+      return showToast('✅ 백업 JSON 복사 완료');
+    }
+    if (action === 'restore-backup') return restoreBackup(target.dataset.id);
+  }
 
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
-    else start();
+  async function withBusy(task) {
+    if (busy) return;
+    busy = true;
+    panel?.querySelectorAll('button').forEach(button => { if (!button.classList.contains('cmm-close')) button.disabled = true; });
+    try {
+      await task();
+    } catch (error) {
+      console.error('[Crack Memory Manager]', error);
+      setStatus(shortError(error), 'error');
+      showToast(`⚠️ ${shortError(error)}`, 'error');
+    } finally {
+      busy = false;
+      panel?.querySelectorAll('button').forEach(button => { button.disabled = false; });
+    }
+  }
+
+  function openPanel() {
+    if (panel) return;
+    injectStyles();
+    const overlay = document.createElement('div');
+    overlay.id = 'cmm-overlay';
+    overlay.innerHTML = `<div id="cmm-panel"><div class="cmm-head"><div class="cmm-title">💾 메모리 관리자</div><button class="cmm-close" aria-label="닫기">×</button></div><div class="cmm-tabs">${tabButton('overview', '현황')}${tabButton('editor', '장기기억 편집')}${tabButton('settings', '설정')}${tabButton('backups', '백업')}</div><div class="cmm-body"></div></div>`;
+    document.body.appendChild(overlay);
+    panel = overlay;
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay || event.target.closest('.cmm-close')) return closePanel();
+      const tab = event.target.closest('[data-tab]');
+      if (tab) {
+        activeTab = tab.dataset.tab;
+        renderPanel();
+        return;
+      }
+      const actionTarget = event.target.closest('[data-action]');
+      if (actionTarget) withBusy(() => handleAction(actionTarget.dataset.action, actionTarget));
+    });
+    renderPanel();
+    withBusy(() => refreshDashboard());
+  }
+
+  function isUsableHeader(el) {
+    if (!el || !el.isConnected || el.closest('#cmm-overlay,[data-message-group-id],textarea,.ProseMirror')) return false;
+    try { if (el.getBoundingClientRect().top > 180) return false; } catch (_) {}
+    return el.querySelectorAll('button').length > 0;
+  }
+
+  function findHeaderHost() {
+    const direct = [
+      '.absolute.z-\\[5\\] .flex.gap-3.items-center',
+      'header .flex.gap-3.items-center',
+      '[class*="z-"] .flex.gap-3.items-center',
+    ];
+    for (const selector of direct) {
+      const el = document.querySelector(selector);
+      if (isUsableHeader(el)) return el;
+    }
+    const anchor = document.querySelector('button[aria-label*="엔딩"],button[aria-label*="공유"],button[aria-label*="설정"],#clsb-fab');
+    const host = anchor?.closest('.flex.gap-3.items-center,.flex.items-center,[class*="items-center"]');
+    return isUsableHeader(host) ? host : null;
+  }
+
+  function injectHeaderButton() {
+    injectStyles();
+    document.getElementById('shipidle-summary-editor-editor-btn')?.remove();
+    const chatId = getChatId();
+    const existing = document.getElementById('cmm-header-button');
+    if (!chatId) {
+      existing?.remove();
+      return;
+    }
+    if (existing?.isConnected) return;
+    const host = findHeaderHost();
+    if (!host) return;
+    const button = document.createElement('button');
+    button.id = 'cmm-header-button';
+    button.type = 'button';
+    button.textContent = '💾';
+    button.title = '메모리 관리자';
+    button.setAttribute('aria-label', '메모리 관리자');
+    button.dataset.ceAiSummary = 'true';
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openPanel();
+    });
+    host.prepend(button);
+  }
+
+  function start() {
+    injectStyles();
+    injectHeaderButton();
+    setInterval(injectHeaderButton, 4000);
+    setInterval(() => runAutoCheck('timer'), AUTO_CHECK_MS);
+    window.addEventListener('pageshow', () => { injectHeaderButton(); runAutoCheck('pageshow'); }, { passive: true });
+    window.addEventListener('popstate', () => setTimeout(() => { injectHeaderButton(); runAutoCheck('popstate'); }, 150), { passive: true });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        injectHeaderButton();
+        runAutoCheck('visible');
+      }
+    }, { passive: true });
+    setTimeout(() => runAutoCheck('start'), 1800);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+  else start();
 })();

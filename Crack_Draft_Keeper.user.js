@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 자동저장 (iOS + 데스크탑)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.2.0
+// @version      1.2.1
 // @description  Keep unsent Crack/WRTN chat drafts per chat room after refresh on iOS and desktop browsers.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -64,6 +64,8 @@
   function isEditor(el) {
     if (!supportedEditor(el) || !visible(el)) return false;
     if (el.closest('[aria-hidden="true"], [hidden]')) return false;
+    // AI 답변 수정용 contenteditable은 채팅 입력 초안으로 취급하지 않습니다.
+    if (el.closest('[data-message-group-id], .wrtn-markdown')) return false;
     return true;
   }
 
