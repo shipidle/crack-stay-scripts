@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.2.0
+// @version      1.2.1
 // @description  크랙의 강제 글자 쪼개기를 막고 iOS Safari에서도 단어 기준 줄바꿈을 적용합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -18,9 +18,6 @@
   'use strict';
 
   const STYLE_ID = 'crack-linebreak-optimizer-style';
-  const BREAK_SELECTOR = '.break-all, .break-all *';
-  const MARKDOWN_SELECTOR = '.wrtn-markdown, .wrtn-markdown *';
-  const TARGET_SELECTOR = `${BREAK_SELECTOR}, ${MARKDOWN_SELECTOR}`;
   const CSS = `
     /* 크랙 강제 쪼개기(break-all) 방지 */
     html body .break-all,
@@ -75,46 +72,9 @@
     target.appendChild(style);
   }
 
-  function applyBreakStyle(element) {
-    element.style.setProperty('word-break', 'keep-all', 'important');
-    element.style.setProperty('overflow-wrap', 'break-word', 'important');
-    element.style.setProperty('word-wrap', 'break-word', 'important');
-    element.style.setProperty('-webkit-hyphens', 'none', 'important');
-    element.style.setProperty('hyphens', 'none', 'important');
-  }
-
-  function applyMarkdownStyle(element) {
-    applyBreakStyle(element);
-    element.style.setProperty('max-width', '100%', 'important');
-    element.style.setProperty('text-align', 'left', 'important');
-    element.style.setProperty('white-space', 'pre-wrap', 'important');
-  }
-
-  function applyInlineStyles(root) {
-    if (!root || root.nodeType !== 1) return;
-
-    const targets = [];
-    if (root.matches(TARGET_SELECTOR)) targets.push(root);
-    targets.push(...root.querySelectorAll(TARGET_SELECTOR));
-
-    targets.forEach((element) => {
-      if (element.matches(MARKDOWN_SELECTOR)) applyMarkdownStyle(element);
-      else applyBreakStyle(element);
-    });
-  }
-
   function start() {
     injectManagerStyle();
     injectNativeStyle();
-    applyInlineStyles(document.documentElement);
-
-    const observer = new MutationObserver((records) => {
-      records.forEach((record) => {
-        record.addedNodes.forEach(applyInlineStyles);
-      });
-    });
-
-    observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   if (document.documentElement) start();

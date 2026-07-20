@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.0.0
+// @version      2.0.1
 // @description  20턴 AI 장기기억 요약, 자동 장기기억 정리, 51→10 재요약, 편집 및 백업 통합 관리자
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/agent/crack-memory-manager-v2/Crack_Personal_AI_Summary.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/agent/crack-memory-manager-v2/Crack_Personal_AI_Summary.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/feat/sync-summary-ios-archive/Crack_Personal_AI_Summary.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/feat/sync-summary-ios-archive/Crack_Personal_AI_Summary.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '2.0.0';
+  const VERSION = '2.0.1';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -1021,8 +1021,8 @@
     .cmm-head { display:flex; align-items:center; justify-content:space-between; padding:16px 18px 12px; border-bottom:1px solid #e8ecef; background:#fff; }
     .cmm-title { font-size:16px; font-weight:760; color:#26343e; }
     .cmm-close { width:30px; height:30px; border:0; border-radius:8px; background:#f2f3f4; color:#59656d; font-size:20px; line-height:1; cursor:pointer; }
-    .cmm-tabs { display:flex; gap:6px; padding:10px 14px; border-bottom:1px solid #edf0f2; background:#fff; overflow-x:auto; }
-    .cmm-tab { flex:0 0 auto; padding:7px 11px; border:1px solid #d9e1e6; border-radius:8px; background:#f7f8f9; color:#56636c; font:650 12px Pretendard,sans-serif; cursor:pointer; }
+    .cmm-tabs { display:flex; align-items:center; gap:6px; padding:10px 14px; border-bottom:1px solid #edf0f2; background:#fff; overflow-x:auto; }
+    .cmm-tab { flex:0 0 auto; min-height:34px; padding:0 11px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #d9e1e6; border-radius:8px; background:#f7f8f9; color:#56636c; font-family:Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; font-size:12px; font-weight:650; line-height:1; -webkit-appearance:none; appearance:none; cursor:pointer; }
     .cmm-tab.active { border-color:#b9d8eb; background:#eaf6ff; color:#245a78; }
     .cmm-body { padding:16px; overflow:auto; background:#fff; }
     .cmm-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
