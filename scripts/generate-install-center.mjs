@@ -25,8 +25,12 @@ function scriptLabel(file) {
   return source.match(/^\/\/ @name\s+(.+)$/m)?.[1]?.trim() || file;
 }
 
-function rawUrl(branch, file) {
-  return `https://raw.githubusercontent.com/${config.repository}/${branch}/${encodeURIComponent(file)}`;
+function channelFile(channel, file) {
+  return config.channelFileAliases?.[channel.id]?.[file] || file;
+}
+
+function rawUrl(channel, file) {
+  return `https://raw.githubusercontent.com/${config.repository}/${channel.branch}/${encodeURIComponent(channelFile(channel, file))}`;
 }
 
 function section(channel, device, files) {
@@ -35,7 +39,8 @@ function section(channel, device, files) {
   const heading = `${channel.label} · ${device.label}`;
   const rows = selected.map((file, index) => {
     const label = scriptLabel(file);
-    return `${index + 1}. [${label} 설치/덮어쓰기](${rawUrl(channel.branch, file)}) — \`${file}\``;
+    const targetFile = channelFile(channel, file);
+    return `${index + 1}. [${label} 설치/덮어쓰기](${rawUrl(channel, file)}) — \`${targetFile}\``;
   }).join('\n');
   return `<a id="${channel.id}-${device.id}"></a>\n\n## ${heading}\n\n${channel.description} · 총 ${selected.length}개\n\n${rows}`;
 }

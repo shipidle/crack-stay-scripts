@@ -37,7 +37,8 @@ for (const channel of config.channels) {
     const selected = files.filter(file => !excluded.has(file));
     assert.match(section, new RegExp(`총 ${selected.length}개`));
     for (const file of files) {
-      const url = `https://raw.githubusercontent.com/${config.repository}/${channel.branch}/${file}`;
+      const targetFile = config.channelFileAliases?.[channel.id]?.[file] || file;
+      const url = `https://raw.githubusercontent.com/${config.repository}/${channel.branch}/${targetFile}`;
       if (excluded.has(file)) assert.ok(!section.includes(url), `${channel.id}/${device.id}에서 ${file} 제외 실패`);
       else assert.ok(section.includes(url), `${channel.id}/${device.id}에 ${file} 링크 누락`);
     }
