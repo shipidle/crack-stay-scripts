@@ -5,8 +5,8 @@
 // @description  20턴 AI 장기기억 요약, 자동 장기기억 정리, 51→10 재요약, 편집 및 백업 통합 관리자
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/feat/sync-summary-ios-archive/Crack_Personal_AI_Summary.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/refs/heads/feat/sync-summary-ios-archive/Crack_Personal_AI_Summary.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
