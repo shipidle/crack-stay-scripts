@@ -2,15 +2,15 @@
 // @name         📱미니 사이드바 메뉴
 // @namespace    https://github.com/shipidle/crack-stay-scripts
 // @version      1.3.6
-// @description  입력창 내부 상단에 사이드바 메뉴를 표시합니다. 내 추천 모델 표시 추가.
+// @description  🧪 BETA · 입력창 내부 상단에 사이드바 메뉴를 표시합니다. 내 추천 모델 표시 추가.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crack.wrtn.ai
 // @author       shipidle
 // @require      https://cdn.jsdelivr.net/gh/milkyway0308/crystallized-chasm@crack-shared-core@v1.2.1/crack/libraries/crack-shared-core.js
 // @require      https://cdn.jsdelivr.net/gh/milkyway0308/crystallized-chasm@chasm-shared-core@v1.0.0/libraries/chasm-shared-core.js
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/crack-mini-sidebar-menu.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/crack-mini-sidebar-menu.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/crack-mini-sidebar-menu.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/crack-mini-sidebar-menu.user.js
 // ==/UserScript==
 
 (function () {

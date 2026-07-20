@@ -2,15 +2,15 @@
 // @name         크랙 자동저장 (iOS + 데스크탑)
 // @namespace    https://crack.wrtn.ai/
 // @version      1.2.1
-// @description  Keep unsent Crack/WRTN chat drafts per chat room after refresh on iOS and desktop browsers.
+// @description  🧪 BETA · Keep unsent Crack/WRTN chat drafts per chat room after refresh on iOS and desktop browsers.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
 // @noframes
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crack.wrtn.ai
 // @author       shipidle
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js
 // ==/UserScript==
 
 (function () {

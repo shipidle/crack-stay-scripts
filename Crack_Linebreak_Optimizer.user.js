@@ -2,7 +2,7 @@
 // @name         줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
 // @version      1.2.1
-// @description  크랙의 강제 글자 쪼개기를 막고 iOS Safari에서도 단어 기준 줄바꿈을 적용합니다.
+// @description  🧪 BETA · 크랙의 강제 글자 쪼개기를 막고 iOS Safari에서도 단어 기준 줄바꿈을 적용합니다.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -10,8 +10,8 @@
 // @grant        GM_addStyle
 // @grant        GM.addStyle
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js
 // ==/UserScript==
 
 (function () {

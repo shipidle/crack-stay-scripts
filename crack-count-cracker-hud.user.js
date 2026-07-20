@@ -2,15 +2,15 @@
 // @name         📊턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
 // @version      1.1.9
-// @description  입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
+// @description  🧪 BETA · 입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crack.wrtn.ai
 // @author       shipidle
 // @require      https://cdn.jsdelivr.net/gh/milkyway0308/crystallized-chasm@crack-shared-core@v1.2.1/crack/libraries/crack-shared-core.js
 // @require      https://cdn.jsdelivr.net/gh/milkyway0308/crystallized-chasm@chasm-shared-core@v1.0.0/libraries/chasm-shared-core.js
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/crack-count-cracker-hud.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/crack-count-cracker-hud.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/crack-count-cracker-hud.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/crack-count-cracker-hud.user.js
 // ==/UserScript==
 
 (function () {

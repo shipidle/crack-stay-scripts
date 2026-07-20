@@ -2,14 +2,14 @@
 // @name         Crack Logo Hider2
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider2
 // @version      1.5.1
-// @description  Hide the Crack header logo and prevent horizontal page drift without hiding drawers or popups.
+// @description  🧪 BETA · Hide the Crack header logo and prevent horizontal page drift without hiding drawers or popups.
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
 // @grant        none
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Logo_Hider2.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Logo_Hider2.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Logo_Hider2.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Logo_Hider2.user.js
 // ==/UserScript==
 
 (function () {

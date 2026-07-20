@@ -2,11 +2,11 @@
 // @name         크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
 // @version      2.1.0
-// @description  전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
+// @description  🧪 BETA · 전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==

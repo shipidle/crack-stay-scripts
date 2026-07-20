@@ -2,12 +2,12 @@
 // @name         크랙 폰트 조정 (폰)
 // @namespace    https://github.com/shipidle/crack-stay-scripts/iphon-crack-font-adjust
 // @version      1.0.2
-// @description  crack.wrtn.ai 채팅 글자 크기와 코드블록, 인용문 표시를 작게 조정
+// @description  🧪 BETA · crack.wrtn.ai 채팅 글자 크기와 코드블록, 인용문 표시를 작게 조정
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/iPhon_Crack_Font_Adjust.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/iPhon_Crack_Font_Adjust.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/iPhon_Crack_Font_Adjust.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/iPhon_Crack_Font_Adjust.user.js
 // ==/UserScript==
 
 (function () {

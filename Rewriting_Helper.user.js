@@ -2,15 +2,15 @@
 // @name         윤문 헬퍼
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher
 // @version      1.1.0
-// @description  크랙 채팅창의 대사/상황묘사를 Gemini로 번역·의역·윤문 후 미리보기하고 입력창만 대체
+// @description  🧪 BETA · 크랙 채팅창의 대사/상황묘사를 Gemini로 번역·의역·윤문 후 미리보기하고 입력창만 대체
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Rewriting_Helper.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Rewriting_Helper.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Rewriting_Helper.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Rewriting_Helper.user.js
 // ==/UserScript==
 
 (function () {
