@@ -19,14 +19,14 @@
       "id": "iphone",
       "label": "📱 iPhone",
       "exclude": [
-        "iPad_Crack_Font_Adjust.user.js"
+        "Crack_iPad_Font_Adjust.user.js"
       ]
     },
     {
       "id": "ipad",
       "label": "▣ iPad",
       "exclude": [
-        "iPhon_Crack_Font_Adjust.user.js"
+        "Crack_iPhone_Font_Adjust.user.js"
       ]
     },
     {
@@ -34,8 +34,8 @@
       "label": "🖥️ Desktop",
       "exclude": [
         "Crack_Logo_Hider2.user.js",
-        "iPad_Crack_Font_Adjust.user.js",
-        "iPhon_Crack_Font_Adjust.user.js"
+        "Crack_iPad_Font_Adjust.user.js",
+        "Crack_iPhone_Font_Adjust.user.js"
       ]
     }
   ],
@@ -47,10 +47,10 @@
     "Crack_Lore_Sync_Bridge.user.js",
     "Crack_Personal_AI_Summary.user.js",
     "Crack_UserNote_DB.user.js",
-    "Rewriting_Helper.user.js",
-    "crack-count-cracker-hud.user.js",
-    "crack-mini-sidebar-menu.user.js",
-    "iPad_Crack_Font_Adjust.user.js",
-    "iPhon_Crack_Font_Adjust.user.js"
+    "Crack_Rewriting_Helper.user.js",
+    "Crack_Count_Cracker_HUD.user.js",
+    "Crack_Mini_Sidebar_Menu.user.js",
+    "Crack_iPad_Font_Adjust.user.js",
+    "Crack_iPhone_Font_Adjust.user.js"
   ]
 }
