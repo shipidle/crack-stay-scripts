@@ -1,0 +1,31 @@
+name: Verify install center
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, beta]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check generated install center
+        run: node scripts/generate-install-center.mjs --check
+      - name: Test device and channel lists
+        run: node scripts/test-install-center.mjs
+      - name: Check userscript update channel
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_NAME" == "beta" ]]; then
+            node scripts/set-userscript-channel.mjs --channel beta --check
+          else
+            node scripts/set-userscript-channel.mjs --channel main --check
+          fi
