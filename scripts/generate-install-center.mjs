@@ -89,6 +89,7 @@ ${config.channels.flatMap(channel => config.devices.map(device => section(channe
 ## 별도 1회 설정
 
 - BETA의 기기 간 요약 턴 동기화는 [Supabase SQL](https://github.com/${config.repository}/blob/beta/supabase/summary_sync.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
+- 프로필 포트레이트 HUD의 선택형 이미지 동기화는 [Supabase SQL](https://github.com/${config.repository}/blob/beta/supabase/profile_portrait_sync.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
 
 <!-- 이 파일은 scripts/generate-install-center.mjs로 생성됨. 직접 수정하지 말고 install-center.config.json을 수정할 것. -->
 `;
