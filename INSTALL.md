@@ -29,19 +29,20 @@
 
 ## 🧪 BETA 테스트판 · 📱 iPhone
 
-최신 수정본을 먼저 실사용 테스트하는 채널 · 총 11개
+최신 수정본을 먼저 실사용 테스트하는 채널 · 총 12개
 
 1. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
-2. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
-3. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
-4. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
-5. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
-6. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
-7. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
-8. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
-9. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-10. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
-11. [🔠 크랙 폰트 조정 (폰) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPhone_Font_Adjust.user.js) — `Crack_iPhone_Font_Adjust.user.js`
+2. [🖼️ 크랙 프로필 포트레이트 HUD 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Profile_Portrait_HUD.user.js) — `Crack_Profile_Portrait_HUD.user.js`
+3. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
+4. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
+5. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
+6. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
+7. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
+8. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
+9. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
+10. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+11. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+12. [🔠 크랙 폰트 조정 (폰) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPhone_Font_Adjust.user.js) — `Crack_iPhone_Font_Adjust.user.js`
 
 ---
 
@@ -49,19 +50,20 @@
 
 ## 🧪 BETA 테스트판 · ▣ iPad
 
-최신 수정본을 먼저 실사용 테스트하는 채널 · 총 11개
+최신 수정본을 먼저 실사용 테스트하는 채널 · 총 12개
 
 1. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
-2. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
-3. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
-4. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
-5. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
-6. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
-7. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
-8. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
-9. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-10. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
-11. [🔠 크랙 폰트 조정 (패드) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPad_Font_Adjust.user.js) — `Crack_iPad_Font_Adjust.user.js`
+2. [🖼️ 크랙 프로필 포트레이트 HUD 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Profile_Portrait_HUD.user.js) — `Crack_Profile_Portrait_HUD.user.js`
+3. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
+4. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
+5. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
+6. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
+7. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
+8. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
+9. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
+10. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+11. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+12. [🔠 크랙 폰트 조정 (패드) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPad_Font_Adjust.user.js) — `Crack_iPad_Font_Adjust.user.js`
 
 ---
 
@@ -69,17 +71,18 @@
 
 ## 🧪 BETA 테스트판 · 🖥️ Desktop
 
-최신 수정본을 먼저 실사용 테스트하는 채널 · 총 9개
+최신 수정본을 먼저 실사용 테스트하는 채널 · 총 10개
 
 1. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
-2. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
-3. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
-4. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
-5. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
-6. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
-7. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
-8. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-9. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+2. [🖼️ 크랙 프로필 포트레이트 HUD 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Profile_Portrait_HUD.user.js) — `Crack_Profile_Portrait_HUD.user.js`
+3. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
+4. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
+5. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
+6. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
+7. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
+8. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
+9. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+10. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
 
 ---
 
@@ -87,19 +90,20 @@
 
 ## ✅ MAIN 안정판 · 📱 iPhone
 
-테스트 완료 후 Merge된 안정 채널 · 총 11개
+테스트 완료 후 Merge된 안정 채널 · 총 12개
 
 1. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
-2. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
-3. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
-4. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
-5. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
-6. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
-7. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
-8. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
-9. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-10. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
-11. [🔠 크랙 폰트 조정 (폰) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_iPhone_Font_Adjust.user.js) — `Crack_iPhone_Font_Adjust.user.js`
+2. [🖼️ 크랙 프로필 포트레이트 HUD 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Profile_Portrait_HUD.user.js) — `Crack_Profile_Portrait_HUD.user.js`
+3. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
+4. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
+5. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
+6. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
+7. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
+8. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
+9. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
+10. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+11. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+12. [🔠 크랙 폰트 조정 (폰) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_iPhone_Font_Adjust.user.js) — `Crack_iPhone_Font_Adjust.user.js`
 
 ---
 
@@ -107,19 +111,20 @@
 
 ## ✅ MAIN 안정판 · ▣ iPad
 
-테스트 완료 후 Merge된 안정 채널 · 총 11개
+테스트 완료 후 Merge된 안정 채널 · 총 12개
 
 1. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
-2. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
-3. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
-4. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
-5. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
-6. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
-7. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
-8. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
-9. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-10. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
-11. [🔠 크랙 폰트 조정 (패드) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_iPad_Font_Adjust.user.js) — `Crack_iPad_Font_Adjust.user.js`
+2. [🖼️ 크랙 프로필 포트레이트 HUD 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Profile_Portrait_HUD.user.js) — `Crack_Profile_Portrait_HUD.user.js`
+3. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
+4. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
+5. [🙈 Crack Logo Hider2 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Logo_Hider2.user.js) — `Crack_Logo_Hider2.user.js`
+6. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
+7. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
+8. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
+9. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
+10. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+11. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+12. [🔠 크랙 폰트 조정 (패드) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_iPad_Font_Adjust.user.js) — `Crack_iPad_Font_Adjust.user.js`
 
 ---
 
@@ -127,17 +132,18 @@
 
 ## ✅ MAIN 안정판 · 🖥️ Desktop
 
-테스트 완료 후 Merge된 안정 채널 · 총 9개
+테스트 완료 후 Merge된 안정 채널 · 총 10개
 
 1. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
-2. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
-3. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
-4. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
-5. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
-6. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
-7. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
-8. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-9. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+2. [🖼️ 크랙 프로필 포트레이트 HUD 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Profile_Portrait_HUD.user.js) — `Crack_Profile_Portrait_HUD.user.js`
+3. [💾 크랙 자동저장 (iOS + 데스크탑) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Draft_Keeper.user.js) — `Crack_Draft_Keeper.user.js`
+4. [↩️ 줄바꿈 최적화 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Linebreak_Optimizer.user.js) — `Crack_Linebreak_Optimizer.user.js`
+5. [☁️ 크랙 로어 개인 동기화 브리지 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Lore_Sync_Bridge.user.js) — `Crack_Lore_Sync_Bridge.user.js`
+6. [🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js) — `Crack_Personal_AI_Summary.user.js`
+7. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
+8. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
+9. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+10. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
 
 ---
 
