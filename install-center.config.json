@@ -23,6 +23,11 @@
       "Crack_iPhone_Font_Adjust.user.js": "iPhon_Crack_Font_Adjust.user.js"
     }
   },
+  "channelExcludes": {
+    "main": [
+      "Crack_Profile_Portrait_HUD.user.js"
+    ]
+  },
   "devices": [
     {
       "id": "iphone",

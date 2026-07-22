@@ -33,7 +33,10 @@ for (const channel of config.channels) {
     assert.notEqual(start, -1, `${channel.id}/${device.id} 구역이 없음`);
     const next = install.indexOf('<a id="', start + marker.length);
     const section = install.slice(start, next < 0 ? install.length : next);
-    const excluded = new Set(device.exclude);
+    const excluded = new Set([
+      ...device.exclude,
+      ...(config.channelExcludes?.[channel.id] || [])
+    ]);
     const selected = files.filter(file => !excluded.has(file));
     assert.match(section, new RegExp(`총 ${selected.length}개`));
     for (const file of files) {
