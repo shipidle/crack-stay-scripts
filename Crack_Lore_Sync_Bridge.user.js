@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.0
+// @version      1.3.1
 // @description  🧪 BETA · 개인 Supabase에 로어 백업과 메모리 요약 턴 체크포인트를 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -25,7 +25,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.3.1';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const PROFILE_SYNC_API_KEY = '__SHIPIDLE_PROFILE_PORTRAIT_SYNC__';
@@ -34,7 +34,7 @@
   const PROFILE_MAX_BYTES = 350 * 1024;
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
-  const AUTO_SYNC_MS = 60_000;
+  const AUTO_SYNC_MS = 5 * 60_000 + 15_000;
   const SECRET_KEYS = new Set([
     'autoExtKey', 'autoExtVertexJson', 'autoExtFirebaseScript',
     'autoExtFirebaseEmbedKey', 'autoExtGeminiEmbedKey', 'autoExtDeepSeekKey',
@@ -56,6 +56,7 @@
   let latestStatus = '';
   let latestStatusTone = '';
   let busy = false;
+  let autoSyncRunning = false;
   let needsInitialChoice = false;
 
   const textEncoder = new TextEncoder();
@@ -608,7 +609,9 @@
   }
 
   async function autoSync() {
-    if (!isChatRoute() || busy || !session?.access_token || !config.syncPassphrase || !syncState.lastHash || needsInitialChoice) return;
+    if (document.hidden || !isChatRoute() || busy || autoSyncRunning
+      || !session?.access_token || !config.syncPassphrase || !syncState.lastHash || needsInitialChoice) return;
+    autoSyncRunning = true;
     try {
       const local = await exportBackup();
       const hash = await fingerprint(local);
@@ -624,6 +627,8 @@
       if (hash !== syncState.lastHash) await upload(local, hash, remote?.revision || 0);
     } catch (error) {
       console.warn('[Lore Sync Bridge] auto sync failed:', error);
+    } finally {
+      autoSyncRunning = false;
     }
   }
 
@@ -711,7 +716,7 @@
     account.appendChild(accountRow); panel.appendChild(account);
 
     const sync = document.createElement('div'); sync.className = 'clsb-card';
-    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능. 이 기기의 변경은 1분마다 자동 업로드하며, 다른 기기 로어는 현재 대화를 건드리지 않도록 직접 복원할 때만 받음.</p>';
+    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능. 이 기기의 변경은 약 5분마다 자동 업로드하며, 백그라운드에서는 전체 백업 검사를 쉬어감. 다른 기기 로어는 현재 대화를 건드리지 않도록 직접 복원할 때만 받음.</p>';
     addField(sync, 'clsb-passphrase', '동기화 암호', 'password', config.syncPassphrase, '8자 이상, 기기마다 같은 암호');
     const syncRow = document.createElement('div'); syncRow.className = 'clsb-row';
     syncRow.append(makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }));
@@ -843,6 +848,10 @@
     syncBridgeRoute();
     setInterval(syncBridgeRoute, 1000);
     setInterval(autoSync, AUTO_SYNC_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) void autoSync();
+    }, { passive: true });
+    window.addEventListener('online', () => void autoSync(), { passive: true });
   }
 
   Object.defineProperty(BRIDGE, SUMMARY_SYNC_API_KEY, {
