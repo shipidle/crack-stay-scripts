@@ -1,4 +1,4 @@
--- Crack Profile Portrait HUD v0.2 cloud sync
+-- Crack Profile Portrait HUD v0.3 cloud sync
 -- Supabase SQL Editor에서 한 번만 실행함.
 
 create table if not exists public.profile_portrait_sync (
@@ -110,3 +110,11 @@ using (
 );
 
 grant select, insert, update, delete on public.profile_portrait_sync to authenticated;
+
+-- 새 테이블을 Data API가 즉시 인식하도록 PostgREST 스키마 캐시를 갱신함.
+notify pgrst, 'reload schema';
+
+-- 실행 결과가 true / true인지 확인함.
+select
+  to_regclass('public.profile_portrait_sync') is not null as profile_portrait_sync_ready,
+  exists(select 1 from storage.buckets where id = 'profile-portraits') as profile_portraits_bucket_ready;
