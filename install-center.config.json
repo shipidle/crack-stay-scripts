@@ -14,20 +14,8 @@
       "description": "테스트 완료 후 Merge된 안정 채널"
     }
   ],
-  "channelFileAliases": {
-    "main": {
-      "Crack_Rewriting_Helper.user.js": "Rewriting_Helper.user.js",
-      "Crack_Count_Cracker_HUD.user.js": "crack-count-cracker-hud.user.js",
-      "Crack_Mini_Sidebar_Menu.user.js": "crack-mini-sidebar-menu.user.js",
-      "Crack_iPad_Font_Adjust.user.js": "iPad_Crack_Font_Adjust.user.js",
-      "Crack_iPhone_Font_Adjust.user.js": "iPhon_Crack_Font_Adjust.user.js"
-    }
-  },
-  "channelExcludes": {
-    "main": [
-      "Crack_Profile_Portrait_HUD.user.js"
-    ]
-  },
+  "channelFileAliases": {},
+  "channelExcludes": {},
   "devices": [
     {
       "id": "iphone",
