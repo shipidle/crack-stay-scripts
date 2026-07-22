@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🖼️ 크랙 프로필 포트레이트 HUD
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.3.1
+// @version      0.4.0
 // @description  🧪 BETA · 채팅방별 A/B/C 프로필 세트를 로컬 저장하고 선택적으로 Supabase 기기 간 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.1';
+  const VERSION = '0.4.0';
   const SET_IDS = ['A', 'B', 'C'];
   const ROLES = ['character', 'user'];
   const ROOM_PREFIX = 'crackProfilePortraitHUD:v2:room:';
@@ -66,6 +66,7 @@
   const emptyPositions = () => ({ character: null, user: null });
   const defaultLayout = () => ({
     customEnabled: false,
+    mobileWidth: 54,
     desktopWidth: 320,
     mobile: emptyPositions(),
     desktop: emptyPositions()
@@ -158,6 +159,10 @@
       .cph-thumb { width:72px; }
       .cph-crop-panel { border-radius:22px 22px 16px 16px; }
     }
+    @media (max-width:600px) {
+      .cph-overlay { background:#fff; color-scheme:light; }
+      #cph-position-bar { color-scheme:light; }
+    }
   `);
 
   function isChatRoute() {
@@ -218,6 +223,7 @@
     const next = defaultLayout();
     if (!saved || typeof saved !== 'object') return next;
     next.customEnabled = saved.customEnabled === true;
+    next.mobileWidth = clamp(Number(saved.mobileWidth) || 54, 44, 84);
     next.desktopWidth = clamp(Number(saved.desktopWidth) || 320, 240, 480);
     for (const mode of ['mobile', 'desktop']) {
       for (const role of ROLES) next[mode][role] = normalizePoint(saved[mode]?.[role]);
@@ -351,7 +357,10 @@
 
   function portraitMetrics() {
     const mode = currentMode();
-    if (mode === 'mobile') return { width: 54, height: 72 };
+    if (mode === 'mobile') {
+      const width = clamp(layout.mobileWidth, 44, 84);
+      return { width, height: width * 4 / 3 };
+    }
     const width = clamp(layout.desktopWidth, 240, 480);
     return { width, height: width * 4 / 3 };
   }
@@ -759,29 +768,30 @@
       await saveLayout();
       await renderStage();
     }));
-    if (currentMode() === 'desktop') {
-      const sizeControl = document.createElement('div');
-      sizeControl.style.cssText = 'margin-top:14px';
-      const sizeLabel = document.createElement('div');
-      sizeLabel.className = 'cph-range-label';
-      sizeLabel.innerHTML = `<span>데스크톱 이미지 크기</span><strong id="cph-desktop-size-value">${layout.desktopWidth}px</strong>`;
-      const sizeRange = document.createElement('input');
-      sizeRange.type = 'range';
-      sizeRange.className = 'cph-range';
-      sizeRange.min = '240';
-      sizeRange.max = '480';
-      sizeRange.step = '10';
-      sizeRange.value = String(layout.desktopWidth);
-      sizeRange.setAttribute('aria-label', '데스크톱 이미지 크기');
-      sizeRange.addEventListener('input', () => {
-        layout.desktopWidth = Number(sizeRange.value);
-        sizeLabel.querySelector('strong').textContent = `${layout.desktopWidth}px`;
-        positionStage();
-      });
-      sizeRange.addEventListener('change', () => void saveLayout());
-      sizeControl.append(sizeLabel, sizeRange);
-      layoutCard.appendChild(sizeControl);
-    }
+    const desktopSize = currentMode() === 'desktop';
+    const sizeKey = desktopSize ? 'desktopWidth' : 'mobileWidth';
+    const sizeName = desktopSize ? '데스크톱 이미지 크기' : '모바일 이미지 크기';
+    const sizeControl = document.createElement('div');
+    sizeControl.style.cssText = 'margin-top:14px';
+    const sizeLabel = document.createElement('div');
+    sizeLabel.className = 'cph-range-label';
+    sizeLabel.innerHTML = `<span>${sizeName}</span><strong id="cph-size-value">${layout[sizeKey]}px</strong>`;
+    const sizeRange = document.createElement('input');
+    sizeRange.type = 'range';
+    sizeRange.className = 'cph-range';
+    sizeRange.min = desktopSize ? '240' : '44';
+    sizeRange.max = desktopSize ? '480' : '84';
+    sizeRange.step = desktopSize ? '10' : '2';
+    sizeRange.value = String(layout[sizeKey]);
+    sizeRange.setAttribute('aria-label', sizeName);
+    sizeRange.addEventListener('input', () => {
+      layout[sizeKey] = Number(sizeRange.value);
+      sizeLabel.querySelector('strong').textContent = `${layout[sizeKey]}px`;
+      positionStage();
+    });
+    sizeRange.addEventListener('change', () => void saveLayout());
+    sizeControl.append(sizeLabel, sizeRange);
+    layoutCard.appendChild(sizeControl);
     const layoutActions = document.createElement('div');
     layoutActions.className = 'cph-layout-actions';
     const editPosition = makeButton('위치 편집', 'cph-btn cph-btn-primary');
@@ -1402,6 +1412,7 @@
       await renderStage();
     }
     mountHeaderButton();
+    if (!positionDrag) positionStage();
   }
 
   function scheduleScan() {
@@ -1414,6 +1425,8 @@
   window.addEventListener('popstate', scheduleScan);
   window.addEventListener('hashchange', scheduleScan);
   window.addEventListener('resize', () => { positionStage(); });
+  window.visualViewport?.addEventListener('resize', positionStage);
+  window.visualViewport?.addEventListener('scroll', positionStage);
   setInterval(() => void scan(), 1500);
   void loadGlobals().then(scan);
 })();
