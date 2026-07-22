@@ -2,14 +2,14 @@
 // @name         🖼️ 크랙 프로필 포트레이트 HUD
 // @namespace    https://github.com/shipidle/crack-stay-scripts
 // @version      0.1.0
-// @description  채팅방별 캐릭터와 내 캐릭터 이미지를 로컬에 저장하고 추가 데이터 사용 없이 화면 양쪽에 표시합니다.
+// @description  🧪 BETA · 채팅방별 캐릭터와 내 캐릭터 이미지를 로컬에 저장하고 추가 데이터 사용 없이 화면 양쪽에 표시합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
 // @match        https://crack.wrtn.ai/characters/*/chats/*
 // @match        https://crack.wrtn.ai/u/*/c/*
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Profile_Portrait_HUD.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Profile_Portrait_HUD.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Profile_Portrait_HUD.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Profile_Portrait_HUD.user.js
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
