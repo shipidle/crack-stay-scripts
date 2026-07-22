@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.0.1
-// @description  20턴 AI 장기기억 요약, 자동 장기기억 정리, 51→10 재요약, 편집 및 백업 통합 관리자
+// @version      2.1.0
+// @description  전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Personal_AI_Summary.user.js
@@ -14,13 +14,14 @@
 (() => {
   'use strict';
 
-  const VERSION = '2.0.1';
+  const VERSION = '2.1.0';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
   const STATE_KEY = `${STORAGE_KEY}:state`;
   const BACKUP_KEY = `${STORAGE_KEY}:backups`;
   const LOCK_PREFIX = `${STORAGE_KEY}:lock:`;
+  const TURN_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const AUTO_TURN_COUNT = 20;
   const AUTO_CHECK_MS = 60_000;
   const LOCK_TTL_MS = 10 * 60_000;
@@ -120,10 +121,27 @@
   let busy = false;
   let latestStatus = '준비됨.';
   let latestStatusTone = '';
-  let dashboard = { progress: 0, userCount: 0, autoCount: 0, shortCount: 0 };
+  let dashboard = {
+    progress: 0,
+    totalTurns: 0,
+    syncedThrough: 0,
+    syncReady: false,
+    syncLabel: '확인 중',
+    userCount: 0,
+    autoCount: 0,
+    shortCount: 0,
+  };
   let editorOriginal = [];
   let editorLoaded = false;
   const ownerId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const syncOwnerId = (() => {
+    const key = `${STORAGE_KEY}:device-id`;
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const created = `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, created);
+    return created;
+  })();
 
   window.__SHIPIDLE_MEMORY_MANAGER_V2__ = true;
 
@@ -157,7 +175,6 @@
   function stateFor(chatId) {
     if (!states[chatId]) {
       states[chatId] = {
-        baselineTurnId: '',
         progress: 0,
         lastCostKrw: 0,
         totalCostKrw: 0,
@@ -216,6 +233,9 @@
 
   function shortError(error) {
     const raw = String(error?.message || error || '알 수 없는 오류').replace(/\s+/g, ' ').trim();
+    if (/summary_sync_state|summary_checkpoint|summary_batch|schema cache/i.test(raw)) {
+      return 'Supabase에서 supabase/summary_sync.sql을 먼저 실행해줘.';
+    }
     if (/401|403|unauthor|forbidden/i.test(raw)) return '인증이 만료됐거나 해당 작업 권한이 없음.';
     if (/fetch|network|timeout/i.test(raw)) return '네트워크 요청 실패.';
     return raw.slice(0, 280);
@@ -331,6 +351,25 @@
       && message.isPrologue !== true;
   }
 
+  function completedPairsFromMessages(all, scope = all) {
+    const byTurnId = new Map(all.filter(item => item?.turnId).map(item => [item.turnId, item]));
+    const seenParents = new Set();
+    return scope
+      .filter(isCompletedAssistant)
+      .filter(assistant => {
+        if (!assistant.parentTurnId || seenParents.has(assistant.parentTurnId)) return false;
+        seenParents.add(assistant.parentTurnId);
+        return true;
+      })
+      .map(assistant => ({ assistant, user: byTurnId.get(assistant.parentTurnId) }))
+      .filter(pair => pair.user?.role === 'user' && pair.user.status === 'end')
+      .reverse();
+  }
+
+  function completedBoundary(totalTurns) {
+    return Math.floor(Math.max(0, Number(totalTurns) || 0) / AUTO_TURN_COUNT) * AUTO_TURN_COUNT;
+  }
+
   async function fetchMessagesForPairs(baselineTurnId = '', desiredPairs = AUTO_TURN_COUNT) {
     const all = [];
     let cursor = '';
@@ -358,19 +397,72 @@
       scope = all.slice(0, baselineIndex);
     }
 
-    const byTurnId = new Map(all.filter(item => item?.turnId).map(item => [item.turnId, item]));
-    const seenParents = new Set();
-    const pairsNewestFirst = scope
-      .filter(isCompletedAssistant)
-      .filter(assistant => {
-        if (!assistant.parentTurnId || seenParents.has(assistant.parentTurnId)) return false;
-        seenParents.add(assistant.parentTurnId);
-        return true;
-      })
-      .map(assistant => ({ assistant, user: byTurnId.get(assistant.parentTurnId) }))
-      .filter(pair => pair.user?.role === 'user' && pair.user.status === 'end');
+    return { pairs: completedPairsFromMessages(all, scope), baselineFound: foundBaseline, all };
+  }
 
-    return { pairs: pairsNewestFirst.reverse(), baselineFound: foundBaseline, all };
+  async function fetchAllCompletedPairs() {
+    const all = [];
+    let cursor = '';
+    for (let page = 0; page < 200; page += 1) {
+      let path = '/messages?limit=50';
+      if (cursor) path += `&cursor=${encodeURIComponent(cursor)}`;
+      const response = await apiRequest('GET', path);
+      const data = response?.data || {};
+      const pageItems = Array.isArray(data.messages) ? data.messages : [];
+      all.push(...pageItems);
+      if (!data.hasNext || !data.nextCursor || pageItems.length === 0) return completedPairsFromMessages(all);
+      cursor = data.nextCursor;
+    }
+    throw new Error('전체 대화가 10,000개 메시지를 넘어 안전하게 턴수를 계산하지 못함.');
+  }
+
+  function turnSyncApi() {
+    const api = window[TURN_SYNC_API_KEY];
+    return api?.version >= 1 ? api : null;
+  }
+
+  function requireTurnSyncApi() {
+    const api = turnSyncApi();
+    if (!api) throw new Error('Crack_Lore_Sync_Bridge v1.2.0 이상을 설치해줘.');
+    const status = api.getStatus?.() || { ready: false, reason: '턴 동기화 상태를 확인하지 못함.' };
+    if (!status.ready) throw new Error(status.reason || 'Supabase 턴 동기화를 준비해줘.');
+    return api;
+  }
+
+  async function syncedTurnWindow(chatId) {
+    const api = requireTurnSyncApi();
+    let checkpoint = await api.getCheckpoint(chatId);
+    if (!checkpoint) {
+      const allPairs = await fetchAllCompletedPairs();
+      const boundary = completedBoundary(allPairs.length);
+      checkpoint = await api.initializeCheckpoint({
+        chatId,
+        batchEndCount: boundary,
+        batchEndTurnId: boundary > 0 ? allPairs[boundary - 1].assistant.turnId : '__start__',
+      });
+      if (!checkpoint) throw new Error('공유 턴 기준점을 만들지 못함.');
+      return {
+        api,
+        checkpoint,
+        pairs: allPairs.slice(boundary),
+        totalTurns: allPairs.length,
+        initialized: true,
+      };
+    }
+
+    const result = checkpoint.batchEndCount === 0
+      ? await fetchMessagesForPairs('', AUTO_TURN_COUNT * 2)
+      : await fetchMessagesForPairs(checkpoint.batchEndTurnId, AUTO_TURN_COUNT * 2);
+    if (checkpoint.batchEndCount > 0 && !result.baselineFound) {
+      throw new Error('공유 기준 턴을 대화에서 찾지 못함. 자동 요약을 중단했으니 기준을 임의로 바꾸지 말아줘.');
+    }
+    return {
+      api,
+      checkpoint,
+      pairs: result.pairs,
+      totalTurns: checkpoint.batchEndCount + result.pairs.length,
+      initialized: false,
+    };
   }
 
   function pairsToChatLog(pairs) {
@@ -582,7 +674,40 @@
     if (loadJson(key, null)?.owner === ownerId) localStorage.removeItem(key);
   }
 
-  async function createPendingBatch(chatId, pairs) {
+  function renewLock(chatId) {
+    const key = `${LOCK_PREFIX}${chatId}`;
+    if (loadJson(key, null)?.owner === ownerId) {
+      saveJson(key, { owner: ownerId, expiresAt: Date.now() + LOCK_TTL_MS });
+    }
+  }
+
+  function pendingBatchPayload(job) {
+    return {
+      firstTurnId: job.firstTurnId,
+      lastTurnId: job.lastTurnId,
+      items: job.items,
+      preExistingIds: job.preExistingIds,
+      startedAt: job.startedAt,
+    };
+  }
+
+  function pendingBatchFromClaim(claim, syncBatch) {
+    const payload = claim?.payload;
+    if (!payload || !Array.isArray(payload.items)) return null;
+    if (payload.firstTurnId !== syncBatch.batchStartTurnId) throw new Error('공유 요약 초안의 첫 턴이 현재 구간과 다름.');
+    if (payload.lastTurnId !== syncBatch.batchEndTurnId) throw new Error('공유 요약 초안의 마지막 턴이 현재 구간과 다름.');
+    return {
+      firstTurnId: payload.firstTurnId,
+      lastTurnId: payload.lastTurnId,
+      items: payload.items,
+      createdIds: Array.isArray(claim.createdSummaryIds) ? claim.createdSummaryIds : [],
+      preExistingIds: Array.isArray(payload.preExistingIds) ? payload.preExistingIds : [],
+      startedAt: Number(payload.startedAt || Date.now()),
+      syncBatch,
+    };
+  }
+
+  async function createPendingBatch(chatId, pairs, syncBatch = null) {
     const state = stateFor(chatId);
     const before = await fetchSummaries('longTerm');
     const items = await generateValidatedItems(chatId, 'normal', pairsToChatLog(pairs));
@@ -593,8 +718,18 @@
       createdIds: [],
       preExistingIds: before.items.map(item => item._id),
       startedAt: Date.now(),
+      syncBatch,
     };
     persistStates();
+    if (syncBatch) {
+      await requireTurnSyncApi().saveBatch({
+        chatId,
+        batchEndCount: syncBatch.batchEndCount,
+        lockOwner: syncBatch.lockOwner,
+        payload: pendingBatchPayload(state.pendingBatch),
+        createdSummaryIds: [],
+      });
+    }
     return state.pendingBatch;
   }
 
@@ -602,6 +737,12 @@
     const state = stateFor(chatId);
     const job = state.pendingBatch;
     if (!job) return false;
+    const syncApi = job.syncBatch ? requireTurnSyncApi() : null;
+    job.createdIds = Array.isArray(job.createdIds) ? job.createdIds : [];
+    if (!Array.isArray(job.items) || validateItems(job.items, 'normal').length > 0) {
+      throw new Error('복구할 요약 작업 데이터가 올바르지 않음.');
+    }
+    if (job.createdIds.length > job.items.length) throw new Error('복구할 요약 ID 개수가 올바르지 않음.');
     const currentBeforeCreate = await fetchSummaries('longTerm');
     const preExistingIds = new Set(job.preExistingIds || []);
     const alreadyTracked = new Set(job.createdIds);
@@ -620,6 +761,14 @@
       job.createdIds.push(id);
       alreadyTracked.add(id);
       persistStates();
+      if (syncApi) {
+        await syncApi.saveBatch({
+          chatId,
+          batchEndCount: job.syncBatch.batchEndCount,
+          lockOwner: job.syncBatch.lockOwner,
+          createdSummaryIds: job.createdIds,
+        });
+      }
     }
     const current = await fetchSummaries('longTerm');
     const byId = new Map(current.items.map(item => [item._id, item]));
@@ -630,7 +779,14 @@
         throw new Error(`${index + 1}번 장기기억 저장 검증 실패. 기존 데이터는 삭제하지 않음.`);
       }
     }
-    state.baselineTurnId = job.lastTurnId;
+    if (syncApi) {
+      await syncApi.completeBatch({
+        chatId,
+        batchEndCount: job.syncBatch.batchEndCount,
+        lockOwner: job.syncBatch.lockOwner,
+        createdSummaryIds: job.createdIds,
+      });
+    }
     state.lastRunAt = Date.now();
     state.pendingBatch = null;
     state.progress = 0;
@@ -831,78 +987,122 @@
     catch (error) { setStatus(`51→10 재정리 중단: ${shortError(error)}`, 'error'); }
   }
 
-  async function initializeBaseline(chatId) {
-    const state = stateFor(chatId);
-    if (state.baselineTurnId) return;
-    const recent = await fetchMessagesForPairs('', 1);
-    const latestPair = recent.pairs.at(-1);
-    state.baselineTurnId = latestPair?.assistant?.turnId || '__empty__';
-    state.progress = 0;
-    persistStates();
-    setStatus('현재 시점을 기준으로 자동 20턴 카운트를 시작함.');
-  }
-
-  async function runAutoCheck(reason = 'timer') {
+  async function runAutoCheck(reason = 'timer', force = false) {
     const chatId = getChatId();
-    if (!chatId || !config.autoEnabled || document.hidden) return;
+    if (!chatId || (!config.autoEnabled && !force) || document.hidden) return;
     if (!acquireLock(chatId)) return;
+    const lockHeartbeat = setInterval(() => renewLock(chatId), 60_000);
+    let claimedBatch = null;
+    let checkFailed = false;
     try {
       const state = stateFor(chatId);
       if (state.compactionTxn) await resumeCompactionTransaction(chatId);
       if (state.pendingBatch) {
+        if (state.pendingBatch.syncBatch) {
+          const pendingSync = state.pendingBatch.syncBatch;
+          const api = requireTurnSyncApi();
+          const claim = await api.claimBatch({
+            chatId,
+            batchStartTurnId: pendingSync.batchStartTurnId,
+            batchEndTurnId: pendingSync.batchEndTurnId,
+            batchEndCount: pendingSync.batchEndCount,
+            lockOwner: syncOwnerId,
+          });
+          if (!claim.claimed) {
+            if (claim.status === 'completed') {
+              state.pendingBatch = null;
+              persistStates();
+              setStatus(`☁️ ${pendingSync.batchEndCount}턴 구간은 다른 기기에서 완료됨.`);
+            } else {
+              setStatus(`☁️ ${pendingSync.batchEndCount}턴 구간을 다른 기기에서 처리 중...`, 'warn');
+            }
+            return;
+          }
+          state.pendingBatch.syncBatch.lockOwner = syncOwnerId;
+          const remotePending = pendingBatchFromClaim(claim, state.pendingBatch.syncBatch);
+          if (remotePending) state.pendingBatch = remotePending;
+          persistStates();
+          claimedBatch = { api, syncBatch: state.pendingBatch.syncBatch };
+        }
         await resumePendingBatch(chatId);
+        claimedBatch = null;
         await postBatchMaintenance(chatId);
         return;
       }
-      await initializeBaseline(chatId);
-      const result = state.baselineTurnId === '__empty__'
-        ? await fetchMessagesForPairs('', AUTO_TURN_COUNT)
-        : await fetchMessagesForPairs(state.baselineTurnId, AUTO_TURN_COUNT);
-      if (state.baselineTurnId !== '__empty__' && !result.baselineFound) {
-        const latest = await fetchMessagesForPairs('', 1);
-        state.baselineTurnId = latest.pairs.at(-1)?.assistant?.turnId || state.baselineTurnId;
-        state.progress = 0;
-        persistStates();
-        setStatus('이전 기준 메시지를 찾지 못해 현재 시점부터 다시 셈. 과거 대화는 중복 요약하지 않음.', 'warn');
-        return;
-      }
-      state.progress = result.pairs.length;
+
+      const windowState = await syncedTurnWindow(chatId);
+      const progress = Math.min(windowState.pairs.length, AUTO_TURN_COUNT);
+      state.progress = progress;
       persistStates();
-      dashboard.progress = Math.min(result.pairs.length, AUTO_TURN_COUNT);
-      if (result.pairs.length < AUTO_TURN_COUNT) {
+      dashboard.progress = progress;
+      dashboard.totalTurns = windowState.totalTurns;
+      dashboard.syncedThrough = windowState.checkpoint.batchEndCount;
+      dashboard.syncReady = true;
+      dashboard.syncLabel = 'Supabase 연결됨';
+      if (windowState.initialized) {
+        setStatus(`☁️ 전체 ${windowState.totalTurns}턴 기준으로 기기 공통 카운트를 시작함.`);
+      }
+      if (windowState.pairs.length < AUTO_TURN_COUNT) {
+        if (force) showToast(`⏳ 다음 요약까지 ${AUTO_TURN_COUNT - windowState.pairs.length}턴 남음`, 'warn');
         if (panel && activeTab === 'overview') renderPanel();
         return;
       }
+
+      const pairs = windowState.pairs.slice(0, AUTO_TURN_COUNT);
+      const syncBatch = {
+        batchStartTurnId: pairs[0].assistant.turnId,
+        batchEndTurnId: pairs[pairs.length - 1].assistant.turnId,
+        batchEndCount: windowState.checkpoint.batchEndCount + AUTO_TURN_COUNT,
+        lockOwner: syncOwnerId,
+      };
+      const claim = await windowState.api.claimBatch({ chatId, ...syncBatch });
+      if (!claim.claimed) {
+        setStatus(claim.status === 'completed'
+          ? `☁️ ${syncBatch.batchEndCount}턴 구간은 다른 기기에서 완료됨.`
+          : `☁️ ${syncBatch.batchEndCount}턴 구간을 다른 기기에서 처리 중...`,
+        claim.status === 'completed' ? '' : 'warn');
+        return;
+      }
+      if (claim.batchEndTurnId !== syncBatch.batchEndTurnId) {
+        throw new Error('공유 잠금의 마지막 턴이 현재 계산과 달라 자동 요약을 중단함.');
+      }
+      claimedBatch = { api: windowState.api, syncBatch };
       setStatus(`완료된 왕복 20턴을 ${config.model}로 요약 중...`);
-      await createPendingBatch(chatId, result.pairs.slice(0, AUTO_TURN_COUNT));
+      const recovered = pendingBatchFromClaim(claim, syncBatch);
+      if (recovered) {
+        state.pendingBatch = recovered;
+        persistStates();
+      } else {
+        await createPendingBatch(chatId, pairs, syncBatch);
+      }
       await resumePendingBatch(chatId);
+      claimedBatch = null;
       await postBatchMaintenance(chatId);
-      if (result.pairs.length >= AUTO_TURN_COUNT * 2) setTimeout(() => runAutoCheck('backlog'), 5000);
+      if (windowState.pairs.length >= AUTO_TURN_COUNT * 2) setTimeout(() => runAutoCheck('backlog'), 5000);
     } catch (error) {
+      checkFailed = true;
+      if (claimedBatch) {
+        try {
+          await claimedBatch.api.failBatch({
+            chatId,
+            batchEndCount: claimedBatch.syncBatch.batchEndCount,
+            lockOwner: claimedBatch.syncBatch.lockOwner,
+            error,
+          });
+        } catch (syncError) {
+          console.warn('[Crack Memory Manager] failed to release shared batch', syncError);
+        }
+      }
       console.error('[Crack Memory Manager]', reason, error);
       setStatus(`자동 처리 중단: ${shortError(error)}`, 'error');
       showToast(`⚠️ ${shortError(error)}`, 'error');
     } finally {
+      clearInterval(lockHeartbeat);
       releaseLock(chatId);
-      if (panel && activeTab === 'overview') refreshDashboard().catch(() => {});
-    }
-  }
-
-  async function summarizeRecentTwenty() {
-    const chatId = getChatId();
-    if (!chatId) throw new Error('채팅방에서 실행해줘.');
-    if (!acquireLock(chatId)) throw new Error('다른 탭에서 메모리 작업 중임.');
-    try {
-      const result = await fetchMessagesForPairs('', AUTO_TURN_COUNT);
-      const pairs = result.pairs.slice(-AUTO_TURN_COUNT);
-      if (pairs.length < AUTO_TURN_COUNT) throw new Error(`완료된 왕복이 ${pairs.length}/20턴뿐임.`);
-      const state = stateFor(chatId);
-      if (state.pendingBatch) await resumePendingBatch(chatId);
-      await createPendingBatch(chatId, pairs);
-      await resumePendingBatch(chatId);
-      await postBatchMaintenance(chatId);
-    } finally {
-      releaseLock(chatId);
+      if (panel && activeTab === 'overview') {
+        if (checkFailed) renderPanel();
+        else refreshDashboard().catch(() => {});
+      }
     }
   }
 
@@ -986,21 +1186,34 @@
     const chatId = getChatId();
     if (!chatId) return;
     const state = stateFor(chatId);
-    if (!state.baselineTurnId) await initializeBaseline(chatId);
     const [longTerms, shortTerms] = await Promise.all([
       fetchSummaries('longTerm'),
       fetchSummaries('shortTerm').catch(() => ({ items: [], totalCount: 0 })),
     ]);
-    let progress = 0;
-    if (state.baselineTurnId === '__empty__') {
-      const result = await fetchMessagesForPairs('', AUTO_TURN_COUNT);
-      progress = Math.min(result.pairs.length, AUTO_TURN_COUNT);
-    } else if (state.baselineTurnId) {
-      const result = await fetchMessagesForPairs(state.baselineTurnId, AUTO_TURN_COUNT);
-      if (result.baselineFound) progress = Math.min(result.pairs.length, AUTO_TURN_COUNT);
+    let turnState = null;
+    let syncReady = false;
+    let syncLabel = '';
+    try {
+      turnState = await syncedTurnWindow(chatId);
+      syncReady = true;
+      syncLabel = 'Supabase 연결됨';
+    } catch (error) {
+      syncLabel = shortError(error);
+      const allPairs = await fetchAllCompletedPairs();
+      const boundary = completedBoundary(allPairs.length);
+      turnState = {
+        checkpoint: { batchEndCount: boundary },
+        pairs: allPairs.slice(boundary),
+        totalTurns: allPairs.length,
+      };
     }
+    const progress = Math.min(turnState.pairs.length, AUTO_TURN_COUNT);
     dashboard = {
       progress,
+      totalTurns: turnState.totalTurns,
+      syncedThrough: turnState.checkpoint.batchEndCount,
+      syncReady,
+      syncLabel,
       userCount: longTerms.items.filter(item => item.createdBy === 'user').length,
       autoCount: longTerms.items.filter(item => item.createdBy === 'assistant').length,
       shortCount: shortTerms.totalCount || shortTerms.items.length,
@@ -1084,14 +1297,16 @@
     let html = `
       <div class="cmm-grid">
         <div class="cmm-card accent"><div class="cmm-label">자동 요약</div><div class="cmm-value">${config.autoEnabled ? '켜짐' : '꺼짐'}</div><div class="cmm-sub">완료된 유저+캐릭터 왕복 기준</div></div>
-        <div class="cmm-card"><div class="cmm-label">진행도</div><div class="cmm-value">${dashboard.progress} / ${AUTO_TURN_COUNT}턴</div><div class="cmm-sub">답변 생성 중·프롤로그·리롤 제외</div></div>
+        <div class="cmm-card ${dashboard.syncReady ? 'accent' : ''}"><div class="cmm-label">턴 동기화</div><div class="cmm-value">${dashboard.syncReady ? '연결됨' : '준비 필요'}</div><div class="cmm-sub">${escapeHtml(dashboard.syncLabel)}</div></div>
+        <div class="cmm-card"><div class="cmm-label">전체 턴수</div><div class="cmm-value">${dashboard.totalTurns}턴</div><div class="cmm-sub">서버의 완료된 유저+캐릭터 왕복</div></div>
+        <div class="cmm-card"><div class="cmm-label">다음 요약</div><div class="cmm-value">${dashboard.progress} / ${AUTO_TURN_COUNT}턴</div><div class="cmm-sub">공유 완료 기준 ${dashboard.syncedThrough}턴 · 프롤로그·리롤 제외</div></div>
         <div class="cmm-card"><div class="cmm-label">사용자 장기기억</div><div class="cmm-value">${dashboard.userCount} / 51개</div><div class="cmm-sub">직접 추가 + 이 스크립트 생성분</div></div>
         <div class="cmm-card"><div class="cmm-label">자동 메모리</div><div class="cmm-value">장기 ${dashboard.autoCount} · 단기 ${dashboard.shortCount}</div><div class="cmm-sub">자동 장기만 승인 후 삭제 · 단기는 제외</div></div>
         <div class="cmm-card"><div class="cmm-label">모델</div><div class="cmm-value" style="font-size:13px">${escapeHtml(MODEL_OPTIONS.find(([id]) => id === config.model)?.[1] || config.model)}</div><div class="cmm-sub">${config.provider === 'firebase' ? 'Firebase Vertex AI' : 'Google Gemini API'}</div></div>
         <div class="cmm-card accent"><div class="cmm-label">예상 비용</div><div class="cmm-value">이번 ${formatWon(state.lastCostKrw)}원</div><div class="cmm-sub">누적 ${formatWon(state.totalCostKrw)}원 · 환율 1,500원</div></div>
       </div>
       <div class="cmm-section"><h3>작업</h3><div class="cmm-row">
-        <button class="cmm-btn" data-action="summarize-now">최근 20턴 지금 요약</button>
+        <button class="cmm-btn" data-action="summarize-now">도달한 20턴 지금 처리</button>
         <button class="cmm-btn gray" data-action="refresh">새로고침</button>
       </div></div>`;
     if (pending) {
@@ -1119,12 +1334,13 @@
   function settingsHtml() {
     return `<div class="cmm-section"><h3>AI 설정</h3>
       <label class="cmm-check"><input id="cmm-auto" type="checkbox" ${config.autoEnabled ? 'checked' : ''}> 자동 20턴 요약 켜기</label>
+      <p class="cmm-sub">전체 대화의 20·40·60턴 구간을 기준으로 셈. 기기 간 중복 방지는 Lore Sync Bridge와 Supabase 공유 잠금을 사용함.</p>
       <label class="cmm-field">API 방식<select id="cmm-provider"><option value="google" ${config.provider === 'google' ? 'selected' : ''}>Google Gemini API</option><option value="firebase" ${config.provider === 'firebase' ? 'selected' : ''}>Firebase Vertex AI</option></select></label>
       <label class="cmm-field">모델<select id="cmm-model">${MODEL_OPTIONS.map(([id, label]) => `<option value="${id}" ${config.model === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
       <label class="cmm-field">Google API Key<input id="cmm-api-key" type="password" value="${escapeHtml(config.apiKey)}" autocomplete="off"></label>
       <label class="cmm-field">Firebase 스크립트<textarea id="cmm-firebase" rows="4" placeholder="firebaseConfig = { ... };">${escapeHtml(config.firebaseScript)}</textarea></label>
       <label class="cmm-field">추가 지침<textarea id="cmm-extra" rows="5" placeholder="기본 300자·사실성 규칙 뒤에 추가할 개인 지침">${escapeHtml(config.extraPrompt)}</textarea></label>
-      <div class="cmm-row"><button class="cmm-btn" data-action="save-settings">설정 저장</button><button class="cmm-btn gray" data-action="reset-baseline">지금부터 20턴 다시 세기</button></div>
+      <div class="cmm-row"><button class="cmm-btn" data-action="save-settings">설정 저장</button></div>
     </div>`;
   }
 
@@ -1185,7 +1401,7 @@
   async function handleAction(action, target) {
     const chatId = getChatId();
     if (action === 'refresh') return refreshDashboard();
-    if (action === 'summarize-now') return summarizeRecentTwenty();
+    if (action === 'summarize-now') return runAutoCheck('manual', true);
     if (action === 'load-editor' || action === 'reload-editor') return loadEditor();
     if (action === 'save-editor') return saveEditor();
     if (action === 'save-settings') {
@@ -1198,16 +1414,6 @@
       persistConfig();
       showToast('✅ 설정 저장 완료');
       return renderPanel();
-    }
-    if (action === 'reset-baseline') {
-      if (!window.confirm('과거 대화는 요약하지 않고 현재 최신 답변부터 20턴을 다시 셈. 계속할까?')) return;
-      const recent = await fetchMessagesForPairs('', 1);
-      const state = stateFor(chatId);
-      state.baselineTurnId = recent.pairs.at(-1)?.assistant?.turnId || '__empty__';
-      state.progress = 0;
-      persistStates();
-      showToast('✅ 현재 시점부터 다시 카운트함');
-      return refreshDashboard();
     }
     if (action === 'apply-compaction') {
       if (!window.confirm('신규 10개를 먼저 저장·검증한 뒤 기존 사용자 장기기억을 삭제함. 자동 백업도 저장함. 적용할까?')) return;
