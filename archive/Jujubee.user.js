@@ -1,8 +1,9 @@
 // ==UserScript==
-// @name         주접이
+// @name         🐝 주접이
 // @namespace    crack-mini-dot-commentator
-// @version      1.2.3
+// @version      1.2.4
 // @description  냐냐냥!!!
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @match        https://crack.wrtn.ai/*
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Jujubee.user.js
 // @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/archive/Jujubee.user.js
