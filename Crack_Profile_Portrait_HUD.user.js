@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🖼️ 크랙 프로필 포트레이트 HUD
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.2.2
+// @version      0.3.0
 // @description  채팅방별 A/B/C 프로필 세트를 로컬 저장하고 선택적으로 Supabase 기기 간 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -14,16 +14,17 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
-/* global GM_addStyle, GM_getValue, GM_setValue, GM_xmlhttpRequest */
+/* global GM_addStyle, GM_getValue, GM_setValue, GM_xmlhttpRequest, unsafeWindow */
 
 (() => {
   'use strict';
 
-  const VERSION = '0.2.2';
+  const VERSION = '0.3.0';
   const SET_IDS = ['A', 'B', 'C'];
   const ROLES = ['character', 'user'];
   const ROOM_PREFIX = 'crackProfilePortraitHUD:v2:room:';
@@ -34,6 +35,8 @@
   const CLOUD_SESSION_KEY = 'crackProfilePortraitHUD:v2:cloudSession';
   const CLOUD_BUCKET = 'profile-portraits';
   const CLOUD_TABLE = 'profile_portrait_sync';
+  const SHARED_CLOUD_API_KEY = '__SHIPIDLE_PROFILE_PORTRAIT_SYNC__';
+  const BRIDGE = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
   const MAX_STORED_BYTES = 350 * 1024;
   const MAX_IMAGE_EDGE = 1280;
@@ -660,9 +663,36 @@
   }
 
   function cloudStatusText() {
+    const shared = sharedCloudStatus();
+    if (shared.ready) return `🟢 Lore Sync 계정 공유 · ${shared.email || '로그인됨'}`;
     if (cloudSession?.access_token) return `🟢 ${cloudSession.user?.email || cloudConfig.email || '로그인됨'}`;
     if (cloudConfig.projectUrl && cloudConfig.publishableKey) return '연결 정보 저장됨 · 로그인 필요';
-    return 'Supabase 연결 안 됨';
+    if (shared.reason) return shared.reason;
+    return 'Supabase 연결 안 됨 · Lore Sync 설정을 자동 감지함';
+  }
+
+  function sharedCloudApi() {
+    const api = BRIDGE?.[SHARED_CLOUD_API_KEY];
+    return api?.version >= 1 ? api : null;
+  }
+
+  function sharedCloudStatus() {
+    const api = sharedCloudApi();
+    if (!api) return { ready: false, reason: '' };
+    try { return api.getStatus?.() || { ready: false, reason: 'Lore Sync 상태를 확인하지 못했음.' }; }
+    catch (error) { return { ready: false, reason: error.message || 'Lore Sync 상태 확인 실패' }; }
+  }
+
+  function cloudAccessReady() {
+    return sharedCloudStatus().ready || Boolean(cloudSession?.access_token);
+  }
+
+  async function activeCloudProvider() {
+    const api = sharedCloudApi();
+    const shared = sharedCloudStatus();
+    if (api && shared.ready) return { type: 'lore', api, status: shared };
+    if (cloudSession?.access_token) return { type: 'direct', session: await activeCloudSession() };
+    throw new Error(shared.reason || 'Lore Sync에서 Supabase 로그인하거나 HUD에 직접 연결해주셈.');
   }
 
   async function openSettings(replace = false) {
@@ -776,16 +806,17 @@
     cloudCard.innerHTML = `<div class="cph-cloud-head"><span class="cph-icon">${ICONS.cloud}</span>기기 간 이미지 동기화</div><p class="cph-help">${cloudStatusText()} · 새로고침마다 로그인하지 않음</p>`;
     const cloudActions = document.createElement('div');
     cloudActions.className = 'cph-cloud-actions';
-    const cloudSetup = makeButton('Supabase 설정');
+    const sharedReady = sharedCloudStatus().ready;
+    const cloudSetup = makeButton(sharedReady ? 'Lore Sync 설정 사용 중' : 'Supabase 설정');
     cloudSetup.addEventListener('click', openCloudSettings);
     const cloudUpload = makeButton('클라우드 저장', 'cph-btn cph-btn-primary');
-    cloudUpload.disabled = !cloudSession?.access_token;
+    cloudUpload.disabled = !cloudAccessReady();
     cloudUpload.addEventListener('click', () => void uploadCurrentRoom());
     const cloudCurrent = makeButton('현재 세트 받기');
-    cloudCurrent.disabled = !cloudSession?.access_token;
+    cloudCurrent.disabled = !cloudAccessReady();
     cloudCurrent.addEventListener('click', () => void restoreFromCloud('current'));
     const cloudAll = makeButton('A/B/C 전부 받기');
-    cloudAll.disabled = !cloudSession?.access_token;
+    cloudAll.disabled = !cloudAccessReady();
     cloudAll.addEventListener('click', () => void restoreFromCloud('all'));
     cloudActions.append(cloudSetup, cloudUpload, cloudCurrent, cloudAll);
     cloudCard.appendChild(cloudActions);
@@ -793,7 +824,7 @@
 
     const help = document.createElement('p');
     help.className = 'cph-help';
-    help.textContent = '이미지는 350KB 이하로 압축됨. URL은 등록 시 한 번만 받고, Supabase 복원도 이 기기에 없는 이미지만 다운로드함.';
+    help.textContent = 'Lore Sync가 로그인되어 있으면 같은 Supabase 설정을 자동 사용함. 이미지는 350KB 이하로 압축하고, 이 기기에 없는 이미지만 다운로드함.';
     const status = document.createElement('p');
     status.id = 'cph-settings-status';
     status.className = 'cph-status';
@@ -1093,6 +1124,21 @@
     head.append(title, close);
     const body = document.createElement('div');
     body.className = 'cph-panel-body';
+    const shared = sharedCloudStatus();
+    if (shared.ready) {
+      const card = document.createElement('div');
+      card.className = 'cph-control-card';
+      card.innerHTML = `<div class="cph-toggle-title">Lore Sync 설정 자동 사용 중</div><p class="cph-help">${shared.email || '로그인된 계정'} · ${shared.deviceLabel || '내 기기'}</p><p class="cph-help">Project URL·Publishable key·로그인 세션은 Lore Sync에서 안전하게 관리함. 이 HUD에는 따로 입력하거나 저장하지 않음.</p>`;
+      const done = makeButton('확인', 'cph-btn cph-btn-primary');
+      done.style.cssText = 'width:100%;margin-top:14px';
+      done.addEventListener('click', () => overlay.remove());
+      body.append(card, done);
+      panel.append(head, body);
+      overlay.appendChild(panel);
+      overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
+      document.body.appendChild(overlay);
+      return;
+    }
     const fields = [
       ['cph-cloud-url', 'Project URL', 'url', cloudConfig.projectUrl, 'https://...supabase.co'],
       ['cph-cloud-key', 'Publishable / anon key', 'password', cloudConfig.publishableKey, 'sb_publishable_... 또는 eyJ...'],
@@ -1112,7 +1158,7 @@
     }
     const note = document.createElement('p');
     note.className = 'cph-help';
-    note.textContent = '같은 Supabase 프로젝트와 계정을 폰·컴에 한 번씩 입력함. 비밀번호는 저장하지 않고 로그인 세션만 저장함. 먼저 supabase/profile_portrait_sync.sql 실행 필요.';
+    note.textContent = `${shared.reason ? `${shared.reason} ` : ''}Lore Sync를 사용할 수 없을 때만 HUD에 직접 연결함. 비밀번호는 저장하지 않음. 먼저 supabase/profile_portrait_sync.sql 실행 필요.`;
     const actions = document.createElement('div');
     actions.className = 'cph-cloud-actions';
     const signup = makeButton('새 계정 가입');
@@ -1196,9 +1242,14 @@
     return `data:${mime};base64,${btoa(binary)}`;
   }
 
-  async function uploadSlot(userId, slot) {
+  async function uploadSlot(provider, slot) {
     const dataUrl = await getImageData(slot.hash);
     if (!dataUrl) throw new Error(`${slot.hash.slice(0, 8)} 이미지가 이 기기에 없음.`);
+    if (provider.type === 'lore') {
+      await provider.api.uploadImage({ hash: slot.hash, mime: slot.mime, dataUrl });
+      return;
+    }
+    const userId = provider.session.user.id;
     const response = await cloudRequest(`${cloudConfig.projectUrl}/storage/v1/object/${CLOUD_BUCKET}/${slotPath(userId, slot)}`, {
       method: 'POST',
       headers: await authCloudHeaders({ 'Content-Type': slot.mime, 'x-upsert': 'false', 'cache-control': '31536000' }),
@@ -1210,30 +1261,63 @@
     }
   }
 
-  async function downloadSlot(userId, slot) {
+  async function downloadSlot(provider, slot) {
     if (await getImageData(slot.hash)) return false;
-    const response = await cloudRequest(`${cloudConfig.projectUrl}/storage/v1/object/authenticated/${CLOUD_BUCKET}/${slotPath(userId, slot)}`, {
-      headers: await authCloudHeaders({ Accept: slot.mime }), responseType: 'arraybuffer'
-    });
-    const dataUrl = arrayBufferToDataUrl(response.response, slot.mime);
+    let dataUrl;
+    if (provider.type === 'lore') {
+      dataUrl = await provider.api.downloadImage({ hash: slot.hash, mime: slot.mime });
+    } else {
+      const userId = provider.session.user.id;
+      const response = await cloudRequest(`${cloudConfig.projectUrl}/storage/v1/object/authenticated/${CLOUD_BUCKET}/${slotPath(userId, slot)}`, {
+        headers: await authCloudHeaders({ Accept: slot.mime }), responseType: 'arraybuffer'
+      });
+      dataUrl = arrayBufferToDataUrl(response.response, slot.mime);
+    }
     if (await hashDataUrl(dataUrl) !== slot.hash) throw new Error('받은 이미지 해시가 원격 설정과 다름.');
     await GM_setValue(`${IMAGE_PREFIX}${slot.hash}`, dataUrl);
     imageCache.set(slot.hash, dataUrl);
     return true;
   }
 
-  async function getRemoteManifest() {
-    const session = await activeCloudSession();
+  async function getRemoteManifest(provider = null) {
+    const active = provider || await activeCloudProvider();
+    if (active.type === 'lore') return active.api.getManifest(location.pathname);
+    const session = active.session;
     const query = `owner_id=eq.${encodeURIComponent(session.user.id)}&room_key=eq.${encodeURIComponent(location.pathname)}&select=state,layout,revision,updated_at,device_label`;
     const response = await cloudRequest(`${cloudConfig.projectUrl}/rest/v1/${CLOUD_TABLE}?${query}`, { headers: await authCloudHeaders() });
     return JSON.parse(response.responseText || '[]')[0] || null;
   }
 
+  async function saveRemoteManifest(provider, revision) {
+    if (provider.type === 'lore') {
+      return provider.api.saveManifest({
+        roomKey: location.pathname,
+        state: { ...state, cloudRevision: revision },
+        layout,
+        revision,
+        deviceLabel: provider.status.deviceLabel || '내 기기'
+      });
+    }
+    const response = await cloudRequest(`${cloudConfig.projectUrl}/rest/v1/${CLOUD_TABLE}?on_conflict=owner_id,room_key`, {
+      method: 'POST',
+      headers: await authCloudHeaders({ Prefer: 'resolution=merge-duplicates,return=representation' }),
+      body: {
+        owner_id: provider.session.user.id,
+        room_key: location.pathname,
+        state: { ...state, cloudRevision: revision },
+        layout,
+        revision,
+        device_label: cloudConfig.deviceLabel
+      }
+    });
+    return JSON.parse(response.responseText || '[]')[0] || { revision };
+  }
+
   async function uploadCurrentRoom() {
     setStatus('원격 상태를 확인하는 중…');
     try {
-      const session = await activeCloudSession();
-      const remote = await getRemoteManifest();
+      const provider = await activeCloudProvider();
+      const remote = await getRemoteManifest(provider);
       if (remote && Number(remote.revision) > state.cloudRevision
         && !confirm(`다른 기기의 더 최신 설정(rev ${remote.revision})이 있음. 현재 기기 설정으로 덮어쓸까요?`)) return;
       const unique = new Map();
@@ -1245,22 +1329,10 @@
       for (const slot of unique.values()) {
         index += 1;
         setStatus(`중복 제외 이미지 ${index}/${unique.size} 업로드 중…`);
-        await uploadSlot(session.user.id, slot);
+        await uploadSlot(provider, slot);
       }
       const revision = Math.max(state.cloudRevision, Number(remote?.revision) || 0) + 1;
-      const response = await cloudRequest(`${cloudConfig.projectUrl}/rest/v1/${CLOUD_TABLE}?on_conflict=owner_id,room_key`, {
-        method: 'POST',
-        headers: await authCloudHeaders({ Prefer: 'resolution=merge-duplicates,return=representation' }),
-        body: {
-          owner_id: session.user.id,
-          room_key: location.pathname,
-          state: { ...state, cloudRevision: revision },
-          layout,
-          revision,
-          device_label: cloudConfig.deviceLabel
-        }
-      });
-      const saved = JSON.parse(response.responseText || '[]')[0];
+      const saved = await saveRemoteManifest(provider, revision);
       state.cloudRevision = Number(saved?.revision) || revision;
       await saveState();
       setStatus(`클라우드 저장 완료 · ${unique.size}개 이미지 · rev ${state.cloudRevision}`);
@@ -1271,14 +1343,14 @@
   }
 
   async function ensureSetImages(setId, announce = true) {
-    if (!cloudSession?.access_token) return 0;
-    const session = await activeCloudSession();
+    if (!cloudAccessReady()) return 0;
+    const provider = await activeCloudProvider();
     let downloaded = 0;
     for (const role of ROLES) {
       const slot = state.sets[setId]?.[role];
       if (!slot || await getImageData(slot.hash)) continue;
       if (announce) setStatus(`${setId} 세트 ${slotLabel(role)} 받는 중…`);
-      if (await downloadSlot(session.user.id, slot)) downloaded += 1;
+      if (await downloadSlot(provider, slot)) downloaded += 1;
     }
     return downloaded;
   }
