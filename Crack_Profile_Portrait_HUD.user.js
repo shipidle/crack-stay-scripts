@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🖼️ 크랙 프로필 포트레이트 HUD
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.2.0
+// @version      0.2.1
 // @description  채팅방별 A/B/C 프로필 세트를 로컬 저장하고 선택적으로 Supabase 기기 간 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -23,7 +23,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   const SET_IDS = ['A', 'B', 'C'];
   const ROLES = ['character', 'user'];
   const ROOM_PREFIX = 'crackProfilePortraitHUD:v2:room:';
@@ -63,6 +63,7 @@
   const emptyPositions = () => ({ character: null, user: null });
   const defaultLayout = () => ({
     customEnabled: false,
+    desktopWidth: 320,
     mobile: emptyPositions(),
     desktop: emptyPositions()
   });
@@ -214,6 +215,7 @@
     const next = defaultLayout();
     if (!saved || typeof saved !== 'object') return next;
     next.customEnabled = saved.customEnabled === true;
+    next.desktopWidth = clamp(Number(saved.desktopWidth) || 320, 240, 480);
     for (const mode of ['mobile', 'desktop']) {
       for (const role of ROLES) next[mode][role] = normalizePoint(saved[mode]?.[role]);
     }
@@ -318,7 +320,9 @@
   }
 
   function currentMode() {
-    return innerWidth >= 1280 ? 'desktop' : 'mobile';
+    const desktopPointer = typeof matchMedia === 'function'
+      && matchMedia('(hover: hover) and (pointer: fine)').matches;
+    return innerWidth >= 1280 || (innerWidth >= 900 && desktopPointer) ? 'desktop' : 'mobile';
   }
 
   function findEditor() {
@@ -346,9 +350,9 @@
     const composer = findComposerRect();
     const contentLeft = composer?.left ?? Math.max(360, (innerWidth - 760) / 2);
     const contentRight = composer?.right ?? Math.min(innerWidth - 360, (innerWidth + 760) / 2);
-    const leftRoom = Math.max(180, contentLeft - 46);
-    const rightRoom = Math.max(180, innerWidth - contentRight - 34);
-    const width = clamp(Math.min(innerWidth * .18, leftRoom - 20, rightRoom - 20), 180, 340);
+    const leftRoom = Math.max(180, contentLeft - 30);
+    const rightRoom = Math.max(180, innerWidth - contentRight - 30);
+    const width = clamp(Math.min(layout.desktopWidth, leftRoom, rightRoom), 180, 480);
     return { width, height: width * 4 / 3 };
   }
 
@@ -728,6 +732,29 @@
       await saveLayout();
       await renderStage();
     }));
+    if (currentMode() === 'desktop') {
+      const sizeControl = document.createElement('div');
+      sizeControl.style.cssText = 'margin-top:14px';
+      const sizeLabel = document.createElement('div');
+      sizeLabel.className = 'cph-range-label';
+      sizeLabel.innerHTML = `<span>데스크톱 이미지 크기</span><strong id="cph-desktop-size-value">${layout.desktopWidth}px</strong>`;
+      const sizeRange = document.createElement('input');
+      sizeRange.type = 'range';
+      sizeRange.className = 'cph-range';
+      sizeRange.min = '240';
+      sizeRange.max = '480';
+      sizeRange.step = '10';
+      sizeRange.value = String(layout.desktopWidth);
+      sizeRange.setAttribute('aria-label', '데스크톱 이미지 크기');
+      sizeRange.addEventListener('input', () => {
+        layout.desktopWidth = Number(sizeRange.value);
+        sizeLabel.querySelector('strong').textContent = `${layout.desktopWidth}px`;
+        positionStage();
+      });
+      sizeRange.addEventListener('change', () => void saveLayout());
+      sizeControl.append(sizeLabel, sizeRange);
+      layoutCard.appendChild(sizeControl);
+    }
     const layoutActions = document.createElement('div');
     layoutActions.className = 'cph-layout-actions';
     const editPosition = makeButton('위치 편집', 'cph-btn cph-btn-primary');
