@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🖼️ 크랙 프로필 포트레이트 HUD
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.3.0
+// @version      0.3.1
 // @description  채팅방별 A/B/C 프로필 세트를 로컬 저장하고 선택적으로 Supabase 기기 간 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const SET_IDS = ['A', 'B', 'C'];
   const ROLES = ['character', 'user'];
   const ROOM_PREFIX = 'crackProfilePortraitHUD:v2:room:';
@@ -147,7 +147,7 @@
     .cph-range-label { display:flex; justify-content:space-between; margin-bottom:8px; color:var(--cph-sub); font-size:12px; }
     .cph-range { width:100%; accent-color:var(--cph-blue); }
     .cph-crop-actions { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:18px; }
-    .cph-viewer { cursor:zoom-out; }
+    .cph-viewer { cursor:zoom-out; background:#fff; color-scheme:light; }
     .cph-viewer img { max-width:min(94vw,1100px); max-height:92dvh; object-fit:contain; border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.28); }
     @media (max-width:420px) {
       .cph-overlay { padding:10px; align-items:flex-end; }
@@ -1034,6 +1034,14 @@
     return String(value || '').trim().replace(/\/+$/, '');
   }
 
+  function cloudErrorMessage(error, fallback) {
+    const raw = String(error?.message || error || fallback).replace(/\s+/g, ' ').trim();
+    if (/profile_portrait_sync|PGRST205|schema cache/i.test(raw)) {
+      return 'Supabase가 프로필 테이블을 찾지 못했음. 같은 Lore Sync 프로젝트에서 최신 profile_portrait_sync.sql을 다시 Run해주셈.';
+    }
+    return raw || fallback;
+  }
+
   function cloudRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
       const body = options.body;
@@ -1338,7 +1346,7 @@
       setStatus(`클라우드 저장 완료 · ${unique.size}개 이미지 · rev ${state.cloudRevision}`);
     } catch (error) {
       console.warn('[Profile Portrait HUD] cloud upload failed:', error);
-      setStatus(error.message || '클라우드 저장 실패', 'error');
+      setStatus(cloudErrorMessage(error, '클라우드 저장 실패'), 'error');
     }
   }
 
@@ -1376,7 +1384,7 @@
       setStatus(`${mode === 'all' ? 'A/B/C 전체' : `${state.activeSet} 세트`} 복원 완료 · 새 이미지 ${downloaded}개`);
     } catch (error) {
       console.warn('[Profile Portrait HUD] cloud restore failed:', error);
-      setStatus(error.message || '클라우드 복원 실패', 'error');
+      setStatus(cloudErrorMessage(error, '클라우드 복원 실패'), 'error');
     }
   }
 
