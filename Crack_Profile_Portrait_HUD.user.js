@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🖼️ 크랙 프로필 포트레이트 HUD
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.4.0
+// @version      0.4.1
 // @description  채팅방별 A/B/C 프로필 세트를 로컬 저장하고 선택적으로 Supabase 기기 간 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
   const SET_IDS = ['A', 'B', 'C'];
   const ROLES = ['character', 'user'];
   const ROOM_PREFIX = 'crackProfilePortraitHUD:v2:room:';
@@ -89,7 +89,7 @@
     #cph-header-button { width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; border:1px solid #e5e8eb; border-radius:10px; background:#fff; color:#4e5968; padding:0; box-shadow:0 1px 2px rgba(0,0,0,.04); cursor:pointer; -webkit-tap-highlight-color:transparent; }
     #cph-header-button[data-active="true"] { border-color:var(--cph-blue); background:var(--cph-blue); color:#fff; }
     #cph-header-button svg, .cph-icon svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    #cph-stage { position:fixed; inset:0; z-index:2147482000; pointer-events:none; }
+    #cph-stage { position:fixed; inset:0; z-index:40; pointer-events:none; }
     .cph-portrait { position:absolute; overflow:hidden; border:1px solid rgba(0,0,0,.08); border-radius:13px; background:#f2f4f6; box-shadow:0 5px 16px rgba(0,0,0,.14); padding:0; pointer-events:auto; cursor:zoom-in; touch-action:none; -webkit-tap-highlight-color:transparent; }
     .cph-portrait img { width:100%; height:100%; display:block; object-fit:cover; transform-origin:center; pointer-events:none; user-select:none; -webkit-user-drag:none; }
     #cph-stage[data-editing="true"] .cph-portrait { border:2px dashed var(--cph-blue); cursor:move; box-shadow:0 0 0 4px rgba(49,130,246,.16),0 8px 24px rgba(0,0,0,.18); }
