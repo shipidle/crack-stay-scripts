@@ -30,7 +30,10 @@ function rawUrl(branch, file) {
 }
 
 function section(channel, device, files) {
-  const excluded = new Set(device.exclude);
+  const excluded = new Set([
+    ...device.exclude,
+    ...(config.channelExcludes?.[channel.id] || [])
+  ]);
   const selected = files.filter(file => !excluded.has(file));
   const heading = `${channel.label} · ${device.label}`;
   const rows = selected.map((file, index) => {
@@ -44,6 +47,11 @@ const files = activeUserscripts();
 for (const device of config.devices) {
   for (const file of device.exclude) {
     if (!files.includes(file)) throw new Error(`${device.id} 제외 파일이 루트에 없음: ${file}`);
+  }
+}
+for (const channel of config.channels) {
+  for (const file of config.channelExcludes?.[channel.id] || []) {
+    if (!files.includes(file)) throw new Error(`${channel.id} 채널 제외 파일이 루트에 없음: ${file}`);
   }
 }
 
