@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🖼️ 크랙 프로필 포트레이트 HUD
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.2.1
+// @version      0.2.2
 // @description  🧪 BETA · 채팅방별 A/B/C 프로필 세트를 로컬 저장하고 선택적으로 Supabase 기기 간 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -23,7 +23,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   const SET_IDS = ['A', 'B', 'C'];
   const ROLES = ['character', 'user'];
   const ROOM_PREFIX = 'crackProfilePortraitHUD:v2:room:';
@@ -312,7 +312,10 @@
   function applyCrop(image, crop) {
     const normalized = normalizeCrop(crop);
     image.style.objectPosition = `${normalized.x}% ${normalized.y}%`;
-    image.style.transform = `scale(${normalized.zoom})`;
+    const panLimit = (normalized.zoom - 1) * 50;
+    const translateX = clamp((50 - normalized.x) * normalized.zoom, -panLimit, panLimit);
+    const translateY = clamp((50 - normalized.y) * normalized.zoom, -panLimit, panLimit);
+    image.style.transform = `translate(${translateX}%, ${translateY}%) scale(${normalized.zoom})`;
   }
 
   function slotLabel(role) {
@@ -333,26 +336,20 @@
     const editor = findEditor();
     if (!editor) return null;
     let node = editor;
-    let best = editor.getBoundingClientRect();
     for (let depth = 0; depth < 9 && node?.parentElement; depth += 1) {
       node = node.parentElement;
       const rect = node.getBoundingClientRect();
       if (rect.width >= Math.min(280, innerWidth * .65)
         && rect.height >= 70 && rect.height <= 360
-        && rect.bottom > innerHeight * .52 && rect.bottom <= innerHeight + 8) best = rect;
+        && rect.bottom > innerHeight * .52 && rect.bottom <= innerHeight + 8) return rect;
     }
-    return best;
+    return editor.getBoundingClientRect();
   }
 
   function portraitMetrics() {
     const mode = currentMode();
     if (mode === 'mobile') return { width: 54, height: 72 };
-    const composer = findComposerRect();
-    const contentLeft = composer?.left ?? Math.max(360, (innerWidth - 760) / 2);
-    const contentRight = composer?.right ?? Math.min(innerWidth - 360, (innerWidth + 760) / 2);
-    const leftRoom = Math.max(180, contentLeft - 30);
-    const rightRoom = Math.max(180, innerWidth - contentRight - 30);
-    const width = clamp(Math.min(layout.desktopWidth, leftRoom, rightRoom), 180, 480);
+    const width = clamp(layout.desktopWidth, 240, 480);
     return { width, height: width * 4 / 3 };
   }
 
