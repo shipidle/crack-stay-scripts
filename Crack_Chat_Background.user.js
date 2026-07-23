@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.2
+// @version      0.1.3
 // @description  🧪 BETA · 채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.2';
+  const VERSION = '0.1.3';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
   const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -64,7 +64,7 @@
   GM_addStyle(`
     :root { --cbg-blue:#3182f6; --cbg-text:#191f28; --cbg-sub:#6b7684; --cbg-line:#e5e8eb; --cbg-soft:#f2f4f6; }
     #cbg-header-button { width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; border:1px solid #e5e8eb; border-radius:10px; background:#fff; color:#4e5968; padding:0; box-shadow:0 1px 2px rgba(0,0,0,.04); cursor:pointer; -webkit-tap-highlight-color:transparent; }
-    #cbg-header-button[data-active="true"] { border-color:var(--cbg-blue); background:var(--cbg-blue); color:#fff; }
+    #cbg-header-button[data-active="true"] { border-color:var(--cbg-blue); background:#d0d0f5; color:#fff; }
     #cbg-header-button .cbg-header-emoji { display:block; font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",emoji; font-size:18px; font-weight:400; line-height:1; }
     #cbg-header-button svg, .cbg-icon svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
     .cbg-main-host { isolation:isolate; }
