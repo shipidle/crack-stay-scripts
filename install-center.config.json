@@ -46,6 +46,7 @@
   "order": [
     "Crack_Assistant.user.js",
     "Crack_Profile_Portrait_HUD.user.js",
+    "Crack_Chat_Background.user.js",
     "Crack_Scroll_Guard.user.js",
     "Crack_Draft_Keeper.user.js",
     "Crack_Linebreak_Optimizer.user.js",
