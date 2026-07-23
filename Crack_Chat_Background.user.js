@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.6
+// @version      0.1.7
 // @description  🧪 BETA · 채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.6';
+  const VERSION = '0.1.7';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
   const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -201,7 +201,20 @@
   function applyCrop(image, crop) {
     const value = normalizeCrop(crop);
     image.style.objectPosition = `${value.x}% ${value.y}%`;
+    image.style.transformOrigin = `${value.x}% ${value.y}%`;
     image.style.transform = `scale(${value.zoom})`;
+  }
+
+  function cropOverflow(image, frame, zoom) {
+    const rect = frame.getBoundingClientRect();
+    const naturalWidth = image.naturalWidth || rect.width;
+    const naturalHeight = image.naturalHeight || rect.height;
+    const coverScale = Math.max(rect.width / naturalWidth, rect.height / naturalHeight);
+    return {
+      rect,
+      x: Math.max(0, naturalWidth * coverScale * zoom - rect.width),
+      y: Math.max(0, naturalHeight * coverScale * zoom - rect.height),
+    };
   }
 
   function findMessageColumn() {
@@ -742,9 +755,9 @@
     });
     frame.addEventListener('pointermove', event => {
       if (!drag || event.pointerId !== drag.id) return;
-      const rect = frame.getBoundingClientRect();
-      draft.x = clamp(drag.x - ((event.clientX - drag.clientX) / rect.width) * 100 / draft.zoom, 0, 100);
-      draft.y = clamp(drag.y - ((event.clientY - drag.clientY) / rect.height) * 100 / draft.zoom, 0, 100);
+      const overflow = cropOverflow(image, frame, draft.zoom);
+      if (overflow.x > 0.5) draft.x = clamp(drag.x - ((event.clientX - drag.clientX) / overflow.x) * 100, 0, 100);
+      if (overflow.y > 0.5) draft.y = clamp(drag.y - ((event.clientY - drag.clientY) / overflow.y) * 100, 0, 100);
       refresh(); event.preventDefault();
     });
     const endDrag = event => { if (drag?.id === event.pointerId) drag = null; };
