@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.1
+// @version      0.1.2
 // @description  채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
   const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -93,7 +93,7 @@
     .cbg-slot-tab[data-active="true"] { border-color:var(--cbg-blue); background:var(--cbg-blue); color:#fff; }
     .cbg-slot-tab[data-filled="true"]::after { content:""; display:inline-block; width:5px; height:5px; margin-left:4px; border-radius:50%; background:currentColor; vertical-align:2px; opacity:.75; }
     .cbg-slot-main { display:grid; grid-template-columns:116px minmax(0,1fr); gap:14px; align-items:start; }
-    .cbg-thumb { width:116px; aspect-ratio:9/16; overflow:hidden; display:flex; align-items:center; justify-content:center; border:1px solid var(--cbg-line); border-radius:14px; background:var(--cbg-soft); color:#8b95a1; }
+    .cbg-thumb { width:116px; overflow:hidden; display:flex; align-items:center; justify-content:center; border:1px solid var(--cbg-line); border-radius:14px; background:var(--cbg-soft); color:#8b95a1; }
     .cbg-thumb img { width:100%; height:100%; display:block; object-fit:cover; transform-origin:center; }
     .cbg-thumb svg { width:28px; height:28px; fill:none; stroke:currentColor; stroke-width:1.6; }
     .cbg-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
@@ -116,7 +116,7 @@
     .cbg-cloud-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
     .cbg-crop-panel { width:min(400px,100%); overflow:hidden; border-radius:22px; background:#fff; box-shadow:0 24px 70px rgba(0,0,0,.24); }
     .cbg-crop-body { padding:18px 20px 20px; }
-    .cbg-crop-frame { position:relative; width:min(240px,65vw); aspect-ratio:9/16; overflow:hidden; margin:0 auto 18px; border-radius:16px; background:#e5e8eb; touch-action:none; cursor:grab; }
+    .cbg-crop-frame { position:relative; overflow:hidden; margin:0 auto 18px; border-radius:16px; background:#e5e8eb; touch-action:none; cursor:grab; }
     .cbg-crop-frame:active { cursor:grabbing; }
     .cbg-crop-frame img { width:100%; height:100%; display:block; object-fit:cover; transform-origin:center; pointer-events:none; user-select:none; -webkit-user-drag:none; }
     .cbg-crop-grid { position:absolute; inset:0; pointer-events:none; background:linear-gradient(to right,transparent 33.1%,rgba(255,255,255,.55) 33.3%,rgba(255,255,255,.55) 33.6%,transparent 33.8%,transparent 66.2%,rgba(255,255,255,.55) 66.4%,rgba(255,255,255,.55) 66.7%,transparent 66.9%),linear-gradient(to bottom,transparent 33.1%,rgba(255,255,255,.55) 33.3%,rgba(255,255,255,.55) 33.6%,transparent 33.8%,transparent 66.2%,rgba(255,255,255,.55) 66.4%,rgba(255,255,255,.55) 66.7%,transparent 66.9%); box-shadow:inset 0 0 0 1px rgba(255,255,255,.7); }
@@ -215,22 +215,69 @@
     return null;
   }
 
+  function findEditor() {
+    return document.querySelector('.tiptap.ProseMirror[contenteditable="true"], .__chat_input_textarea[contenteditable="true"], [role="textbox"][contenteditable="true"], textarea');
+  }
+
+  function findComposerRect() {
+    const editor = findEditor();
+    if (!editor) return null;
+    let node = editor;
+    let candidate = null;
+    for (let depth = 0; depth < 9 && node?.parentElement; depth += 1) {
+      node = node.parentElement;
+      const rect = node.getBoundingClientRect();
+      if (rect.width >= Math.min(280, innerWidth * .65)
+        && rect.width <= Math.min(820, innerWidth)
+        && rect.height >= 70 && rect.height <= 360
+        && rect.bottom > innerHeight * .52 && rect.bottom <= innerHeight + 12) {
+        if (!candidate || rect.top < candidate.top) candidate = rect;
+      }
+    }
+    return candidate || editor.getBoundingClientRect();
+  }
+
+  function stageGeometry() {
+    const main = document.querySelector('main');
+    if (!main) return null;
+    const mainRect = main.getBoundingClientRect();
+    const columnRect = findMessageColumn()?.getBoundingClientRect();
+    const composerRect = findComposerRect();
+    const desktopColumn = innerWidth >= 900 && columnRect?.width >= 280;
+    const left = desktopColumn ? columnRect.left : mainRect.left;
+    const width = desktopColumn ? columnRect.width : mainRect.width;
+    const usableComposerTop = composerRect?.top > mainRect.top + 120 && composerRect.top < mainRect.bottom
+      ? composerRect.top
+      : mainRect.bottom;
+    const height = Math.max(1, usableComposerTop - mainRect.top);
+    return { left, top: mainRect.top, width, height, bottom: mainRect.top + height };
+  }
+
+  function applyPreviewGeometry(element, cropMode = false) {
+    const geometry = stageGeometry();
+    if (!geometry) return;
+    if (!cropMode) {
+      element.style.aspectRatio = `${geometry.width} / ${geometry.height}`;
+      return;
+    }
+    const maxWidth = Math.min(360, innerWidth - 64);
+    const maxHeight = Math.min(460, innerHeight * .52);
+    const scale = Math.min(maxWidth / geometry.width, maxHeight / geometry.height);
+    element.style.width = `${Math.max(1, Math.round(geometry.width * scale))}px`;
+    element.style.height = `${Math.max(1, Math.round(geometry.height * scale))}px`;
+  }
+
   function positionStage() {
     cancelAnimationFrame(positionFrame);
     positionFrame = requestAnimationFrame(() => {
       const stage = document.getElementById('cbg-stage');
-      const main = document.querySelector('main');
-      if (!stage || !main) return;
-      const mainRect = main.getBoundingClientRect();
-      const columnRect = findMessageColumn()?.getBoundingClientRect();
-      const desktopColumn = innerWidth >= 900 && columnRect?.width >= 280;
-      const left = desktopColumn ? columnRect.left : mainRect.left;
-      const width = desktopColumn ? columnRect.width : mainRect.width;
+      const geometry = stageGeometry();
+      if (!stage || !geometry) return;
       Object.assign(stage.style, {
-        left: `${Math.round(left)}px`,
-        top: `${Math.round(mainRect.top)}px`,
-        width: `${Math.round(width)}px`,
-        height: `${Math.round(mainRect.height)}px`,
+        left: `${Math.round(geometry.left)}px`,
+        top: `${Math.round(geometry.top)}px`,
+        width: `${Math.round(geometry.width)}px`,
+        height: `${Math.round(geometry.height)}px`,
       });
     });
   }
@@ -411,6 +458,7 @@
     slotMain.className = 'cbg-slot-main';
     const thumb = document.createElement('div');
     thumb.className = 'cbg-thumb';
+    applyPreviewGeometry(thumb);
     await renderThumb(thumb, slot);
     const controls = document.createElement('div');
     const actions = document.createElement('div');
@@ -642,6 +690,7 @@
     body.className = 'cbg-crop-body';
     const frame = document.createElement('div');
     frame.className = 'cbg-crop-frame';
+    applyPreviewGeometry(frame, true);
     const image = document.createElement('img');
     image.src = dataUrl;
     image.alt = '';
