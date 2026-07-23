@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.5
+// @version      0.1.6
 // @description  채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.5';
+  const VERSION = '0.1.6';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
   const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -32,6 +32,7 @@
   const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
   const MAX_CLOUD_BYTES = 700 * 1024;
   const MAX_IMAGE_EDGE = 1920;
+  const MIN_IMAGE_EDGE = 320;
   const BRIDGE = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   const CHAT_ROUTES = [
     /^\/stories\/[^/]+\/episodes\/[^/]+/,
@@ -589,22 +590,48 @@
   async function optimizeBlob(blob) {
     const source = await loadBlobImage(blob);
     let edge = MAX_IMAGE_EDGE;
-    for (let pass = 0; pass < 5; pass += 1) {
+    const encoders = [
+      { mime: 'image/webp', qualities: [0.84, 0.72, 0.6, 0.48, 0.36, 0.24] },
+      { mime: 'image/jpeg', qualities: [0.82, 0.7, 0.58, 0.46, 0.34, 0.24] },
+    ];
+    for (let pass = 0; pass < 9; pass += 1) {
       const scale = Math.min(1, edge / Math.max(source.naturalWidth, source.naturalHeight));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
       canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
       const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('이 브라우저에서 이미지 변환 기능을 사용할 수 없음.');
       context.fillStyle = '#ffffff';
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(source, 0, 0, canvas.width, canvas.height);
-      for (const quality of [0.86, 0.78, 0.7, 0.62]) {
-        const dataUrl = canvas.toDataURL('image/webp', quality);
-        if (dataUrlBytes(dataUrl).byteLength <= MAX_CLOUD_BYTES) return dataUrl;
+      for (const encoder of encoders) {
+        for (const quality of encoder.qualities) {
+          let dataUrl;
+          try { dataUrl = canvas.toDataURL(encoder.mime, quality); }
+          catch { continue; }
+          if (!dataUrl.startsWith(`data:${encoder.mime};base64,`)) continue;
+          if (dataUrlBytes(dataUrl).byteLength <= MAX_CLOUD_BYTES) {
+            return { dataUrl, mime: encoder.mime };
+          }
+        }
       }
-      edge = Math.round(edge * 0.82);
+      if (edge <= MIN_IMAGE_EDGE) break;
+      edge = Math.max(MIN_IMAGE_EDGE, Math.round(edge * 0.76));
     }
-    throw new Error('이미지를 700KB 이하로 압축하지 못했음. 더 작은 이미지를 사용해주셈.');
+    const scale = Math.min(1, MIN_IMAGE_EDGE / Math.max(source.naturalWidth, source.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new Error('이 브라우저에서 이미지 변환 기능을 사용할 수 없음.');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/png');
+    if (dataUrl.startsWith('data:image/png;base64,') && dataUrlBytes(dataUrl).byteLength <= MAX_CLOUD_BYTES) {
+      return { dataUrl, mime: 'image/png' };
+    }
+    throw new Error('브라우저 이미지 변환에 실패했음. 다른 형식의 원본을 사용해주셈.');
   }
 
   async function importBlob(index, blob, button) {
@@ -613,11 +640,11 @@
     button.textContent = '압축 중…';
     setStatus('이미지를 기기용으로 압축하는 중…');
     try {
-      const dataUrl = await optimizeBlob(blob);
+      const { dataUrl, mime } = await optimizeBlob(blob);
       const hash = await hashDataUrl(dataUrl);
       await GM_setValue(`${IMAGE_PREFIX}${hash}`, dataUrl);
       imageCache.set(hash, dataUrl);
-      state.slots[index] = { hash, mime: 'image/webp', crop: { x: 50, y: 50, zoom: 1 } };
+      state.slots[index] = { hash, mime, crop: { x: 50, y: 50, zoom: 1 } };
       state.activeSlot = index;
       state.visible = true;
       await saveState();
