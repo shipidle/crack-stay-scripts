@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.0
+// @version      0.1.1
 // @description  채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
   const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -40,7 +40,7 @@
   ];
 
   const ICONS = {
-    background: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.75" y="4.25" width="16.5" height="15.5" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m5.5 17 4-4 2.7 2.6 2.35-2.35L18.5 17"/></svg>',
+    background: '<span class="cbg-header-emoji" aria-hidden="true">🌌</span>',
     close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11m0-11-11 11"/></svg>',
     upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5V4.75m0 0-4 4m4-4 4 4M5 14.5v4.25c0 .7.55 1.25 1.25 1.25h11.5c.7 0 1.25-.55 1.25-1.25V14.5"/></svg>',
     crop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5v12A1.5 1.5 0 0 0 8.5 17H20.5M3.5 7H15.5A1.5 1.5 0 0 1 17 8.5V20.5"/></svg>',
@@ -65,6 +65,7 @@
     :root { --cbg-blue:#3182f6; --cbg-text:#191f28; --cbg-sub:#6b7684; --cbg-line:#e5e8eb; --cbg-soft:#f2f4f6; }
     #cbg-header-button { width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; border:1px solid #e5e8eb; border-radius:10px; background:#fff; color:#4e5968; padding:0; box-shadow:0 1px 2px rgba(0,0,0,.04); cursor:pointer; -webkit-tap-highlight-color:transparent; }
     #cbg-header-button[data-active="true"] { border-color:var(--cbg-blue); background:var(--cbg-blue); color:#fff; }
+    #cbg-header-button .cbg-header-emoji { display:block; font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",emoji; font-size:18px; font-weight:400; line-height:1; }
     #cbg-header-button svg, .cbg-icon svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
     .cbg-main-host { isolation:isolate; }
     .cbg-main-host > :not(#cbg-stage) { position:relative; z-index:1; }
@@ -165,7 +166,7 @@
     return {
       visible: saved.visible !== false,
       activeSlot: clamp(Math.trunc(Number(saved.activeSlot) || 0), 0, SLOT_COUNT - 1),
-      veilOpacity: clamp(Number.isFinite(Number(saved.veilOpacity)) ? Number(saved.veilOpacity) : 0.22, 0, 0.5),
+      veilOpacity: clamp(Number.isFinite(Number(saved.veilOpacity)) ? Number(saved.veilOpacity) : 0.22, 0, 1),
       cloudRevision: Math.max(0, Number(saved.cloudRevision) || 0),
       slots,
     };
@@ -473,7 +474,7 @@
     veilRange.className = 'cbg-range';
     veilRange.type = 'range';
     veilRange.min = '0';
-    veilRange.max = '0.5';
+    veilRange.max = '1';
     veilRange.step = '0.01';
     veilRange.value = String(state.veilOpacity);
     veilRange.addEventListener('input', () => {
