@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
+// @name         💾 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.1.0
+// @version      2.1.3
 // @description  전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -15,7 +15,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '2.1.0';
+  const VERSION = '2.1.3';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -125,6 +125,7 @@
   let dashboard = {
     progress: 0,
     totalTurns: 0,
+    completedTurns: 0,
     syncedThrough: 0,
     syncReady: false,
     syncLabel: '확인 중',
@@ -367,6 +368,16 @@
       .reverse();
   }
 
+  function countUserTurns(messages) {
+    const ids = new Set();
+    for (const message of messages) {
+      if (message?.role !== 'user' || message.status !== 'end' || message.isPrologue === true) continue;
+      const id = message.turnId || message._id;
+      if (id) ids.add(String(id));
+    }
+    return ids.size;
+  }
+
   function completedBoundary(totalTurns) {
     return Math.floor(Math.max(0, Number(totalTurns) || 0) / AUTO_TURN_COUNT) * AUTO_TURN_COUNT;
   }
@@ -398,10 +409,15 @@
       scope = all.slice(0, baselineIndex);
     }
 
-    return { pairs: completedPairsFromMessages(all, scope), baselineFound: foundBaseline, all };
+    return {
+      pairs: completedPairsFromMessages(all, scope),
+      userTurns: countUserTurns(scope),
+      baselineFound: foundBaseline,
+      all,
+    };
   }
 
-  async function fetchAllCompletedPairs() {
+  async function fetchAllTurnStats() {
     const all = [];
     let cursor = '';
     for (let page = 0; page < 200; page += 1) {
@@ -411,7 +427,9 @@
       const data = response?.data || {};
       const pageItems = Array.isArray(data.messages) ? data.messages : [];
       all.push(...pageItems);
-      if (!data.hasNext || !data.nextCursor || pageItems.length === 0) return completedPairsFromMessages(all);
+      if (!data.hasNext || !data.nextCursor || pageItems.length === 0) {
+        return { pairs: completedPairsFromMessages(all), userTurns: countUserTurns(all) };
+      }
       cursor = data.nextCursor;
     }
     throw new Error('전체 대화가 10,000개 메시지를 넘어 안전하게 턴수를 계산하지 못함.');
@@ -434,19 +452,20 @@
     const api = requireTurnSyncApi();
     let checkpoint = await api.getCheckpoint(chatId);
     if (!checkpoint) {
-      const allPairs = await fetchAllCompletedPairs();
-      const boundary = completedBoundary(allPairs.length);
+      const allStats = await fetchAllTurnStats();
+      const boundary = completedBoundary(allStats.pairs.length);
       checkpoint = await api.initializeCheckpoint({
         chatId,
         batchEndCount: boundary,
-        batchEndTurnId: boundary > 0 ? allPairs[boundary - 1].assistant.turnId : '__start__',
+        batchEndTurnId: boundary > 0 ? allStats.pairs[boundary - 1].assistant.turnId : '__start__',
       });
       if (!checkpoint) throw new Error('공유 턴 기준점을 만들지 못함.');
       return {
         api,
         checkpoint,
-        pairs: allPairs.slice(boundary),
-        totalTurns: allPairs.length,
+        pairs: allStats.pairs.slice(boundary),
+        totalTurns: allStats.userTurns,
+        completedTurns: allStats.pairs.length,
         initialized: true,
       };
     }
@@ -461,7 +480,8 @@
       api,
       checkpoint,
       pairs: result.pairs,
-      totalTurns: checkpoint.batchEndCount + result.pairs.length,
+      totalTurns: checkpoint.batchEndCount + result.userTurns,
+      completedTurns: checkpoint.batchEndCount + result.pairs.length,
       initialized: false,
     };
   }
@@ -1037,6 +1057,7 @@
       persistStates();
       dashboard.progress = progress;
       dashboard.totalTurns = windowState.totalTurns;
+      dashboard.completedTurns = windowState.completedTurns;
       dashboard.syncedThrough = windowState.checkpoint.batchEndCount;
       dashboard.syncReady = true;
       dashboard.syncLabel = 'Supabase 연결됨';
@@ -1200,18 +1221,20 @@
       syncLabel = 'Supabase 연결됨';
     } catch (error) {
       syncLabel = shortError(error);
-      const allPairs = await fetchAllCompletedPairs();
-      const boundary = completedBoundary(allPairs.length);
+      const allStats = await fetchAllTurnStats();
+      const boundary = completedBoundary(allStats.pairs.length);
       turnState = {
         checkpoint: { batchEndCount: boundary },
-        pairs: allPairs.slice(boundary),
-        totalTurns: allPairs.length,
+        pairs: allStats.pairs.slice(boundary),
+        totalTurns: allStats.userTurns,
+        completedTurns: allStats.pairs.length,
       };
     }
     const progress = Math.min(turnState.pairs.length, AUTO_TURN_COUNT);
     dashboard = {
       progress,
       totalTurns: turnState.totalTurns,
+      completedTurns: turnState.completedTurns,
       syncedThrough: turnState.checkpoint.batchEndCount,
       syncReady,
       syncLabel,
@@ -1299,7 +1322,7 @@
       <div class="cmm-grid">
         <div class="cmm-card accent"><div class="cmm-label">자동 요약</div><div class="cmm-value">${config.autoEnabled ? '켜짐' : '꺼짐'}</div><div class="cmm-sub">완료된 유저+캐릭터 왕복 기준</div></div>
         <div class="cmm-card ${dashboard.syncReady ? 'accent' : ''}"><div class="cmm-label">턴 동기화</div><div class="cmm-value">${dashboard.syncReady ? '연결됨' : '준비 필요'}</div><div class="cmm-sub">${escapeHtml(dashboard.syncLabel)}</div></div>
-        <div class="cmm-card"><div class="cmm-label">전체 턴수</div><div class="cmm-value">${dashboard.totalTurns}턴</div><div class="cmm-sub">서버의 완료된 유저+캐릭터 왕복</div></div>
+        <div class="cmm-card"><div class="cmm-label">전체 턴수</div><div class="cmm-value">${dashboard.totalTurns}턴</div><div class="cmm-sub">사용자 메시지 기준 · 완료 왕복 ${dashboard.completedTurns}턴</div></div>
         <div class="cmm-card"><div class="cmm-label">다음 요약</div><div class="cmm-value">${dashboard.progress} / ${AUTO_TURN_COUNT}턴</div><div class="cmm-sub">공유 완료 기준 ${dashboard.syncedThrough}턴 · 프롤로그·리롤 제외</div></div>
         <div class="cmm-card"><div class="cmm-label">사용자 장기기억</div><div class="cmm-value">${dashboard.userCount} / 51개</div><div class="cmm-sub">직접 추가 + 이 스크립트 생성분</div></div>
         <div class="cmm-card"><div class="cmm-label">자동 메모리</div><div class="cmm-value">장기 ${dashboard.autoCount} · 단기 ${dashboard.shortCount}</div><div class="cmm-sub">자동 장기만 승인 후 삭제 · 단기는 제외</div></div>

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.2.1
+// @version      1.2.2
 // @description  개인 Supabase에 로어 백업과 메모리 요약 턴 체크포인트를 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -25,7 +25,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.2.1';
+  const VERSION = '1.2.2';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const BRIDGE = unsafeWindow || window;
@@ -434,6 +434,7 @@
   }
 
   async function upload(backup, hash, remoteRevision = 0) {
+    setStatus('☁️ 클라우드에 저장 중...');
     const active = await refreshSessionIfNeeded();
     const revision = Math.max(Number(syncState.lastRevision || 0), Number(remoteRevision || 0)) + 1;
     const body = [{ owner_id: active.user.id, ciphertext: await encryptBackup(backup), revision, updated_at: new Date().toISOString(), device_label: config.deviceLabel || navigator.platform || '내 기기', schema_version: 1 }];
