@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.1.1
+// @version      2.1.2
 // @description  🧪 BETA · 전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -15,7 +15,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '2.1.1';
+  const VERSION = '2.1.2';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -708,6 +708,31 @@
     };
   }
 
+  function reconcilePendingCreatedIds(job, currentItems) {
+    const preExistingIds = new Set(Array.isArray(job.preExistingIds) ? job.preExistingIds.map(String) : []);
+    const claimedIds = new Set(Array.isArray(job.createdIds) ? job.createdIds.filter(Boolean).map(String) : []);
+    const candidates = currentItems.filter(item => (
+      item?._id
+      && item.createdBy === 'user'
+      && !preExistingIds.has(String(item._id))
+    ));
+    const usedIds = new Set();
+
+    return job.items.map(expected => {
+      const matches = item => (
+        !usedIds.has(String(item._id))
+        && item.title === expected.title
+        && item.summary === expected.summary
+      );
+      const recovered = candidates.find(item => claimedIds.has(String(item._id)) && matches(item))
+        || candidates.find(matches);
+      if (!recovered) return '';
+      const id = String(recovered._id);
+      usedIds.add(id);
+      return id;
+    });
+  }
+
   async function createPendingBatch(chatId, pairs, syncBatch = null) {
     const state = stateFor(chatId);
     const before = await fetchSummaries('longTerm');
@@ -739,28 +764,28 @@
     const job = state.pendingBatch;
     if (!job) return false;
     const syncApi = job.syncBatch ? requireTurnSyncApi() : null;
-    job.createdIds = Array.isArray(job.createdIds) ? job.createdIds : [];
+    const originalCreatedIds = Array.isArray(job.createdIds) ? job.createdIds.filter(Boolean).map(String) : [];
+    job.createdIds = originalCreatedIds;
     if (!Array.isArray(job.items) || validateItems(job.items, 'normal').length > 0) {
       throw new Error('복구할 요약 작업 데이터가 올바르지 않음.');
     }
-    if (job.createdIds.length > job.items.length) throw new Error('복구할 요약 ID 개수가 올바르지 않음.');
     const currentBeforeCreate = await fetchSummaries('longTerm');
-    const preExistingIds = new Set(job.preExistingIds || []);
-    const alreadyTracked = new Set(job.createdIds);
-    for (let index = job.createdIds.length; index < job.items.length; index += 1) {
+    const reconciledIds = reconcilePendingCreatedIds(job, currentBeforeCreate.items);
+    const originalIdSet = new Set(originalCreatedIds);
+    const repaired = originalCreatedIds.length > job.items.length
+      || originalIdSet.size !== originalCreatedIds.length
+      || originalCreatedIds.some((id, index) => reconciledIds[index] !== id)
+      || reconciledIds.some(id => id && !originalIdSet.has(id));
+    job.createdIds = [];
+    const alreadyTracked = new Set();
+    for (let index = 0; index < job.items.length; index += 1) {
       setStatus(`장기기억 저장 중 ${index + 1}/${job.items.length}...`);
       const expected = job.items[index];
-      const recovered = currentBeforeCreate.items.find(item => (
-        item.createdBy === 'user'
-        && !preExistingIds.has(item._id)
-        && !alreadyTracked.has(item._id)
-        && item.title === expected.title
-        && item.summary === expected.summary
-      ));
-      const id = recovered?._id || await createSummary(expected);
+      const id = reconciledIds[index] || await createSummary(expected);
       if (!id) throw new Error(`${index + 1}번 장기기억 저장 응답에 ID가 없음.`);
-      job.createdIds.push(id);
-      alreadyTracked.add(id);
+      if (alreadyTracked.has(id)) throw new Error(`${index + 1}번 장기기억 ID가 중복됨. 기존 데이터는 삭제하지 않음.`);
+      job.createdIds.push(String(id));
+      alreadyTracked.add(String(id));
       persistStates();
       if (syncApi) {
         await syncApi.saveBatch({
@@ -771,6 +796,7 @@
         });
       }
     }
+    if (repaired) setStatus('중단된 요약 작업의 ID 목록을 실제 저장 데이터와 대조해 복구함.', 'warn');
     const current = await fetchSummaries('longTerm');
     const byId = new Map(current.items.map(item => [item._id, item]));
     for (let index = 0; index < job.createdIds.length; index += 1) {
