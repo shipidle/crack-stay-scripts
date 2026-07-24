@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.3
+// @version      1.4.0
 // @description  🧪 BETA · 개인 Supabase에 로어 백업과 메모리 요약 턴 체크포인트를 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -25,7 +25,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.3.3';
+  const VERSION = '1.4.0';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const PROFILE_SYNC_API_KEY = '__SHIPIDLE_PROFILE_PORTRAIT_SYNC__';
@@ -38,7 +38,9 @@
   const BACKGROUND_MAX_BYTES = 700 * 1024;
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
-  const AUTO_SYNC_MS = 5 * 60_000 + 15_000;
+  const REMOTE_CHECK_MS = 10 * 60_000;
+  const LOCAL_SCAN_MS = 2 * 60_000;
+  const UPLOAD_DEBOUNCE_MS = 60_000;
   const SECRET_KEYS = new Set([
     'autoExtKey', 'autoExtVertexJson', 'autoExtFirebaseScript',
     'autoExtFirebaseEmbedKey', 'autoExtGeminiEmbedKey', 'autoExtDeepSeekKey',
@@ -53,15 +55,18 @@
     deviceLabel: '',
   };
   let config = { ...defaultConfig };
-  let syncState = { lastHash: '', lastRevision: 0, lastSyncAt: 0 };
+  let syncState = { lastHash: '', lastRevision: 0, lastSyncAt: 0, dirty: false };
   let session = null;
   let panel = null;
   let statusEl = null;
   let latestStatus = '';
   let latestStatusTone = '';
   let busy = false;
-  let autoSyncRunning = false;
   let needsInitialChoice = false;
+  let remoteMetadata = null;
+  let remoteCheckRunning = false;
+  let localScanRunning = false;
+  let uploadTimer = null;
 
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
@@ -104,6 +109,9 @@
     const raw = String(error?.message || error || '알 수 없는 오류').replace(/\s+/g, ' ').trim();
     if (/summary_sync_state|summary_checkpoint|summary_batch|schema cache/i.test(raw)) {
       return 'Supabase에 supabase/summary_sync.sql을 먼저 실행해줘.';
+    }
+    if (/save_lore_sync_state|previous_ciphertext|content_hash|lore sync conflict/i.test(raw)) {
+      return 'Supabase에 supabase/lore_sync_v2.sql을 먼저 실행해줘.';
     }
     if (/email not confirmed/i.test(raw)) return '이메일 인증이 아직 안 됨. 받은메일함의 인증 링크를 누른 뒤 다시 로그인하면 됨.';
     if (/invalid login credentials/i.test(raw)) return '이메일 또는 비밀번호가 맞지 않음.';
@@ -478,7 +486,7 @@
 
   async function exportBackup() {
     const tools = await waitForBackupTools();
-    const raw = await tools.exportFullBackup({ includeSecrets: false, includeLogs: false, includeEmbeddings: true, includeHistory: true });
+    const raw = await tools.exportFullBackup({ includeSecrets: false, includeLogs: false, includeEmbeddings: true, includeHistory: false });
     return sanitizeBackup(raw);
   }
 
@@ -508,22 +516,38 @@
     return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
   }
 
+  async function gzip(bytes) {
+    if (typeof CompressionStream !== 'function') return null;
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  async function gunzip(bytes) {
+    if (typeof DecompressionStream !== 'function') throw new Error('이 브라우저는 gzip 복원을 지원하지 않음. 최신 브라우저에서 복원해줘.');
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
   async function encryptBackup(backup) {
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const key = await deriveKey(config.syncPassphrase, salt);
-    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, textEncoder.encode(JSON.stringify(backup)));
-    return JSON.stringify({ v: 1, salt: bytesToBase64Url(salt), iv: bytesToBase64Url(iv), data: bytesToBase64Url(new Uint8Array(data)) });
+    const plain = textEncoder.encode(JSON.stringify(backup));
+    const compressed = await gzip(plain);
+    const envelopeVersion = compressed ? 2 : 1;
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, compressed || plain);
+    return JSON.stringify({ v: envelopeVersion, compression: compressed ? 'gzip' : undefined, salt: bytesToBase64Url(salt), iv: bytesToBase64Url(iv), data: bytesToBase64Url(new Uint8Array(data)) });
   }
 
   async function decryptBackup(ciphertext) {
     let envelope;
     try { envelope = JSON.parse(ciphertext); } catch { throw new Error('클라우드 데이터 형식이 올바르지 않음.'); }
-    if (envelope?.v !== 1 || !envelope.salt || !envelope.iv || !envelope.data) throw new Error('지원하지 않는 클라우드 데이터 형식.');
+    if (![1, 2].includes(envelope?.v) || !envelope.salt || !envelope.iv || !envelope.data) throw new Error('지원하지 않는 클라우드 데이터 형식.');
     try {
       const key = await deriveKey(config.syncPassphrase, base64UrlToBytes(envelope.salt));
       const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64UrlToBytes(envelope.iv) }, key, base64UrlToBytes(envelope.data));
-      return JSON.parse(textDecoder.decode(plain));
+      const decoded = envelope.v === 2 ? await gunzip(new Uint8Array(plain)) : new Uint8Array(plain);
+      return JSON.parse(textDecoder.decode(decoded));
     } catch (error) {
       if (error?.name === 'OperationError' || /operation\s*error|operation-specific/i.test(String(error?.message || error))) {
         const friendly = new Error('클라우드 백업 복호화 실패. 첫 기기와 이 기기의 동기화 암호가 대소문자·띄어쓰기까지 완전히 같은지 확인해줘.');
@@ -663,49 +687,103 @@
     });
   }
 
-  async function getRemote() {
+  function normalizeRemoteMetadata(row) {
+    if (!row) return null;
+    return {
+      revision: Number(row.revision || 0),
+      updatedAt: row.updated_at || '',
+      deviceLabel: row.device_label || '',
+      schemaVersion: Number(row.schema_version || 1),
+      contentHash: row.content_hash || '',
+      previousRevision: Number(row.previous_revision || 0),
+      previousUpdatedAt: row.previous_updated_at || '',
+      previousDeviceLabel: row.previous_device_label || '',
+      previousSchemaVersion: Number(row.previous_schema_version || 1),
+      previousContentHash: row.previous_content_hash || '',
+    };
+  }
+
+  async function getRemoteMetadata() {
     const active = await refreshSessionIfNeeded();
-    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=ciphertext,revision,updated_at,device_label,schema_version`, {
+    const select = 'revision,updated_at,device_label,schema_version,content_hash,previous_revision,previous_updated_at,previous_device_label,previous_schema_version,previous_content_hash';
+    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`, {
       headers: await authHeaders(),
     });
-    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+    remoteMetadata = normalizeRemoteMetadata(Array.isArray(rows) ? rows[0] : null);
+    return remoteMetadata;
+  }
+
+  async function getRemoteBackup(slot = 'current') {
+    const active = await refreshSessionIfNeeded();
+    const previous = slot === 'previous';
+    const select = previous
+      ? 'previous_ciphertext,previous_revision,previous_updated_at,previous_device_label,previous_schema_version,previous_content_hash'
+      : 'ciphertext,revision,updated_at,device_label,schema_version,content_hash';
+    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`, {
+      headers: await authHeaders(),
+    });
+    const row = Array.isArray(rows) ? rows[0] : null;
+    const ciphertext = previous ? row?.previous_ciphertext : row?.ciphertext;
+    if (!ciphertext) throw new Error(previous ? '클라우드에 이전 백업이 아직 없음.' : '클라우드에 복원할 백업이 아직 없음.');
+    return {
+      ciphertext,
+      revision: Number(previous ? row.previous_revision : row.revision || 0),
+      contentHash: previous ? row.previous_content_hash || '' : row.content_hash || '',
+    };
   }
 
   async function upload(backup, hash, remoteRevision = 0) {
     setStatus('☁️ 클라우드에 저장 중...');
-    const active = await refreshSessionIfNeeded();
-    const revision = Math.max(Number(syncState.lastRevision || 0), Number(remoteRevision || 0)) + 1;
-    const body = [{ owner_id: active.user.id, ciphertext: await encryptBackup(backup), revision, updated_at: new Date().toISOString(), device_label: config.deviceLabel || navigator.platform || '내 기기', schema_version: 1 }];
-    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?on_conflict=owner_id`, {
-      method: 'POST', headers: await authHeaders({ Prefer: 'resolution=merge-duplicates,return=representation' }), body,
+    const ciphertext = await encryptBackup(backup);
+    const schemaVersion = Number(JSON.parse(ciphertext).v || 1);
+    const rows = await request(`${config.projectUrl}/rest/v1/rpc/save_lore_sync_state`, {
+      method: 'POST',
+      headers: await authHeaders({ Prefer: 'return=representation' }),
+      body: {
+        p_ciphertext: ciphertext,
+        p_content_hash: hash,
+        p_base_revision: Number(remoteRevision || 0),
+        p_device_label: config.deviceLabel || navigator.platform || '내 기기',
+        p_schema_version: schemaVersion,
+      },
     });
-    syncState = { lastHash: hash, lastRevision: Number(rows?.[0]?.revision || revision), lastSyncAt: Date.now() };
+    remoteMetadata = normalizeRemoteMetadata(Array.isArray(rows) ? rows[0] : null);
+    const revision = remoteMetadata?.revision || Number(remoteRevision || 0) + 1;
+    syncState = { ...syncState, lastHash: hash, lastRevision: revision, lastSyncAt: Date.now(), dirty: false };
     await persistState();
     setStatus(`☁️ 동기화 완료\n${new Date(syncState.lastSyncAt).toLocaleTimeString()} · revision ${syncState.lastRevision}`);
   }
 
   async function firstSync(mode) {
-    const remote = await getRemote();
-    const local = await exportBackup();
-    const hash = await fingerprint(local);
+    const remote = await getRemoteMetadata();
     if (!remote) {
       if (mode === 'restore') throw new Error('클라우드에 복원할 백업이 아직 없음. 첫 기기에서는 먼저 백업을 올려줘.');
+      const local = await exportBackup();
+      const hash = await fingerprint(local);
       await upload(local, hash, 0);
       needsInitialChoice = false;
       return;
     }
     if (mode === 'upload') {
-      await upload(local, hash, remote?.revision || 0);
+      const local = await exportBackup();
+      await upload(local, await fingerprint(local), remote.revision);
       needsInitialChoice = false;
       return;
     }
+    await restoreRemote('current');
+    needsInitialChoice = false;
+  }
+
+  async function restoreRemote(slot = 'current') {
+    const remote = await getRemoteBackup(slot);
     const cloud = await decryptBackup(remote.ciphertext);
     await restoreBackup(cloud);
-    const restoredHash = await fingerprint(sanitizeBackup(cloud));
-    syncState = { lastHash: restoredHash, lastRevision: Number(remote.revision || 0), lastSyncAt: Date.now() };
+    const restoredHash = remote.contentHash || await fingerprint(sanitizeBackup(cloud));
+    syncState = { ...syncState, lastHash: restoredHash, lastRevision: remote.revision, lastSyncAt: Date.now(), dirty: false };
     await persistState();
-    needsInitialChoice = false;
-    setStatus('☁️ 클라우드 로어 복원 완료. 현재 페이지는 새로고침하지 않았음.');
+    setStatus(slot === 'previous'
+      ? '☁️ 이전 클라우드 로어 복원 완료. 클라우드 최신본은 그대로 유지함.'
+      : '☁️ 클라우드 로어 복원 완료. 현재 페이지는 새로고침하지 않았음.');
   }
 
   function isChatRoute() {
@@ -714,27 +792,90 @@
       || /^\/u\/[a-f0-9]+\/c\/[a-f0-9]+\/?$/i.test(location.pathname);
   }
 
-  async function autoSync() {
-    if (document.hidden || !isChatRoute() || busy || autoSyncRunning
-      || !session?.access_token || !config.syncPassphrase || !syncState.lastHash || needsInitialChoice) return;
-    autoSyncRunning = true;
+  function syncReady() {
+    return isChatRoute() && session?.access_token && config.syncPassphrase && config.projectUrl && config.publishableKey;
+  }
+
+  async function checkRemoteMetadata() {
+    if (!syncReady() || document.hidden || remoteCheckRunning) return;
+    remoteCheckRunning = true;
+    try {
+      const remote = await getRemoteMetadata();
+      if (!syncState.lastHash && remote) {
+        needsInitialChoice = true;
+      } else if (remote && remote.revision > Number(syncState.lastRevision || 0)) {
+        if (remote.contentHash && remote.contentHash === syncState.lastHash) {
+          syncState.lastRevision = remote.revision;
+          await persistState();
+        } else {
+          setStatus(syncState.dirty
+            ? '⚠️ 이 기기와 클라우드가 모두 바뀜. 자동 업로드를 멈춤. 패널에서 업로드 또는 복원을 골라줘.'
+            : '☁️ 다른 기기에서 최신 로어가 올라옴. 내려받진 않았음. 패널에서 복원하면 됨.', 'warn');
+        }
+      }
+    } catch (error) {
+      console.warn('[Lore Sync Bridge] metadata check failed:', error);
+    } finally {
+      remoteCheckRunning = false;
+      if (panel) renderPanel();
+    }
+  }
+
+  async function flushPendingUpload() {
+    uploadTimer = null;
+    if (!syncReady() || needsInitialChoice || !syncState.lastHash) return;
     try {
       const local = await exportBackup();
       const hash = await fingerprint(local);
-      const remote = await getRemote();
-      if (remote && Number(remote.revision || 0) > Number(syncState.lastRevision || 0)) {
-        if (hash !== syncState.lastHash) {
-          setStatus('⚠️ 이 기기와 클라우드가 모두 바뀜.\n안전하게 자동 덮어쓰진 않았음. 패널에서 지금 업로드 또는 클라우드 복원을 골라줘.', 'warn');
-          return;
-        }
-        setStatus('☁️ 다른 기기에서 최신 로어가 올라옴. 현재 페이지는 건드리지 않았음. 대화 마친 뒤 "클라우드 로어 복원"을 누르면 됨.', 'warn');
+      if (hash === syncState.lastHash) {
+        syncState.dirty = false;
+        await persistState();
         return;
       }
-      if (hash !== syncState.lastHash) await upload(local, hash, remote?.revision || 0);
+      const remote = await getRemoteMetadata();
+      if (remote && remote.revision > Number(syncState.lastRevision || 0) && remote.contentHash !== syncState.lastHash) {
+        setStatus('⚠️ 이 기기와 클라우드가 모두 바뀜. 자동 업로드를 멈춤. 패널에서 업로드 또는 복원을 골라줘.', 'warn');
+        return;
+      }
+      if (remote?.contentHash && remote.contentHash === hash) {
+        syncState = { ...syncState, lastHash: hash, lastRevision: remote.revision, dirty: false };
+        await persistState();
+        return;
+      }
+      await upload(local, hash, remote?.revision || 0);
     } catch (error) {
-      console.warn('[Lore Sync Bridge] auto sync failed:', error);
+      console.warn('[Lore Sync Bridge] delayed upload failed:', error);
+      setStatus(`❌ 자동 업로드 실패: ${shortError(error)}`, 'error');
+    }
+  }
+
+  async function scheduleUpload() {
+    syncState.dirty = true;
+    await persistState();
+    if (uploadTimer) clearTimeout(uploadTimer);
+    setStatus('☁️ 로어 변경 감지됨. 1분 동안 변경을 모은 뒤 업로드함.');
+    uploadTimer = setTimeout(() => void flushPendingUpload(), UPLOAD_DEBOUNCE_MS);
+  }
+
+  async function scanLocalChanges() {
+    if (!syncReady() || document.hidden || localScanRunning || needsInitialChoice || !syncState.lastHash) return;
+    localScanRunning = true;
+    try {
+      const local = await exportBackup();
+      const hash = await fingerprint(local);
+      if (hash !== syncState.lastHash && remoteMetadata && remoteMetadata.revision > Number(syncState.lastRevision || 0) && remoteMetadata.contentHash !== syncState.lastHash) {
+        syncState.dirty = true;
+        await persistState();
+        setStatus('⚠️ 이 기기와 클라우드가 모두 바뀜. 자동 업로드를 멈춤. 패널에서 업로드 또는 복원을 골라줘.', 'warn');
+      } else if (hash !== syncState.lastHash) await scheduleUpload();
+      else if (syncState.dirty) {
+        syncState.dirty = false;
+        await persistState();
+      }
+    } catch (error) {
+      console.warn('[Lore Sync Bridge] local change scan failed:', error);
     } finally {
-      autoSyncRunning = false;
+      localScanRunning = false;
     }
   }
 
@@ -822,7 +963,7 @@
     account.appendChild(accountRow); panel.appendChild(account);
 
     const sync = document.createElement('div'); sync.className = 'clsb-card';
-    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 폰과 컴퓨터에서 반드시 같은 암호를 넣어야 복원 가능. 이 기기의 변경은 약 5분마다 자동 업로드하며, 백그라운드에서는 전체 백업 검사를 쉬어감. 다른 기기 로어는 현재 대화를 건드리지 않도록 직접 복원할 때만 받음.</p>';
+    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 로컬 변경은 2분마다 기기 안에서만 확인하고, 변경 발견 후 1분간 모아 gzip 압축·암호화하여 자동 업로드함. 원격은 접속 시와 화면을 보는 동안 10분마다 작은 메타데이터만 확인하며, 실제 백업은 복원 버튼을 눌렀을 때만 내려받음. 자동 백업에는 임베딩을 포함하고 내부 히스토리는 제외함.</p>';
     addField(sync, 'clsb-passphrase', '동기화 암호', 'password', config.syncPassphrase, '8자 이상, 기기마다 같은 암호');
     const syncRow = document.createElement('div'); syncRow.className = 'clsb-row';
     syncRow.append(makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }));
@@ -839,9 +980,12 @@
       syncRow.append(makeButton('처음 백업 올리기', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('upload'); }));
     } else {
       syncRow.append(
-        makeButton('지금 업로드', '', async () => { const local = await exportBackup(); await upload(local, await fingerprint(local), (await getRemote())?.revision || 0); }),
-        makeButton('클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }),
+        makeButton('지금 업로드', '', async () => { const local = await exportBackup(); await upload(local, await fingerprint(local), (await getRemoteMetadata())?.revision || 0); }),
+        makeButton('최신 클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await restoreRemote('current'); }),
       );
+      if (remoteMetadata?.previousRevision) {
+        syncRow.append(makeButton('이전 클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await restoreRemote('previous'); }));
+      }
     }
     sync.appendChild(syncRow); panel.appendChild(sync);
 
@@ -860,7 +1004,7 @@
     }
     panel.appendChild(statusEl);
     const meta = document.createElement('div'); meta.className = 'clsb-meta';
-    meta.textContent = `Bridge v${VERSION} · 마지막 동기화: ${syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString() : '아직 없음'} · 로어와 메모리 요약 초안 내용은 AES-256-GCM으로 암호화됨.`;
+    meta.textContent = `Bridge v${VERSION} · 마지막 동기화: ${syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString() : '아직 없음'} · 클라우드 revision ${remoteMetadata?.revision || syncState.lastRevision || 0} · 현재본과 이전본 1개만 보관 · AES-256-GCM 암호화.`;
     panel.appendChild(meta);
   }
 
@@ -925,10 +1069,15 @@
     chatSyncPreparing = true;
     try {
       if (session?.access_token && config.syncPassphrase && config.projectUrl && config.publishableKey) {
-        const remote = await getRemote();
+        const remote = await getRemoteMetadata();
         if (!syncState.lastHash && remote) needsInitialChoice = true;
         else if (!syncState.lastHash && !remote) setStatus('☁️ 첫 기기임. 패널에서 "처음 백업 올리기"를 누르면 됨.');
-        else await autoSync();
+        else {
+          if (remote && remote.revision > Number(syncState.lastRevision || 0) && remote.contentHash !== syncState.lastHash) {
+            setStatus('☁️ 다른 기기에서 최신 로어가 올라옴. 내려받진 않았음. 패널에서 복원하면 됨.', 'warn');
+          }
+          await scanLocalChanges();
+        }
       }
     } catch (error) {
       console.warn('[Lore Sync Bridge] boot check failed:', error);
@@ -953,11 +1102,17 @@
     await load();
     syncBridgeRoute();
     setInterval(syncBridgeRoute, 1000);
-    setInterval(autoSync, AUTO_SYNC_MS);
+    setInterval(() => void checkRemoteMetadata(), REMOTE_CHECK_MS);
+    setInterval(() => void scanLocalChanges(), LOCAL_SCAN_MS);
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) void autoSync();
-    }, { passive: true });
-    window.addEventListener('online', () => void autoSync(), { passive: true });
+      if (document.hidden) return;
+      void checkRemoteMetadata();
+      void scanLocalChanges();
+    });
+    window.addEventListener('online', () => {
+      void checkRemoteMetadata();
+      void scanLocalChanges();
+    });
   }
 
   Object.defineProperty(BRIDGE, SUMMARY_SYNC_API_KEY, {
