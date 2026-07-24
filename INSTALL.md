@@ -152,7 +152,6 @@
 ## 별도 1회 설정
 
 - BETA의 기기 간 요약 턴 동기화는 [Supabase SQL](https://github.com/shipidle/crack-stay-scripts/blob/beta/supabase/summary_sync.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
-- 프로필 포트레이트 HUD의 선택형 이미지 동기화는 [Supabase SQL](https://github.com/shipidle/crack-stay-scripts/blob/beta/supabase/profile_portrait_sync.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
 - BETA의 로어 저용량 동기화와 현재본·이전본 보관은 [Lore Sync v2 SQL](https://github.com/shipidle/crack-stay-scripts/blob/beta/supabase/lore_sync_v2.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
 
 <!-- 이 파일은 scripts/generate-install-center.mjs로 생성됨. 직접 수정하지 말고 install-center.config.json을 수정할 것. -->
