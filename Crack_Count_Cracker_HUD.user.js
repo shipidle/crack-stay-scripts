@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊 턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.10
+// @version      1.1.11
 // @description  🧪 BETA · 입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -118,6 +118,8 @@
 
             #my-custom-info-display.is-under-side-layer {
                 --info-display-z: 1;
+                visibility: hidden;
+                pointer-events: none;
             }
 
             #my-custom-info-display #my-counter-settings-button {
@@ -751,6 +753,16 @@
         return touchesSide && looksLayered && !isSmallPopupRole && text.length > 0;
     }
 
+    function overlapsCounterBadge(el) {
+        if (!counterBadge || !(el instanceof HTMLElement)) return false;
+        const layerRect = el.getBoundingClientRect();
+        const badgeRect = counterBadge.getBoundingClientRect();
+        return layerRect.left < badgeRect.right
+            && layerRect.right > badgeRect.left
+            && layerRect.top < badgeRect.bottom
+            && layerRect.bottom > badgeRect.top;
+    }
+
     function isOpenMobileSidebar(el) {
         if (!(el instanceof HTMLElement)) return false;
         if (el.closest('#my-custom-info-display, #info-display-settings-menu, #my-custom-btn-menu, #btn-custom-dropdown-menu, #btn-menu-settings-menu')) return false;
@@ -777,8 +789,9 @@
 
         const mobileSidebarOpen = Array.from(document.body.querySelectorAll('.bg-sidebar, [class*="bg-sidebar"], [width="260px"], [class*="css-17jcfrp"]'))
             .some(isOpenMobileSidebar);
-        const sideLayerOpen = mobileSidebarOpen || Array.from(document.body.querySelectorAll('[data-state="open"], [aria-expanded="true"], aside, section, div[class*="side"], div[class*="Side"], div[class*="drawer"], div[class*="Drawer"], div[class*="sheet"], div[class*="Sheet"]'))
-            .some(isVisibleSideLayer);
+        const sideLayerOpen = (mobileSidebarOpen && Array.from(document.body.querySelectorAll('.bg-sidebar, [class*="bg-sidebar"], [width="260px"], [class*="css-17jcfrp"]')).some(overlapsCounterBadge))
+            || Array.from(document.body.querySelectorAll('[data-state="open"], [aria-expanded="true"], aside, section, div[class*="side"], div[class*="Side"], div[class*="drawer"], div[class*="Drawer"], div[class*="sheet"], div[class*="Sheet"]'))
+                .some(el => isVisibleSideLayer(el) && overlapsCounterBadge(el));
 
         counterBadge.classList.toggle('is-under-side-layer', sideLayerOpen);
         if (sideLayerOpen) hideSettingsMenu();
