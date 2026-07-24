@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.1.0
+// @version      2.1.3
 // @description  전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -15,7 +15,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '2.1.0';
+  const VERSION = '2.1.3';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -134,6 +134,8 @@
   };
   let editorOriginal = [];
   let editorLoaded = false;
+  let autoCheckRunning = false;
+  const lastSuccessfulProbeSignatures = new Map();
   const ownerId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const syncOwnerId = (() => {
     const key = `${STORAGE_KEY}:device-id`;
@@ -209,13 +211,22 @@
       const match = location.pathname.match(pattern);
       if (match) return match[1];
     }
+    try {
+      const sharedId = globalThis.CrackUtil?.path?.()?.chatRoom?.();
+      if (sharedId) return String(sharedId);
+    } catch (_) {}
     return null;
   }
 
-  function getAccessToken() {
-    const match = document.cookie.match(/(?:^|;\s*)access_token=([^;]+)/);
+  function getCookieValue(name) {
+    const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`));
     if (!match) return '';
     try { return decodeURIComponent(match[1]); } catch (_) { return match[1]; }
+  }
+
+  function getAccessToken() {
+    return getCookieValue('access_token');
   }
 
   function escapeHtml(value) {
@@ -237,7 +248,13 @@
     if (/summary_sync_state|summary_checkpoint|summary_batch|schema cache/i.test(raw)) {
       return 'Supabase에서 supabase/summary_sync.sql을 먼저 실행해줘.';
     }
-    if (/401|403|unauthor|forbidden/i.test(raw)) return '인증이 만료됐거나 해당 작업 권한이 없음.';
+    if (/\[Supabase HTTP 401\]|invalid\s*(?:refresh\s*)?token|refresh\s*token.*(?:used|invalid|expired|not\s*found)|invalid\s*jwt|jwt\s*expired/i.test(raw)) return 'Supabase 로그인을 자동 갱신하지 못함. ☁️ 동기화에서 다시 로그인해줘.';
+    if (/\[Supabase HTTP 403\]/i.test(raw)) return 'Supabase 작업 권한이 없음. RLS 정책과 로그인 계정을 확인해줘.';
+    if (/\[Crack API HTTP 401\]/i.test(raw)) return 'Crack 로그인 세션을 확인하지 못함. 페이지를 새로고침한 뒤 다시 로그인해줘.';
+    if (/\[Crack API HTTP 403\]/i.test(raw)) return 'Crack API에서 이 채팅의 메모리 작업을 거부함.';
+    if (/\[(?:Google Gemini|Firebase AI) HTTP 401\]/i.test(raw)) return 'AI 모델 API 키 인증에 실패함. 설정의 API 키를 확인해줘.';
+    if (/\[(?:Google Gemini|Firebase AI) HTTP 403\]/i.test(raw)) return 'AI 모델 API 키에 해당 모델 사용 권한이 없음.';
+    if (/401|403|unauthor|forbidden/i.test(raw)) return `인증 또는 권한 오류: ${raw.slice(0, 180)}`;
     if (/fetch|network|timeout/i.test(raw)) return '네트워크 요청 실패.';
     return raw.slice(0, 280);
   }
@@ -268,18 +285,54 @@
 
   async function apiRequest(method, path, body) {
     const chatId = getChatId();
-    const token = getAccessToken();
-    if (!chatId || !token) throw new Error('채팅 ID 또는 로그인 토큰을 찾을 수 없음.');
-    const response = await fetch(`${API_BASE}/${chatId}${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    if (!chatId) throw new Error('현재 채팅 ID를 찾을 수 없음.');
+    const send = () => {
+      const headers = {
+        'Content-Type': 'application/json',
+        platform: 'web',
+        'wrtn-locale': 'ko-KR',
+      };
+      const token = getAccessToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const wrtnId = getCookieValue('__w_id');
+      if (wrtnId) headers['x-wrtn-id'] = wrtnId;
+      return fetch(`${API_BASE}/${chatId}${path}`, {
+        method,
+        credentials: 'include',
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    };
+    let response = await send();
+    if (response.status === 401 && method === 'GET') {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      response = await send();
+    }
     const text = await response.text();
     let parsed = null;
     try { parsed = text ? JSON.parse(text) : { result: 'SUCCESS' }; } catch (_) { parsed = { raw: text }; }
-    if (!response.ok) throw new Error(parsed?.message || parsed?.error || parsed?.raw || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const detail = parsed?.message || parsed?.error || parsed?.raw || `HTTP ${response.status}`;
+      const error = new Error(`[Crack API HTTP ${response.status}] ${detail}`);
+      error.status = response.status;
+      error.source = 'Crack API';
+      throw error;
+    }
     return parsed;
+  }
+
+  function visibleConversationSignature(chatId) {
+    const nodes = Array.from(document.querySelectorAll('[data-message-group-id],[data-message-id],[data-turn-id]'))
+      .filter(node => !node.closest('#cmm-overlay,#cmm-toast'));
+    if (nodes.length === 0) return '';
+    const tail = nodes.slice(-3).map(node => {
+      const id = node.getAttribute('data-message-group-id')
+        || node.getAttribute('data-message-id')
+        || node.getAttribute('data-turn-id')
+        || '';
+      return `${id}:${String(node.textContent || '').length}`;
+    });
+    return `${chatId}:${nodes.length}:${tail.join('|')}`;
   }
 
   async function fetchSummaries(type = 'longTerm') {
@@ -540,7 +593,12 @@
       body: JSON.stringify(payload),
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data?.error?.message || `Gemini HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(`[Google Gemini HTTP ${response.status}] ${data?.error?.message || '요청 실패'}`);
+      error.status = response.status;
+      error.source = 'Google Gemini';
+      throw error;
+    }
     const text = responseTextFromGemini(data);
     if (!text) throw new Error('Gemini가 빈 응답을 반환함.');
     return { text, usage: data.usageMetadata || null };
@@ -604,6 +662,10 @@
     if (expected !== null && items.length !== expected) errors.push(`항목 수 ${items.length}/10`);
     if (mode === 'normal' && (items.length < 2 || items.length > 3)) errors.push(`항목 수 ${items.length}/2~3`);
     items.forEach((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        errors.push(`${index + 1}번 항목 형식 오류`);
+        return;
+      }
       const titleLength = charCount(item.title);
       const summaryLength = charCount(item.summary);
       if (!titleLength || titleLength > MAX_TITLE_LENGTH) errors.push(`${index + 1}번 제목 ${titleLength}/20자`);
@@ -708,6 +770,31 @@
     };
   }
 
+  function reconcilePendingCreatedIds(job, currentItems) {
+    const preExistingIds = new Set(Array.isArray(job.preExistingIds) ? job.preExistingIds.map(String) : []);
+    const claimedIds = new Set(Array.isArray(job.createdIds) ? job.createdIds.filter(Boolean).map(String) : []);
+    const candidates = currentItems.filter(item => (
+      item?._id
+      && item.createdBy === 'user'
+      && !preExistingIds.has(String(item._id))
+    ));
+    const usedIds = new Set();
+
+    return job.items.map(expected => {
+      const matches = item => (
+        !usedIds.has(String(item._id))
+        && item.title === expected.title
+        && item.summary === expected.summary
+      );
+      const recovered = candidates.find(item => claimedIds.has(String(item._id)) && matches(item))
+        || candidates.find(matches);
+      if (!recovered) return '';
+      const id = String(recovered._id);
+      usedIds.add(id);
+      return id;
+    });
+  }
+
   async function createPendingBatch(chatId, pairs, syncBatch = null) {
     const state = stateFor(chatId);
     const before = await fetchSummaries('longTerm');
@@ -739,28 +826,28 @@
     const job = state.pendingBatch;
     if (!job) return false;
     const syncApi = job.syncBatch ? requireTurnSyncApi() : null;
-    job.createdIds = Array.isArray(job.createdIds) ? job.createdIds : [];
+    const originalCreatedIds = Array.isArray(job.createdIds) ? job.createdIds.filter(Boolean).map(String) : [];
+    job.createdIds = originalCreatedIds;
     if (!Array.isArray(job.items) || validateItems(job.items, 'normal').length > 0) {
       throw new Error('복구할 요약 작업 데이터가 올바르지 않음.');
     }
-    if (job.createdIds.length > job.items.length) throw new Error('복구할 요약 ID 개수가 올바르지 않음.');
     const currentBeforeCreate = await fetchSummaries('longTerm');
-    const preExistingIds = new Set(job.preExistingIds || []);
-    const alreadyTracked = new Set(job.createdIds);
-    for (let index = job.createdIds.length; index < job.items.length; index += 1) {
+    const reconciledIds = reconcilePendingCreatedIds(job, currentBeforeCreate.items);
+    const originalIdSet = new Set(originalCreatedIds);
+    const repaired = originalCreatedIds.length > job.items.length
+      || originalIdSet.size !== originalCreatedIds.length
+      || originalCreatedIds.some((id, index) => reconciledIds[index] !== id)
+      || reconciledIds.some(id => id && !originalIdSet.has(id));
+    job.createdIds = [];
+    const alreadyTracked = new Set();
+    for (let index = 0; index < job.items.length; index += 1) {
       setStatus(`장기기억 저장 중 ${index + 1}/${job.items.length}...`);
       const expected = job.items[index];
-      const recovered = currentBeforeCreate.items.find(item => (
-        item.createdBy === 'user'
-        && !preExistingIds.has(item._id)
-        && !alreadyTracked.has(item._id)
-        && item.title === expected.title
-        && item.summary === expected.summary
-      ));
-      const id = recovered?._id || await createSummary(expected);
+      const id = reconciledIds[index] || await createSummary(expected);
       if (!id) throw new Error(`${index + 1}번 장기기억 저장 응답에 ID가 없음.`);
-      job.createdIds.push(id);
-      alreadyTracked.add(id);
+      if (alreadyTracked.has(id)) throw new Error(`${index + 1}번 장기기억 ID가 중복됨. 기존 데이터는 삭제하지 않음.`);
+      job.createdIds.push(String(id));
+      alreadyTracked.add(String(id));
       persistStates();
       if (syncApi) {
         await syncApi.saveBatch({
@@ -771,9 +858,13 @@
         });
       }
     }
+    if (repaired) setStatus('중단된 요약 작업의 ID 목록을 실제 저장 데이터와 대조해 복구함.', 'warn');
     const current = await fetchSummaries('longTerm');
     const byId = new Map(current.items.map(item => [item._id, item]));
-    for (let index = 0; index < job.createdIds.length; index += 1) {
+    if (job.createdIds.length !== job.items.length) {
+      throw new Error('복구된 요약 ID와 작업 항목 수가 다름. 기존 데이터는 삭제하지 않음.');
+    }
+    for (let index = 0; index < job.items.length; index += 1) {
       const saved = byId.get(job.createdIds[index]);
       const expected = job.items[index];
       if (!saved || saved.createdBy !== 'user' || saved.title !== expected.title || saved.summary !== expected.summary) {
@@ -991,12 +1082,23 @@
   async function runAutoCheck(reason = 'timer', force = false) {
     const chatId = getChatId();
     if (!chatId || (!config.autoEnabled && !force) || document.hidden) return;
-    if (!acquireLock(chatId)) return;
+    const state = stateFor(chatId);
+    const activitySignature = force ? '' : visibleConversationSignature(chatId);
+    if (!force
+      && !state.pendingBatch
+      && !state.compactionTxn
+      && activitySignature
+      && lastSuccessfulProbeSignatures.get(chatId) === activitySignature) return;
+    if (autoCheckRunning) return;
+    autoCheckRunning = true;
+    if (!acquireLock(chatId)) {
+      autoCheckRunning = false;
+      return;
+    }
     const lockHeartbeat = setInterval(() => renewLock(chatId), 60_000);
     let claimedBatch = null;
     let checkFailed = false;
     try {
-      const state = stateFor(chatId);
       if (state.compactionTxn) await resumeCompactionTransaction(chatId);
       if (state.pendingBatch) {
         if (state.pendingBatch.syncBatch) {
@@ -1032,6 +1134,7 @@
       }
 
       const windowState = await syncedTurnWindow(chatId);
+      if (activitySignature) lastSuccessfulProbeSignatures.set(chatId, activitySignature);
       const progress = Math.min(windowState.pairs.length, AUTO_TURN_COUNT);
       state.progress = progress;
       persistStates();
@@ -1100,6 +1203,7 @@
     } finally {
       clearInterval(lockHeartbeat);
       releaseLock(chatId);
+      autoCheckRunning = false;
       if (panel && activeTab === 'overview') {
         if (checkFailed) renderPanel();
         else refreshDashboard().catch(() => {});

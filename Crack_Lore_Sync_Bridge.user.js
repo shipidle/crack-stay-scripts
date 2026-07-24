@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.2.1
+// @version      1.2.2
 // @description  개인 Supabase에 로어 백업과 메모리 요약 턴 체크포인트를 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -25,7 +25,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.2.1';
+  const VERSION = '1.2.2';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const BRIDGE = unsafeWindow || window;
@@ -53,6 +53,7 @@
   let latestStatusTone = '';
   let busy = false;
   let needsInitialChoice = false;
+  let refreshSessionPromise = null;
 
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
@@ -130,8 +131,9 @@
   }
 
   async function persistSession(next) {
-    session = next;
-    await GM_setValue(`${APP_KEY}:session`, next);
+    const stamped = next ? { ...next, shipidle_updated_at: Date.now() } : next;
+    session = stamped;
+    await GM_setValue(`${APP_KEY}:session`, stamped);
   }
 
   function makeHeaders(extra = {}) {
@@ -152,10 +154,24 @@
           try { parsed = response.responseText ? JSON.parse(response.responseText) : null; } catch { parsed = response.responseText; }
           if (response.status >= 200 && response.status < 300) return resolve(parsed);
           const message = parsed?.msg || parsed?.message || parsed?.error_description || parsed?.error || `HTTP ${response.status}`;
-          reject(new Error(message));
+          const error = new Error(`[Supabase HTTP ${response.status}] ${message}`);
+          error.status = response.status;
+          error.source = 'Supabase';
+          error.url = url;
+          reject(error);
         },
-        onerror: () => reject(new Error('network error')),
-        ontimeout: () => reject(new Error('timeout')),
+        onerror: () => {
+          const error = new Error('[Supabase] network error');
+          error.source = 'Supabase';
+          error.url = url;
+          reject(error);
+        },
+        ontimeout: () => {
+          const error = new Error('[Supabase] timeout');
+          error.source = 'Supabase';
+          error.url = url;
+          reject(error);
+        },
       });
     });
   }
@@ -166,16 +182,69 @@
     if (!String(config.publishableKey || '').trim()) throw new Error('Publishable key를 넣어줘.');
   }
 
-  async function refreshSessionIfNeeded() {
+  async function syncStoredSession() {
+    const stored = await GM_getValue(`${APP_KEY}:session`, null);
+    if (!stored?.access_token) return session;
+    const storedUpdatedAt = Number(stored.shipidle_updated_at || 0);
+    const currentUpdatedAt = Number(session?.shipidle_updated_at || 0);
+    const storedExpiry = Number(stored.expires_at || 0);
+    const currentExpiry = Number(session?.expires_at || 0);
+    if (!session?.access_token
+      || storedUpdatedAt > currentUpdatedAt
+      || (!storedUpdatedAt && !currentUpdatedAt && storedExpiry > currentExpiry)) session = stored;
+    return session;
+  }
+
+  async function waitForRotatedSession(attemptedAccessToken) {
+    for (const delay of [80, 160, 320, 640]) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+      const stored = await GM_getValue(`${APP_KEY}:session`, null);
+      if (stored?.access_token
+        && stored.access_token !== attemptedAccessToken) {
+        session = stored;
+        return stored;
+      }
+    }
+    return null;
+  }
+
+  function isAuthFailure(error) {
+    return Number(error?.status || 0) === 401
+      || /invalid\s*(?:refresh\s*)?token|refresh\s*token.*(?:used|invalid|expired|not\s*found)|invalid\s*jwt|jwt\s*expired|token\s*(?:expired|invalid)|unauthor/i.test(String(error?.message || error || ''));
+  }
+
+  async function refreshSessionIfNeeded(force = false) {
+    await syncStoredSession();
     if (!session?.access_token) throw new Error('먼저 로그인해줘.');
     const expiresSoon = Number(session.expires_at || 0) * 1000 < Date.now() + 90_000;
-    if (!expiresSoon) return session;
+    if (!force && !expiresSoon) return session;
     if (!session.refresh_token) throw new Error('로그인 세션이 만료됨. 다시 로그인해줘.');
-    const next = await request(`${config.projectUrl}/auth/v1/token?grant_type=refresh_token`, {
-      method: 'POST', headers: makeHeaders(), body: { refresh_token: session.refresh_token },
-    });
-    await persistSession(next);
-    return next;
+    if (refreshSessionPromise) return refreshSessionPromise;
+
+    const attemptedAccessToken = session.access_token;
+    const attemptedRefreshToken = session.refresh_token;
+    const operation = (async () => {
+      try {
+        const next = await request(`${config.projectUrl}/auth/v1/token?grant_type=refresh_token`, {
+          method: 'POST', headers: makeHeaders(), body: { refresh_token: attemptedRefreshToken },
+        });
+        if (!next?.access_token || !next?.refresh_token) throw new Error('[Supabase] 토큰 갱신 응답이 비정상임.');
+        await persistSession(next);
+        return next;
+      } catch (error) {
+        if (isAuthFailure(error)) {
+          const rotated = await waitForRotatedSession(attemptedAccessToken);
+          if (rotated) return rotated;
+        }
+        throw error;
+      }
+    })();
+    refreshSessionPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (refreshSessionPromise === operation) refreshSessionPromise = null;
+    }
   }
 
   async function consumeAuthHash() {
@@ -215,6 +284,25 @@
   async function authHeaders(extra = {}) {
     const active = await refreshSessionIfNeeded();
     return makeHeaders({ Authorization: `Bearer ${active.access_token}`, ...extra });
+  }
+
+  async function authedRequest(url, options = {}) {
+    const { headers: extraHeaders = {}, ...requestOptions } = options;
+    const send = active => request(url, {
+      ...requestOptions,
+      headers: makeHeaders({ ...extraHeaders, Authorization: `Bearer ${active.access_token}` }),
+    });
+    const first = await refreshSessionIfNeeded();
+    try {
+      return await send(first);
+    } catch (error) {
+      if (!isAuthFailure(error)) throw error;
+      await syncStoredSession();
+      const retrySession = session?.access_token && session.access_token !== first.access_token
+        ? session
+        : await refreshSessionIfNeeded(true);
+      return send(retrySession);
+    }
   }
 
   function sanitizeBackup(backup) {
@@ -321,15 +409,11 @@
   async function summaryRpc(name, body) {
     const status = summarySyncStatus();
     if (!status.ready) throw new Error(status.reason);
-    try {
-      return await request(`${config.projectUrl}/rest/v1/rpc/${name}`, {
-        method: 'POST',
-        headers: await authHeaders({ Prefer: 'return=representation' }),
-        body,
-      });
-    } catch (error) {
-      throw new Error(shortError(error));
-    }
+    return authedRequest(`${config.projectUrl}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body,
+    });
   }
 
   function normalizeCheckpoint(row) {
@@ -359,7 +443,7 @@
       order: 'batch_end_count.desc',
       limit: '1',
     });
-    const rows = await request(`${config.projectUrl}/rest/v1/summary_sync_state?${query}`, { headers: await authHeaders() });
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/summary_sync_state?${query}`);
     return normalizeCheckpoint(Array.isArray(rows) ? rows[0] : null);
   }
 
@@ -427,9 +511,7 @@
 
   async function getRemote() {
     const active = await refreshSessionIfNeeded();
-    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=ciphertext,revision,updated_at,device_label,schema_version`, {
-      headers: await authHeaders(),
-    });
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=ciphertext,revision,updated_at,device_label,schema_version`);
     return Array.isArray(rows) && rows[0] ? rows[0] : null;
   }
 
@@ -437,8 +519,8 @@
     const active = await refreshSessionIfNeeded();
     const revision = Math.max(Number(syncState.lastRevision || 0), Number(remoteRevision || 0)) + 1;
     const body = [{ owner_id: active.user.id, ciphertext: await encryptBackup(backup), revision, updated_at: new Date().toISOString(), device_label: config.deviceLabel || navigator.platform || '내 기기', schema_version: 1 }];
-    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?on_conflict=owner_id`, {
-      method: 'POST', headers: await authHeaders({ Prefer: 'resolution=merge-duplicates,return=representation' }), body,
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/lore_sync_state?on_conflict=owner_id`, {
+      method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body,
     });
     syncState = { lastHash: hash, lastRevision: Number(rows?.[0]?.revision || revision), lastSyncAt: Date.now() };
     await persistState();
