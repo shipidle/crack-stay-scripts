@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧠 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.1.1
+// @version      2.1.2
 // @description  전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -15,7 +15,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '2.1.1';
+  const VERSION = '2.1.2';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -134,6 +134,7 @@
   };
   let editorOriginal = [];
   let editorLoaded = false;
+  let autoCheckRunning = false;
   const ownerId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const syncOwnerId = (() => {
     const key = `${STORAGE_KEY}:device-id`;
@@ -209,13 +210,22 @@
       const match = location.pathname.match(pattern);
       if (match) return match[1];
     }
+    try {
+      const sharedId = globalThis.CrackUtil?.path?.()?.chatRoom?.();
+      if (sharedId) return String(sharedId);
+    } catch (_) {}
     return null;
   }
 
-  function getAccessToken() {
-    const match = document.cookie.match(/(?:^|;\s*)access_token=([^;]+)/);
+  function getCookieValue(name) {
+    const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`));
     if (!match) return '';
     try { return decodeURIComponent(match[1]); } catch (_) { return match[1]; }
+  }
+
+  function getAccessToken() {
+    return getCookieValue('access_token');
   }
 
   function escapeHtml(value) {
@@ -269,10 +279,19 @@
   async function apiRequest(method, path, body) {
     const chatId = getChatId();
     const token = getAccessToken();
-    if (!chatId || !token) throw new Error('채팅 ID 또는 로그인 토큰을 찾을 수 없음.');
+    if (!chatId) throw new Error('현재 채팅 ID를 찾을 수 없음.');
+    const headers = {
+      'Content-Type': 'application/json',
+      platform: 'web',
+      'wrtn-locale': 'ko-KR',
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const wrtnId = getCookieValue('__w_id');
+    if (wrtnId) headers['x-wrtn-id'] = wrtnId;
     const response = await fetch(`${API_BASE}/${chatId}${path}`, {
       method,
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await response.text();
@@ -604,6 +623,10 @@
     if (expected !== null && items.length !== expected) errors.push(`항목 수 ${items.length}/10`);
     if (mode === 'normal' && (items.length < 2 || items.length > 3)) errors.push(`항목 수 ${items.length}/2~3`);
     items.forEach((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        errors.push(`${index + 1}번 항목 형식 오류`);
+        return;
+      }
       const titleLength = charCount(item.title);
       const summaryLength = charCount(item.summary);
       if (!titleLength || titleLength > MAX_TITLE_LENGTH) errors.push(`${index + 1}번 제목 ${titleLength}/20자`);
@@ -799,7 +822,10 @@
     if (repaired) setStatus('중단된 요약 작업의 ID 목록을 실제 저장 데이터와 대조해 복구함.', 'warn');
     const current = await fetchSummaries('longTerm');
     const byId = new Map(current.items.map(item => [item._id, item]));
-    for (let index = 0; index < job.createdIds.length; index += 1) {
+    if (job.createdIds.length !== job.items.length) {
+      throw new Error('복구된 요약 ID와 작업 항목 수가 다름. 기존 데이터는 삭제하지 않음.');
+    }
+    for (let index = 0; index < job.items.length; index += 1) {
       const saved = byId.get(job.createdIds[index]);
       const expected = job.items[index];
       if (!saved || saved.createdBy !== 'user' || saved.title !== expected.title || saved.summary !== expected.summary) {
@@ -1017,7 +1043,12 @@
   async function runAutoCheck(reason = 'timer', force = false) {
     const chatId = getChatId();
     if (!chatId || (!config.autoEnabled && !force) || document.hidden) return;
-    if (!acquireLock(chatId)) return;
+    if (autoCheckRunning) return;
+    autoCheckRunning = true;
+    if (!acquireLock(chatId)) {
+      autoCheckRunning = false;
+      return;
+    }
     const lockHeartbeat = setInterval(() => renewLock(chatId), 60_000);
     let claimedBatch = null;
     let checkFailed = false;
@@ -1126,6 +1157,7 @@
     } finally {
       clearInterval(lockHeartbeat);
       releaseLock(chatId);
+      autoCheckRunning = false;
       if (panel && activeTab === 'overview') {
         if (checkFailed) renderPanel();
         else refreshDashboard().catch(() => {});
