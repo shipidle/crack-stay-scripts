@@ -136,6 +136,7 @@
   let editorOriginal = [];
   let editorLoaded = false;
   let autoCheckRunning = false;
+  const lastSuccessfulProbeSignatures = new Map();
   const ownerId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const syncOwnerId = (() => {
     const key = `${STORAGE_KEY}:device-id`;
@@ -248,7 +249,13 @@
     if (/summary_sync_state|summary_checkpoint|summary_batch|schema cache/i.test(raw)) {
       return 'Supabase에서 supabase/summary_sync.sql을 먼저 실행해줘.';
     }
-    if (/401|403|unauthor|forbidden/i.test(raw)) return '인증이 만료됐거나 해당 작업 권한이 없음.';
+    if (/\[Supabase HTTP 401\]|invalid\s*(?:refresh\s*)?token|refresh\s*token.*(?:used|invalid|expired|not\s*found)|invalid\s*jwt|jwt\s*expired/i.test(raw)) return 'Supabase 로그인을 자동 갱신하지 못함. ☁️ 동기화에서 다시 로그인해줘.';
+    if (/\[Supabase HTTP 403\]/i.test(raw)) return 'Supabase 작업 권한이 없음. RLS 정책과 로그인 계정을 확인해줘.';
+    if (/\[Crack API HTTP 401\]/i.test(raw)) return 'Crack 로그인 세션을 확인하지 못함. 페이지를 새로고침한 뒤 다시 로그인해줘.';
+    if (/\[Crack API HTTP 403\]/i.test(raw)) return 'Crack API에서 이 채팅의 메모리 작업을 거부함.';
+    if (/\[(?:Google Gemini|Firebase AI) HTTP 401\]/i.test(raw)) return 'AI 모델 API 키 인증에 실패함. 설정의 API 키를 확인해줘.';
+    if (/\[(?:Google Gemini|Firebase AI) HTTP 403\]/i.test(raw)) return 'AI 모델 API 키에 해당 모델 사용 권한이 없음.';
+    if (/401|403|unauthor|forbidden/i.test(raw)) return `인증 또는 권한 오류: ${raw.slice(0, 180)}`;
     if (/fetch|network|timeout/i.test(raw)) return '네트워크 요청 실패.';
     return raw.slice(0, 280);
   }
@@ -279,27 +286,54 @@
 
   async function apiRequest(method, path, body) {
     const chatId = getChatId();
-    const token = getAccessToken();
     if (!chatId) throw new Error('현재 채팅 ID를 찾을 수 없음.');
-    const headers = {
-      'Content-Type': 'application/json',
-      platform: 'web',
-      'wrtn-locale': 'ko-KR',
+    const send = () => {
+      const headers = {
+        'Content-Type': 'application/json',
+        platform: 'web',
+        'wrtn-locale': 'ko-KR',
+      };
+      const token = getAccessToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const wrtnId = getCookieValue('__w_id');
+      if (wrtnId) headers['x-wrtn-id'] = wrtnId;
+      return fetch(`${API_BASE}/${chatId}${path}`, {
+        method,
+        credentials: 'include',
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
     };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const wrtnId = getCookieValue('__w_id');
-    if (wrtnId) headers['x-wrtn-id'] = wrtnId;
-    const response = await fetch(`${API_BASE}/${chatId}${path}`, {
-      method,
-      credentials: 'include',
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let response = await send();
+    if (response.status === 401 && method === 'GET') {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      response = await send();
+    }
     const text = await response.text();
     let parsed = null;
     try { parsed = text ? JSON.parse(text) : { result: 'SUCCESS' }; } catch (_) { parsed = { raw: text }; }
-    if (!response.ok) throw new Error(parsed?.message || parsed?.error || parsed?.raw || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const detail = parsed?.message || parsed?.error || parsed?.raw || `HTTP ${response.status}`;
+      const error = new Error(`[Crack API HTTP ${response.status}] ${detail}`);
+      error.status = response.status;
+      error.source = 'Crack API';
+      throw error;
+    }
     return parsed;
+  }
+
+  function visibleConversationSignature(chatId) {
+    const nodes = Array.from(document.querySelectorAll('[data-message-group-id],[data-message-id],[data-turn-id]'))
+      .filter(node => !node.closest('#cmm-overlay,#cmm-toast'));
+    if (nodes.length === 0) return '';
+    const tail = nodes.slice(-3).map(node => {
+      const id = node.getAttribute('data-message-group-id')
+        || node.getAttribute('data-message-id')
+        || node.getAttribute('data-turn-id')
+        || '';
+      return `${id}:${String(node.textContent || '').length}`;
+    });
+    return `${chatId}:${nodes.length}:${tail.join('|')}`;
   }
 
   async function fetchSummaries(type = 'longTerm') {
@@ -579,7 +613,12 @@
       body: JSON.stringify(payload),
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data?.error?.message || `Gemini HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(`[Google Gemini HTTP ${response.status}] ${data?.error?.message || '요청 실패'}`);
+      error.status = response.status;
+      error.source = 'Google Gemini';
+      throw error;
+    }
     const text = responseTextFromGemini(data);
     if (!text) throw new Error('Gemini가 빈 응답을 반환함.');
     return { text, usage: data.usageMetadata || null };
@@ -1063,6 +1102,13 @@
   async function runAutoCheck(reason = 'timer', force = false) {
     const chatId = getChatId();
     if (!chatId || (!config.autoEnabled && !force) || document.hidden) return;
+    const state = stateFor(chatId);
+    const activitySignature = force ? '' : visibleConversationSignature(chatId);
+    if (!force
+      && !state.pendingBatch
+      && !state.compactionTxn
+      && activitySignature
+      && lastSuccessfulProbeSignatures.get(chatId) === activitySignature) return;
     if (autoCheckRunning) return;
     autoCheckRunning = true;
     if (!acquireLock(chatId)) {
@@ -1073,7 +1119,6 @@
     let claimedBatch = null;
     let checkFailed = false;
     try {
-      const state = stateFor(chatId);
       if (state.compactionTxn) await resumeCompactionTransaction(chatId);
       if (state.pendingBatch) {
         if (state.pendingBatch.syncBatch) {
@@ -1109,6 +1154,7 @@
       }
 
       const windowState = await syncedTurnWindow(chatId);
+      if (activitySignature) lastSuccessfulProbeSignatures.set(chatId, activitySignature);
       const progress = Math.min(windowState.pairs.length, AUTO_TURN_COUNT);
       state.progress = progress;
       persistStates();
