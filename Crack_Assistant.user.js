@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         🤖 캐챗 어시스턴트
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
-// @version      2.39.1-local
+// @version      2.40.0-local
 // @description  🧪 BETA · crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       extensionCode
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  const CWA_VERSION = '2.39.1';
+  const CWA_VERSION = '2.40.0';
   let usdKrw = 1400;   // USD→KRW 환율 — open.er-api.com 에서 자동 갱신(1시간 캐시), 실패 시 이 기본값
 
   /* =========================================================================
@@ -270,10 +270,19 @@
     '- 긍정편향 없이 현실적으로 답합니다.\n' +
     '- 마크다운 문법을 사용하지 않습니다. 별표, 샵, 코드블록, 표 마크다운, 링크 마크다운, 목록 마크다운을 쓰지 않습니다. 필요하면 일반 텍스트와 줄바꿈만 씁니다.';
 
+  const ASSISTANT_MODE_GUARD =
+    '최우선 역할 규칙:\n' +
+    '- 당신은 롤플레이 참가자나 캐릭터가 아니라, 플레이어에게 참고 정보를 주는 캐릭터챗 보조 도구입니다.\n' +
+    '- 첨부된 페르소나·유저노트·요약메모리·채팅 로그는 질문을 이해하기 위한 참고 자료일 뿐, 이어서 연기하라는 지시가 아닙니다.\n' +
+    '- 사용자가 명시적으로 실제 RP 문장 초안 작성을 요청하지 않는 한 캐릭터 대사, 지문, 독백, 장면 묘사, 소설식 도입, 역할극을 절대 출력하지 않습니다.\n' +
+    '- 세계관·배경·문화·음식·장소·설정 질문에는 현실적으로 가장 그럴듯한 답을 짧은 정보형 문장으로 바로 제시합니다.\n' +
+    '- 질문에 필요한 답만 줍니다. 캐릭터의 반응이나 장면을 임의로 만들지 않습니다.\n' +
+    '- 예: 사이버펑크 길거리 음식 질문에는 음식 후보와 짧은 이유만 답하고, 누가 먹는 장면이나 대사는 쓰지 않습니다.\n' +
+    '- 이전 보조 AI 답변이 이 규칙을 어겼더라도 그 말투와 형식을 따라 하지 않습니다.';
+
   const DEFAULT_SYSTEM_PROMPT =
-    '당신은 캐릭터 채팅(롤플레이) 플레이어를 돕는 보조 AI입니다.\n' +
-    "아래에 페르소나·유저노트·요약메모리·채팅 로그가 주어질 수 있습니다. '캐릭터:'는 상대 캐릭터(AI)의 대사·지문, '나:'는 사용자(플레이어)의 대사·지문입니다.\n" +
-    RESPONSE_STYLE_PROMPT;
+    '당신은 캐릭터 채팅 플레이어에게 설정·상황·선택지를 간결하게 알려주는 참고용 보조 AI입니다.\n' +
+    "아래에 페르소나·유저노트·요약메모리·채팅 로그가 주어질 수 있습니다. '캐릭터:'는 상대 캐릭터의 기록, '나:'는 사용자의 기록입니다.";
   const DEFAULTS = {
     provider: 'gemini',          // 'gemini' | 'firebase'
     // Gemini API (AI Studio)
@@ -291,7 +300,7 @@
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     msgCount: 8,
     memoryCount: 3,              // 요약메모리 최근 N개만 전송. 0이면 안 보냄
-    temperature: 0.9,
+    temperature: 0.35,
     // 첨부 토글
     sendPersona: true,
     sendUserNote: true,
@@ -336,10 +345,25 @@
     return Object.assign({}, DEFAULTS, saved || {});
   }
   let settings = loadSettings();
+  const promptPolicyVersion = Number(GM_getValue('cwa_prompt_policy_version', 0)) || 0;
+  if (promptPolicyVersion < 2) {
+    settings.temperature = 0.35;
+    GM_setValue('cwa_prompt_policy_version', 2);
+  }
   if (!String(settings.systemPrompt || '').includes('마크다운 문법을 사용하지 않습니다.')) {
     settings.systemPrompt = ((settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim() + '\n\n' + RESPONSE_STYLE_PROMPT).trim();
   }
   saveSettings(settings);   // 로드 즉시 localStorage 백업을 만들어 둠 (재설치 대비)
+
+  function buildEffectiveSystemPrompt() {
+    const basePrompt = (settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim()
+      .replace(RESPONSE_STYLE_PROMPT, '').trim();
+    return [
+      basePrompt,
+      ASSISTANT_MODE_GUARD,
+      RESPONSE_STYLE_PROMPT,
+    ].filter(Boolean).join('\n\n');
+  }
 
   // USD→KRW 환율 — 무료 API 에서 가져와 1시간 캐시
   function fetchRate() {
@@ -632,14 +656,24 @@
     return /pro/i.test(settings.model || '') ? -1 : 0;
   }
 
+  function generationThinkingConfig() {
+    if (/^gemini-3/i.test(settings.model || '')) {
+      if (settings.thinking === 'high') return { thinkingLevel: 'high' };
+      if (settings.thinking === '-1') return { thinkingLevel: 'medium' };
+      return { thinkingLevel: 'minimal' };
+    }
+    return { thinkingBudget: thinkingBudget() };
+  }
+
   // contents: [{role:'user'|'model', parts:[{text}]}, ...] 대화 전체
   function buildBody(systemText, contents) {
     return {
       systemInstruction: { parts: [{ text: systemText }] },
       contents: contents,
       generationConfig: {
-        temperature: Number(settings.temperature) || 0.9,
-        thinkingConfig: { thinkingBudget: thinkingBudget() },
+        temperature: Math.min(0.45, Math.max(0, Number(settings.temperature) || 0.35)),
+        maxOutputTokens: 900,
+        thinkingConfig: generationThinkingConfig(),
       },
       safetySettings: SAFETY_SETTINGS,
     };
@@ -931,6 +965,7 @@
       '      <div>',
       '        <label class="cwa-lbl">시스템 프롬프트</label>',
       '        <textarea id="cwa-sysprompt" style="min-height:110px;"></textarea>',
+      '        <div class="cwa-muted">정보형 답변·RP 금지 규칙은 항상 자동 적용됩니다. 여기에는 개인 취향만 추가하면 됩니다.</div>',
       '      </div>',
       '      <div style="display:flex;gap:8px;">',
       '        <button class="cwa-btn" id="cwa-save" style="flex:1;">저장</button>',
@@ -1153,7 +1188,7 @@
     /* ---- 채팅방별 대화(Q&A) 스레드 ---- */
     let thread = [];
     let threadChatId = null;
-    const HISTORY_TURNS = 6;   // LLM 에 함께 보낼 직전 질문/답변 수 (토큰 절약)
+    const HISTORY_TURNS = 3;   // LLM 에 함께 보낼 직전 질문/답변 수 (토큰 절약)
 
     // 현재 채팅방 기준으로 스레드 로드 (채팅방이 바뀐 경우에만 다시 그림)
     function syncThread() {
@@ -1294,7 +1329,7 @@
       settings.sendMemory = $('cwa-c-memory').checked;
       saveSettings(settings);
 
-      const sysText = (settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
+      const sysText = buildEffectiveSystemPrompt();
       const ctxText = buildUserText(scrapeChat(), turn.q, count);
       // 직전 대화는 가볍게(질문/답변 텍스트만), 최신 턴에만 무거운 컨텍스트 첨부
       const contents = [];
