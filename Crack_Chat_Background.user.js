@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.8
+// @version      0.1.9
 // @description  🧪 BETA · 채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -24,7 +24,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.8';
+  const VERSION = '0.1.9';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
   const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -68,7 +68,7 @@
     #cbg-header-button[data-active="true"] { border-color:#c9cdef; background:#eaecfa; color:#fff; }
     #cbg-header-button .cbg-header-emoji { display:block; font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",emoji; font-size:18px; font-weight:400; line-height:1; }
     #cbg-header-button svg, .cbg-icon svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    .cbg-main-host { position:relative; isolation:isolate; z-index:1; }
+    body.cbg-background-active main { position:relative; isolation:isolate; z-index:1; }
     #cbg-stage { position:fixed; z-index:0; overflow:hidden; pointer-events:none; background:#fff; }
     #cbg-stage img { width:100%; height:100%; display:block; object-fit:cover; transform-origin:center; user-select:none; -webkit-user-drag:none; }
     #cbg-stage::after { content:""; position:absolute; inset:0; background:rgba(255,255,255,var(--cbg-veil,.22)); pointer-events:none; }
@@ -298,6 +298,7 @@
   async function renderStage() {
     document.getElementById('cbg-stage')?.remove();
     document.querySelectorAll('.cbg-main-host').forEach(element => element.classList.remove('cbg-main-host'));
+    document.body.classList.remove('cbg-background-active');
     if (!isChatRoute() || !state.visible) return;
     const slot = state.slots[state.activeSlot];
     if (!slot) return;
@@ -305,7 +306,7 @@
     if (!dataUrl) return;
     const main = document.querySelector('main');
     if (!main) return;
-    main.classList.add('cbg-main-host');
+    document.body.classList.add('cbg-background-active');
     const stage = document.createElement('div');
     stage.id = 'cbg-stage';
     stage.style.setProperty('--cbg-veil', String(state.veilOpacity));
