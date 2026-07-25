@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.4.0
+// @version      1.4.2
 // @description  개인 Supabase에 로어 백업과 메모리 요약 턴 체크포인트를 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -25,9 +25,13 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.4.0';
+  const VERSION = '1.4.2';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
+  const BACKGROUND_SYNC_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
+  const BACKGROUND_BUCKET = 'chat-backgrounds';
+  const BACKGROUND_TABLE = 'chat_background_sync';
+  const BACKGROUND_MAX_BYTES = 700 * 1024;
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
   const REMOTE_CHECK_MS = 10 * 60_000;
@@ -59,6 +63,7 @@
   let remoteCheckRunning = false;
   let localScanRunning = false;
   let uploadTimer = null;
+  let refreshSessionPromise = null;
 
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
@@ -139,8 +144,9 @@
   }
 
   async function persistSession(next) {
-    session = next;
-    await GM_setValue(`${APP_KEY}:session`, next);
+    const stamped = next ? { ...next, shipidle_updated_at: Date.now() } : next;
+    session = stamped;
+    await GM_setValue(`${APP_KEY}:session`, stamped);
   }
 
   function makeHeaders(extra = {}) {
@@ -161,10 +167,24 @@
           try { parsed = response.responseText ? JSON.parse(response.responseText) : null; } catch { parsed = response.responseText; }
           if (response.status >= 200 && response.status < 300) return resolve(parsed);
           const message = parsed?.msg || parsed?.message || parsed?.error_description || parsed?.error || `HTTP ${response.status}`;
-          reject(new Error(message));
+          const error = new Error(`[Supabase HTTP ${response.status}] ${message}`);
+          error.status = response.status;
+          error.source = 'Supabase';
+          error.url = url;
+          reject(error);
         },
-        onerror: () => reject(new Error('network error')),
-        ontimeout: () => reject(new Error('timeout')),
+        onerror: () => {
+          const error = new Error('[Supabase] network error');
+          error.source = 'Supabase';
+          error.url = url;
+          reject(error);
+        },
+        ontimeout: () => {
+          const error = new Error('[Supabase] timeout');
+          error.source = 'Supabase';
+          error.url = url;
+          reject(error);
+        },
       });
     });
   }
@@ -175,16 +195,68 @@
     if (!String(config.publishableKey || '').trim()) throw new Error('Publishable key를 넣어줘.');
   }
 
-  async function refreshSessionIfNeeded() {
+  async function syncStoredSession() {
+    const stored = await GM_getValue(`${APP_KEY}:session`, null);
+    if (!stored?.access_token) return session;
+    const storedUpdatedAt = Number(stored.shipidle_updated_at || 0);
+    const currentUpdatedAt = Number(session?.shipidle_updated_at || 0);
+    const storedExpiry = Number(stored.expires_at || 0);
+    const currentExpiry = Number(session?.expires_at || 0);
+    if (!session?.access_token
+      || storedUpdatedAt > currentUpdatedAt
+      || (!storedUpdatedAt && !currentUpdatedAt && storedExpiry > currentExpiry)) session = stored;
+    return session;
+  }
+
+  async function waitForRotatedSession(attemptedAccessToken) {
+    for (const delay of [80, 160, 320, 640]) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+      const stored = await GM_getValue(`${APP_KEY}:session`, null);
+      if (stored?.access_token && stored.access_token !== attemptedAccessToken) {
+        session = stored;
+        return stored;
+      }
+    }
+    return null;
+  }
+
+  function isAuthFailure(error) {
+    return Number(error?.status || 0) === 401
+      || /invalid\s*(?:refresh\s*)?token|refresh\s*token.*(?:used|invalid|expired|not\s*found)|invalid\s*jwt|jwt\s*expired|token\s*(?:expired|invalid)|unauthor/i.test(String(error?.message || error || ''));
+  }
+
+  async function refreshSessionIfNeeded(force = false) {
+    await syncStoredSession();
     if (!session?.access_token) throw new Error('먼저 로그인해줘.');
     const expiresSoon = Number(session.expires_at || 0) * 1000 < Date.now() + 90_000;
-    if (!expiresSoon) return session;
+    if (!force && !expiresSoon) return session;
     if (!session.refresh_token) throw new Error('로그인 세션이 만료됨. 다시 로그인해줘.');
-    const next = await request(`${config.projectUrl}/auth/v1/token?grant_type=refresh_token`, {
-      method: 'POST', headers: makeHeaders(), body: { refresh_token: session.refresh_token },
-    });
-    await persistSession(next);
-    return next;
+    if (refreshSessionPromise) return refreshSessionPromise;
+
+    const attemptedAccessToken = session.access_token;
+    const attemptedRefreshToken = session.refresh_token;
+    const operation = (async () => {
+      try {
+        const next = await request(`${config.projectUrl}/auth/v1/token?grant_type=refresh_token`, {
+          method: 'POST', headers: makeHeaders(), body: { refresh_token: attemptedRefreshToken },
+        });
+        if (!next?.access_token || !next?.refresh_token) throw new Error('[Supabase] 토큰 갱신 응답이 비정상임.');
+        await persistSession(next);
+        return next;
+      } catch (error) {
+        if (isAuthFailure(error)) {
+          const rotated = await waitForRotatedSession(attemptedAccessToken);
+          if (rotated) return rotated;
+        }
+        throw error;
+      }
+    })();
+    refreshSessionPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (refreshSessionPromise === operation) refreshSessionPromise = null;
+    }
   }
 
   async function consumeAuthHash() {
@@ -224,6 +296,126 @@
   async function authHeaders(extra = {}) {
     const active = await refreshSessionIfNeeded();
     return makeHeaders({ Authorization: `Bearer ${active.access_token}`, ...extra });
+  }
+
+  async function authedRequest(url, options = {}) {
+    const { headers: extraHeaders = {}, ...requestOptions } = options;
+    const send = active => request(url, {
+      ...requestOptions,
+      headers: makeHeaders({ ...extraHeaders, Authorization: `Bearer ${active.access_token}` }),
+    });
+    const first = await refreshSessionIfNeeded();
+    try {
+      return await send(first);
+    } catch (error) {
+      if (!isAuthFailure(error)) throw error;
+      await syncStoredSession();
+      const retrySession = session?.access_token && session.access_token !== first.access_token
+        ? session
+        : await refreshSessionIfNeeded(true);
+      return send(retrySession);
+    }
+  }
+
+  function backgroundSyncStatus() {
+    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Lore Sync에 Supabase 연결 정보를 저장해주셈.' };
+    if (!session?.access_token) return { ready: false, reason: 'Lore Sync에서 Supabase 로그인해주셈.' };
+    return { ready: true, email: session.user?.email || config.email || '', deviceLabel: config.deviceLabel || '내 기기' };
+  }
+
+  function validateBackgroundRoomKey(roomKey) {
+    const value = String(roomKey || '');
+    if (!/^\/(stories\/[^/]+\/episodes|characters\/[^/]+\/chats|u\/[^/]+\/c)\/[^/?#]+$/.test(value)) throw new Error('배경 동기화 채팅방 경로가 올바르지 않음.');
+    return value;
+  }
+
+  function validateBackgroundImage(hash, mime) {
+    const safeHash = String(hash || '').toLowerCase();
+    const safeMime = String(mime || '');
+    if (!/^[a-f0-9]{64}$/.test(safeHash)) throw new Error('배경 이미지 해시가 올바르지 않음.');
+    if (!/^image\/(webp|jpeg|png)$/.test(safeMime)) throw new Error('지원하지 않는 배경 이미지 형식임.');
+    return { hash: safeHash, mime: safeMime };
+  }
+
+  function backgroundImagePath(userId, hash, mime) {
+    const extension = mime === 'image/jpeg' ? 'jpg' : mime === 'image/png' ? 'png' : 'webp';
+    return `${userId}/${hash}.${extension}`;
+  }
+
+  function backgroundDataUrlBytes(dataUrl, expectedMime) {
+    const match = String(dataUrl || '').match(/^data:(image\/(?:webp|jpeg|png));base64,([A-Za-z0-9+/=]+)$/);
+    if (!match || match[1] !== expectedMime) throw new Error('배경 이미지 데이터 형식이 올바르지 않음.');
+    return Uint8Array.from(atob(match[2]), character => character.charCodeAt(0));
+  }
+
+  async function backgroundHashBytes(bytes) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  function backgroundRawRequest(url, { method = 'GET', headers = {}, data, responseType = 'text', acceptStatuses = [] } = {}) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method, url, headers, data, responseType, timeout: 30_000,
+        onload(response) {
+          if ((response.status >= 200 && response.status < 300) || acceptStatuses.includes(response.status)) return resolve(response);
+          let message = `Supabase 요청 실패 (${response.status})`;
+          try { message = JSON.parse(response.responseText || '{}').message || message; } catch { /* ignore */ }
+          reject(new Error(message));
+        },
+        onerror: () => reject(new Error('Supabase에 연결하지 못했음.')),
+        ontimeout: () => reject(new Error('Supabase 요청 시간이 초과됨.')),
+      });
+    });
+  }
+
+  async function getBackgroundManifest(roomKey) {
+    const active = await refreshSessionIfNeeded();
+    const path = validateBackgroundRoomKey(roomKey);
+    const query = `owner_id=eq.${encodeURIComponent(active.user.id)}&room_key=eq.${encodeURIComponent(path)}&select=state,revision,updated_at,device_label`;
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/${BACKGROUND_TABLE}?${query}`);
+    return rows?.[0] || null;
+  }
+
+  async function saveBackgroundManifest({ roomKey, state: backgroundState, revision, deviceLabel } = {}) {
+    const active = await refreshSessionIfNeeded();
+    const path = validateBackgroundRoomKey(roomKey);
+    const safeRevision = Math.max(1, Number(revision) || 1);
+    const stateJson = JSON.stringify(backgroundState || {});
+    if (stateJson.length > 40_000) throw new Error('배경 동기화 설정 크기가 비정상적으로 큼.');
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/${BACKGROUND_TABLE}?on_conflict=owner_id,room_key`, {
+      method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+      body: { owner_id: active.user.id, room_key: path, state: JSON.parse(stateJson), revision: safeRevision, device_label: String(deviceLabel || config.deviceLabel || '내 기기').slice(0, 80) },
+    });
+    return rows?.[0] || { revision: safeRevision };
+  }
+
+  async function uploadBackgroundImage({ hash, mime, dataUrl } = {}) {
+    const active = await refreshSessionIfNeeded();
+    const image = validateBackgroundImage(hash, mime);
+    const bytes = backgroundDataUrlBytes(dataUrl, image.mime);
+    if (!bytes.byteLength || bytes.byteLength > BACKGROUND_MAX_BYTES) throw new Error('배경 이미지는 700KB 이하여야 함.');
+    if (await backgroundHashBytes(bytes) !== image.hash) throw new Error('배경 이미지 데이터와 해시가 일치하지 않음.');
+    const response = await backgroundRawRequest(`${config.projectUrl}/storage/v1/object/${BACKGROUND_BUCKET}/${backgroundImagePath(active.user.id, image.hash, image.mime)}`, {
+      method: 'POST', headers: await authHeaders({ 'Content-Type': image.mime, 'x-upsert': 'false', 'cache-control': '31536000' }),
+      data: new Blob([bytes], { type: image.mime }), acceptStatuses: [400, 409],
+    });
+    if ([400, 409].includes(response.status) && !/exist|duplicate/i.test(response.responseText || '')) throw new Error(`배경 이미지 업로드 실패 (${response.status})`);
+    return { hash: image.hash };
+  }
+
+  async function downloadBackgroundImage({ hash, mime } = {}) {
+    const active = await refreshSessionIfNeeded();
+    const image = validateBackgroundImage(hash, mime);
+    const response = await backgroundRawRequest(`${config.projectUrl}/storage/v1/object/authenticated/${BACKGROUND_BUCKET}/${backgroundImagePath(active.user.id, image.hash, image.mime)}`, {
+      headers: await authHeaders({ Accept: image.mime }), responseType: 'arraybuffer',
+    });
+    const bytes = new Uint8Array(response.response);
+    if (!bytes.byteLength || bytes.byteLength > BACKGROUND_MAX_BYTES) throw new Error('받은 배경 이미지 크기가 비정상임.');
+    if (await backgroundHashBytes(bytes) !== image.hash) throw new Error('받은 배경 이미지 해시가 일치하지 않음.');
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    return `data:${image.mime};base64,${btoa(binary)}`;
   }
 
   function sanitizeBackup(backup) {
@@ -346,15 +538,11 @@
   async function summaryRpc(name, body) {
     const status = summarySyncStatus();
     if (!status.ready) throw new Error(status.reason);
-    try {
-      return await request(`${config.projectUrl}/rest/v1/rpc/${name}`, {
-        method: 'POST',
-        headers: await authHeaders({ Prefer: 'return=representation' }),
-        body,
-      });
-    } catch (error) {
-      throw new Error(shortError(error));
-    }
+    return authedRequest(`${config.projectUrl}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body,
+    });
   }
 
   function normalizeCheckpoint(row) {
@@ -384,7 +572,7 @@
       order: 'batch_end_count.desc',
       limit: '1',
     });
-    const rows = await request(`${config.projectUrl}/rest/v1/summary_sync_state?${query}`, { headers: await authHeaders() });
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/summary_sync_state?${query}`);
     return normalizeCheckpoint(Array.isArray(rows) ? rows[0] : null);
   }
 
@@ -469,9 +657,7 @@
   async function getRemoteMetadata() {
     const active = await refreshSessionIfNeeded();
     const select = 'revision,updated_at,device_label,schema_version,content_hash,previous_revision,previous_updated_at,previous_device_label,previous_schema_version,previous_content_hash';
-    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`, {
-      headers: await authHeaders(),
-    });
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`);
     remoteMetadata = normalizeRemoteMetadata(Array.isArray(rows) ? rows[0] : null);
     return remoteMetadata;
   }
@@ -482,9 +668,7 @@
     const select = previous
       ? 'previous_ciphertext,previous_revision,previous_updated_at,previous_device_label,previous_schema_version,previous_content_hash'
       : 'ciphertext,revision,updated_at,device_label,schema_version,content_hash';
-    const rows = await request(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`, {
-      headers: await authHeaders(),
-    });
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`);
     const row = Array.isArray(rows) ? rows[0] : null;
     const ciphertext = previous ? row?.previous_ciphertext : row?.ciphertext;
     if (!ciphertext) throw new Error(previous ? '클라우드에 이전 백업이 아직 없음.' : '클라우드에 복원할 백업이 아직 없음.');
@@ -499,9 +683,9 @@
     setStatus('☁️ 클라우드에 저장 중...');
     const ciphertext = await encryptBackup(backup);
     const schemaVersion = Number(JSON.parse(ciphertext).v || 1);
-    const rows = await request(`${config.projectUrl}/rest/v1/rpc/save_lore_sync_state`, {
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/rpc/save_lore_sync_state`, {
       method: 'POST',
-      headers: await authHeaders({ Prefer: 'return=representation' }),
+      headers: { Prefer: 'return=representation' },
       body: {
         p_ciphertext: ciphertext,
         p_content_hash: hash,
@@ -889,6 +1073,18 @@
       saveBatch: saveSummaryBatch,
       completeBatch: completeSummaryBatch,
       failBatch: failSummaryBatch,
+    }),
+  });
+
+  Object.defineProperty(BRIDGE, BACKGROUND_SYNC_API_KEY, {
+    configurable: true,
+    value: Object.freeze({
+      version: 1,
+      getStatus: backgroundSyncStatus,
+      getManifest: getBackgroundManifest,
+      saveManifest: saveBackgroundManifest,
+      uploadImage: uploadBackgroundImage,
+      downloadImage: downloadBackgroundImage,
     }),
   });
 

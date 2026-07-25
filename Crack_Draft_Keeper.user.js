@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         💾 크랙 자동저장 (iOS + 데스크탑)
+// @name         🔃 크랙 자동저장 (iOS + 데스크탑)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.2.2
+// @version      1.2.3
 // @description  Keep unsent Crack/WRTN chat drafts per chat room after refresh on iOS and desktop browsers.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📱 미니 사이드바 메뉴
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.7
+// @version      1.3.8
 // @description  입력창 내부 상단에 사이드바 메뉴를 표시합니다. 내 추천 모델 표시 추가.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -137,6 +137,7 @@
                 font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; font-weight: 500;
                 pointer-events: none; z-index: 1; display: flex; align-items: center; border-radius: 8px 8px 0 0;
             }
+            #my-custom-btn-menu.is-under-side-layer { visibility: hidden; pointer-events: none; }
             #my-custom-btn-menu #my-counter-settings-button { all: unset; position: relative; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; margin-left: 0; margin-right: 8px; transition: opacity 0.15s; touch-action: manipulation; color: inherit; }
             #my-custom-btn-menu #my-counter-settings-button::after { content: ''; position: absolute; top: -10px; bottom: -10px; left: -8px; right: -10px; }
             #my-custom-btn-menu #my-counter-settings-button:hover { opacity: 0.7; }
@@ -351,14 +352,12 @@
     }
 
     function getContextImageSwitch() {
-        const spans = document.querySelectorAll('span');
+        const switches = document.querySelectorAll('button[role="switch"], [role="switch"]');
 
-        for (const span of spans) {
-            if (span.textContent.trim() === '상황 이미지 보기') {
-                const btn = span.closest('[role="button"]')?.querySelector('button[role="switch"]');
-
-                if (btn) return btn;
-            }
+        for (const toggle of switches) {
+            const label = toggle.getAttribute('aria-label') || '';
+            const wrapperText = toggle.closest('[role="button"], label, div')?.textContent || '';
+            if (`${label} ${wrapperText}`.replace(/\s+/g, ' ').includes('상황 이미지')) return toggle;
         }
 
         return null;
@@ -588,7 +587,7 @@
         cachedNativeArchiveAvailable = isNativeImageArchiveAvailable();
         cachedExternalArchiveAvailable = isExternalImageArchiveAvailable();
 
-        cachedImageSwitchAvailable = !!imageSwitch && cachedNativeArchiveAvailable;
+        cachedImageSwitchAvailable = !!imageSwitch;
         cachedImageSwitchState = getImageSwitchState(imageSwitch);
 
         lastHeavyCheckTime = Date.now();
@@ -892,6 +891,41 @@
 
         const startRow = settingsMenu?.querySelector('[data-part="startButton"]');
         if (startRow) startRow.style.display = 'flex';
+    }
+
+    function overlapsMenuBadge(el) {
+        if (!menuBadge || !(el instanceof HTMLElement)) return false;
+        const layerRect = el.getBoundingClientRect();
+        const badgeRect = menuBadge.getBoundingClientRect();
+        return layerRect.left < badgeRect.right
+            && layerRect.right > badgeRect.left
+            && layerRect.top < badgeRect.bottom
+            && layerRect.bottom > badgeRect.top;
+    }
+
+    function isVisibleSideLayer(el) {
+        if (!(el instanceof HTMLElement) || isOwnMenuElement(el)) return false;
+        if (menuBadge && (el.contains(menuBadge) || menuBadge.contains(el))) return false;
+
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) <= 0.01) return false;
+        if (rect.width < 220 || rect.height < window.innerHeight * 0.55) return false;
+
+        const touchesSide = rect.left <= 8 || rect.right >= window.innerWidth - 8;
+        const looksLayered = style.position === 'fixed' || style.position === 'absolute' || style.position === 'sticky';
+        const isSmallPopupRole = el.matches('[role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]');
+        return touchesSide && looksLayered && !isSmallPopupRole && (el.textContent || '').trim().length > 0;
+    }
+
+    function syncSideLayerStack() {
+        if (!menuBadge) return;
+        const candidates = document.body.querySelectorAll(
+            '[data-state="open"], aside, section, .bg-sidebar, [class*="bg-sidebar"], [class*="side"], [class*="Side"], [class*="drawer"], [class*="Drawer"], [class*="sheet"], [class*="Sheet"]'
+        );
+        const sideLayerOpen = Array.from(candidates).some(el => isVisibleSideLayer(el) && overlapsMenuBadge(el));
+        menuBadge.classList.toggle('is-under-side-layer', sideLayerOpen);
+        if (sideLayerOpen) hideAllMenus();
     }
 
     function syncSettingsMenu() {
@@ -1397,6 +1431,7 @@ inputEl.style.setProperty('min-height', `${requiredPaddingTop + 40}px`, 'importa
         applyTheme(colors, cachedModelName, cachedImageSwitchState);
         applyVisibleButtons();
         updateLayout(inputEl);
+        syncSideLayerStack();
 
 
         if (customMenu?.style.display === 'flex') positionMenu(customMenu, quickBtn);
