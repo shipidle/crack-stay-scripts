@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         🤖 캐챗 어시스턴트
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
-// @version      2.40.0-local
+// @version      2.40.1-local
 // @description  crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       extensionCode
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  const CWA_VERSION = '2.40.0';
+  const CWA_VERSION = '2.40.1';
   let usdKrw = 1400;   // USD→KRW 환율 — open.er-api.com 에서 자동 갱신(1시간 캐시), 실패 시 이 기본값
 
   /* =========================================================================
@@ -1015,21 +1015,83 @@
     }
 
     /* ---- 패널 위치 ---- */
+    function isChatRoomPage() {
+      return /\/stories\/[^/]+\/episodes\/[^/]+/.test(location.pathname)
+        || /\/characters\/[^/]+\/chats\/[^/]+/.test(location.pathname)
+        || /\/u\/[^/]+\/c\/[^/]+/.test(location.pathname);
+    }
+    function isVisibleEl(el) {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight;
+    }
+    function findBottomInput() {
+      const nodes = Array.prototype.slice.call(document.querySelectorAll(
+        'textarea, input[type="text"], [contenteditable="true"], div[role="textbox"]'
+      )).filter(function (el) {
+        if (!isVisibleEl(el)) return false;
+        const r = el.getBoundingClientRect();
+        const label = (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('placeholder') || '');
+        return r.bottom > innerHeight * 0.45 || /메시지|입력/.test(label);
+      });
+      nodes.sort(function (a, b) {
+        return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom;
+      });
+      return nodes[0] || null;
+    }
+    function findToolbarNearInput(input) {
+      if (!input) return null;
+      const inputRect = input.getBoundingClientRect();
+      let area = input;
+      for (let depth = 0; depth < 8 && area.parentElement; depth++) {
+        area = area.parentElement;
+        const exact = area.querySelector('.flex.items-center.space-x-2');
+        if (isVisibleEl(exact)) return exact;
+        const rows = Array.prototype.slice.call(area.querySelectorAll('div,section,footer')).filter(function (el) {
+          if (!isVisibleEl(el)) return false;
+          const r = el.getBoundingClientRect();
+          if (r.height > 80 || r.width < 40 || Math.abs(r.bottom - inputRect.bottom) > 160) return false;
+          const buttons = Array.prototype.slice.call(el.querySelectorAll('button')).filter(isVisibleEl);
+          return buttons.length && (/flex|items-center|gap|space-x/.test(String(el.className)) || buttons.length > 1);
+        });
+        if (rows.length) {
+          rows.sort(function (a, b) {
+            return Math.abs(a.getBoundingClientRect().bottom - inputRect.bottom)
+              - Math.abs(b.getBoundingClientRect().bottom - inputRect.bottom);
+          });
+          return rows[0];
+        }
+      }
+      return null;
+    }
     function injectToolbarButton() {
       let existing = document.getElementById('cwa-toolbar-btn');
-      if (existing) { iconEl = existing; return existing; }
+      if (!isChatRoomPage()) {
+        if (existing) existing.remove();
+        iconEl = null;
+        return null;
+      }
+      if (existing && existing.isConnected && isVisibleEl(existing.parentElement)) {
+        iconEl = existing;
+        return existing;
+      }
+      if (existing) existing.remove();
 
       let btnContainer = null;
       let referenceNode = null;
 
+      const shortcutBtn = document.querySelector('button[aria-label="단축어 패널 열기"]');
       const customRpTools = document.getElementById('custom-rp-tools');
-      if (customRpTools) {
+      if (shortcutBtn && isVisibleEl(shortcutBtn)) {
+        btnContainer = shortcutBtn.parentElement;
+        referenceNode = shortcutBtn;
+      } else if (customRpTools && isVisibleEl(customRpTools.parentElement)) {
         btnContainer = customRpTools.parentElement;
         referenceNode = customRpTools;
       } else {
         const buttons = Array.prototype.slice.call(document.querySelectorAll('button'));
         const recommendBtn = buttons.find(function (b) {
-          return b.textContent && b.textContent.indexOf('추천답변') >= 0;
+          return isVisibleEl(b) && b.textContent && b.textContent.indexOf('추천답변') >= 0;
         });
         if (recommendBtn) {
           btnContainer = recommendBtn.parentElement;
@@ -1038,16 +1100,15 @@
       }
 
       if (!btnContainer) {
-        const textarea = document.querySelector('textarea');
-        if (textarea) {
-          const inputArea = textarea.closest('.flex-col') || (textarea.parentElement && textarea.parentElement.parentElement);
-          if (inputArea) btnContainer = inputArea.querySelector('.flex.items-center.space-x-2');
-        }
+        btnContainer = findToolbarNearInput(findBottomInput());
       }
       if (!btnContainer) return null;
 
       const btn = document.createElement('button');
       btn.id = 'cwa-toolbar-btn';
+      btn.type = 'button';
+      btn.title = '캐릭터챗 어시스턴트';
+      btn.setAttribute('aria-label', '캐릭터챗 어시스턴트');
       btn.className = 'relative inline-flex items-center gap-1 rounded-full text-sm font-medium transition-colors border border-border bg-card text-line-gray-1 hover:bg-secondary p-0 size-7 justify-center';
       btn.style.pointerEvents = 'auto';
       btn.innerHTML = '<span style="font-size:14px;display:inline-block;transform:translate(-1px,1.5px);filter:grayscale(100%);pointer-events:none;">🔍</span>';
