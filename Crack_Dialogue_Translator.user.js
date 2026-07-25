@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.1.0
+// @version      0.1.1
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사만 영문으로 번역하고 원문 대사를 함께 보존합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,12 +19,13 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const MODEL = 'gemini-3.1-flash-lite';
   const INPUT_USD_PER_M = 0.25;
   const OUTPUT_USD_PER_M = 1.50;
   const MAX_DIALOGUES = 24;
-  const CONTEXT_MESSAGES = 6;
+  const CONTEXT_TURNS = 5;
+  const CONTEXT_MESSAGES = CONTEXT_TURNS * 2;
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen';
   const KEY = 'shipidle:dialogue-translator:v1';
 
@@ -84,7 +85,7 @@
     <div class="cdt-card">
       <label class="cdt-label" for="cdt-voice">내 캐릭터 성격·말투</label>
       <textarea class="cdt-textarea" id="cdt-voice" maxlength="1200" placeholder="예: 무뚝뚝한 20대 용병. 짧게 말하고 냉소적이지만 동료에게는 은근히 다정함. 영국식 영어."></textarea>
-      <div class="cdt-meta">최근 대화 3턴도 자동 참고함. 번역에 필요한 맥락만 보내 토큰을 줄임.</div>
+      <div class="cdt-meta">나+상대 한 쌍을 1턴으로 묶어 최근 5턴을 참고함. 호칭·이름 번역을 우선 통일함.</div>
     </div>
 
     <div class="cdt-card">
@@ -295,11 +296,26 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = await response.json();
       const messages = (json.data || json).messages || [];
-      return messages.slice(0, CONTEXT_MESSAGES).reverse().map(message => {
+      const chronological = messages.slice(0, CONTEXT_MESSAGES).reverse();
+      const turns = [];
+      let currentTurn = [];
+      chronological.forEach(message => {
         const role = message.role === 'assistant' ? '상대' : '나';
+        if (role === '나' && currentTurn.length) {
+          turns.push(currentTurn);
+          currentTurn = [];
+        }
         const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content || '');
-        return `${role}: ${compactText(content, 240)}`;
-      }).join('\n') || '(최근 맥락 없음)';
+        currentTurn.push(`${role}: ${compactText(content, 240)}`);
+        if (role === '상대' && currentTurn.some(line => line.startsWith('나: '))) {
+          turns.push(currentTurn);
+          currentTurn = [];
+        }
+      });
+      if (currentTurn.length) turns.push(currentTurn);
+      return turns.slice(-CONTEXT_TURNS).map((turn, index) => (
+        `[Turn ${index + 1}]\n${turn.join('\n')}`
+      )).join('\n') || '(최근 맥락 없음)';
     } catch (_) {
       return '(최근 맥락을 불러오지 못함)';
     }
@@ -310,11 +326,13 @@
     return [
       'Translate only the numbered Korean roleplay dialogue into natural English.',
       'Use the character voice and recent context only to choose tone, register, pronouns, and idioms.',
+      'Keep names, titles, nicknames, and forms of address consistent with their established English rendering in recent turns.',
+      'Treat each [Turn] block as one user-and-character exchange. Prefer established address terms over inventing a new variant.',
       'Preserve meaning. Do not add actions, narration, explanations, quotation marks, parentheses, or Korean.',
       'Return one English translation per item in exactly the same order.',
       '',
       `[Character voice]\n${voice || '(not provided)'}`,
-      `[Last 3 conversation turns]\n${context}`,
+      `[Last ${CONTEXT_TURNS} conversation turns]\n${context}`,
       `[Korean dialogue]\n${lines}`,
     ].join('\n');
   }
@@ -430,7 +448,7 @@
     $('#cdt-save').disabled = true;
     saveSettings(false);
     try {
-      $('#cdt-status').textContent = '최근 대화 3턴 읽는 중…';
+      $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
       const context = await fetchRecentContext();
       $('#cdt-status').textContent = `대사 ${spans.length}개 번역 중…`;
       const result = await callGemini(buildPrompt(spans, context, compactText($('#cdt-voice').value, 1200)), spans.length);

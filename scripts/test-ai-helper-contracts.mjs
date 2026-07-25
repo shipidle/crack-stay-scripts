@@ -28,7 +28,10 @@ assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
 assert.match(translator, /thinkingLevel: 'minimal'/);
-assert.match(translator, /CONTEXT_MESSAGES = 6/);
+assert.match(translator, /const CONTEXT_TURNS = 5/);
+assert.match(translator, /CONTEXT_MESSAGES = CONTEXT_TURNS \* 2/);
+assert.match(translator, /names, titles, nicknames, and forms of address consistent/);
+assert.match(translator, /\[Turn \$\{index \+ 1\}\]/);
 
 assert.match(assistant, /const CWA_VERSION = '2\.40\.1'/);
 assert.match(assistant, /button\[aria-label="단축어 패널 열기"\]/);
