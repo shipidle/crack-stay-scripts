@@ -30,7 +30,9 @@ assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
 assert.match(translator, /thinkingLevel: 'minimal'/);
 assert.match(translator, /CONTEXT_MESSAGES = 6/);
 
-assert.match(assistant, /const CWA_VERSION = '2\.40\.0'/);
+assert.match(assistant, /const CWA_VERSION = '2\.40\.1'/);
+assert.match(assistant, /button\[aria-label="단축어 패널 열기"\]/);
+assert.match(assistant, /findToolbarNearInput\(findBottomInput\(\)\)/);
 assert.match(assistant, /const ASSISTANT_MODE_GUARD/);
 assert.match(assistant, /역할극을 절대 출력하지 않습니다/);
 assert.match(assistant, /const HISTORY_TURNS = 3/);
