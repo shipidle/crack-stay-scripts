@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.1.4
+// @version      0.1.5
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사만 영문으로 번역하고 원문 대사를 함께 보존합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.4';
+  const VERSION = '0.1.5';
   const MODEL = 'gemini-3.1-flash-lite';
   const INPUT_USD_PER_M = 0.25;
   const OUTPUT_USD_PER_M = 1.50;
@@ -442,7 +442,7 @@
     });
   }
 
-  function callGemini(prompt, dialogueCount) {
+  function callGemini(prompt) {
     return new Promise((resolve, reject) => {
       const apiKey = $('#cdt-api-key').value.trim();
       if (!apiKey) { reject(new Error('Gemini API Key를 먼저 입력해줘.')); return; }
@@ -454,8 +454,8 @@
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: Math.min(4096, Math.max(512, dialogueCount * 96 + 384)),
-            thinkingConfig: { thinkingLevel: 'low' },
+            maxOutputTokens: 4096,
+            thinkingConfig: { thinkingLevel: 'minimal' },
             responseMimeType: 'application/json',
             responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
           },
@@ -525,7 +525,7 @@
       $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
       const context = await fetchRecentContext();
       $('#cdt-status').textContent = `대사 ${spans.length}개 번역 중…`;
-      const result = await callGemini(buildPrompt(spans, context, compactText($('#cdt-voice').value, 1200)), spans.length);
+      const result = await callGemini(buildPrompt(spans, context, compactText($('#cdt-voice').value, 1200)));
       const replaced = applyTranslations(source, spans, result.translations);
       setInputText(input, replaced);
 

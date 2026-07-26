@@ -47,11 +47,12 @@ assert.throws(
 assert.match(helpers.describeFinishReason('MAX_TOKENS'), /중간에 잘림/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
-assert.match(translator, /const VERSION = '0\.1\.4'/);
+assert.match(translator, /const VERSION = '0\.1\.5'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
-assert.match(translator, /thinkingLevel: 'low'/);
-assert.match(translator, /maxOutputTokens: Math\.min\(4096, Math\.max\(512, dialogueCount \* 96 \+ 384\)\)/);
+assert.match(translator, /thinkingLevel: 'minimal'/);
+assert.match(translator, /maxOutputTokens: 4096/);
+assert.doesNotMatch(translator, /function callGemini\(prompt, dialogueCount\)/);
 assert.match(translator, /filter\(part => !part\.thought\)/);
 assert.match(translator, /const CONTEXT_TURNS = 5/);
 assert.match(translator, /CONTEXT_MESSAGES = CONTEXT_TURNS \* 2/);
