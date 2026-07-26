@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         📱 미니 사이드바 메뉴
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.4.0
-// @description  입력창 내부 상단에 사이드바 메뉴를 표시하고 입력 중에는 자동으로 숨깁니다.
+// @version      1.3.8
+// @description  입력창 내부 상단에 사이드바 메뉴를 표시합니다. 내 추천 모델 표시 추가.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
@@ -138,7 +138,6 @@
                 pointer-events: none; z-index: 1; display: flex; align-items: center; border-radius: 8px 8px 0 0;
             }
             #my-custom-btn-menu.is-under-side-layer { visibility: hidden; pointer-events: none; }
-            #my-custom-btn-menu.is-input-focused { visibility: hidden; pointer-events: none; }
             #my-custom-btn-menu #my-counter-settings-button { all: unset; position: relative; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; margin-left: 0; margin-right: 8px; transition: opacity 0.15s; touch-action: manipulation; color: inherit; }
             #my-custom-btn-menu #my-counter-settings-button::after { content: ''; position: absolute; top: -10px; bottom: -10px; left: -8px; right: -10px; }
             #my-custom-btn-menu #my-counter-settings-button:hover { opacity: 0.7; }
@@ -258,8 +257,6 @@
 
         window.addEventListener('scroll', hideAllMenus, true);
         window.addEventListener('resize', hideAllMenus);
-        document.addEventListener('focusin', scheduleUpdate, true);
-        document.addEventListener('focusout', scheduleUpdate, true);
     }
 
     function startObserver() {
@@ -1365,17 +1362,6 @@
     // [변경] textarea/contenteditable 모두 지원 + HUD 스크립트와 좌표 호환 (동적 측정)
     function updateLayout(inputEl) {
         if (!menuBadge || !menuBadge.parentElement) return;
-
-        const activeElement = document.activeElement;
-        const inputFocused = inputEl === activeElement || inputEl.contains(activeElement);
-        menuBadge.classList.toggle('is-input-focused', inputFocused);
-
-        if (inputFocused) {
-            inputEl.style.removeProperty('padding-top');
-            inputEl.style.removeProperty('min-height');
-            hideAllMenus();
-            return;
-        }
 
         const isContentEditable = inputEl.tagName !== 'TEXTAREA';
         const compStyle = getComputedStyle(inputEl);
