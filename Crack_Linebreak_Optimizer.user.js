@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ↩️ 줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.4.1
+// @version      1.4.2
 // @description  줄바꿈을 최적화하고 Enter 오전송을 막아 PC는 Ctrl+Enter, iPhone/iPad는 Command+Enter로 전송합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -161,8 +161,16 @@
     button.click();
   }
 
+  function isEnterKeyEvent(event) {
+    return event.key === 'Enter'
+      || event.code === 'Enter'
+      || event.code === 'NumpadEnter'
+      || event.keyCode === 13
+      || event.which === 13;
+  }
+
   function handleChatInputKeyEvent(event) {
-    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+    if (!isEnterKeyEvent(event)) return;
 
     const input = getChatInput(event.target);
     if (!input) return;
@@ -172,7 +180,7 @@
       ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
       : event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
 
-    if (shouldSend) {
+    if (shouldSend && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (event.type === 'keydown' && !event.repeat) sendChatMessage(input);

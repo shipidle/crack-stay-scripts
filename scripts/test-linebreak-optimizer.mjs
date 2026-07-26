@@ -73,7 +73,9 @@ function createHarness({ appleTouch = false } = {}) {
     guards.get(type)({
       type,
       key: 'Enter',
+      code: 'Enter',
       keyCode: 13,
+      which: 13,
       target: input,
       isComposing: false,
       repeat: false,
@@ -92,7 +94,7 @@ function createHarness({ appleTouch = false } = {}) {
 }
 
 assert.match(source, /@run-at\s+document-start/);
-assert.match(source, /@version\s+1\.4\.1/);
+assert.match(source, /@version\s+1\.4\.2/);
 
 {
   const desktop = createHarness();
@@ -107,6 +109,17 @@ assert.match(source, /@version\s+1\.4\.1/);
     assert.equal(shortcut.defaultPrevented, true);
   }
   assert.equal(desktop.sends(), 1, 'Ctrl+Enter must send exactly once on keydown');
+
+  const imeEnter = desktop.dispatch('keydown', {
+    key: 'Process',
+    code: 'Enter',
+    keyCode: 229,
+    which: 229,
+    isComposing: true,
+  });
+  assert.equal(imeEnter.propagationStopped, true, 'IME Enter must not reach Crack send handlers');
+  assert.equal(imeEnter.defaultPrevented, false, 'IME Enter must still commit composition');
+  assert.equal(desktop.sends(), 1, 'IME Enter must not send');
 }
 
 {
