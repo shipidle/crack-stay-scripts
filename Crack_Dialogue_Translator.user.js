@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.1.1
+// @version      0.1.2
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사만 영문으로 번역하고 원문 대사를 함께 보존합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const MODEL = 'gemini-3.1-flash-lite';
   const INPUT_USD_PER_M = 0.25;
   const OUTPUT_USD_PER_M = 1.50;
@@ -222,16 +222,16 @@
 
   function findDialogueSpans(source) {
     const spans = [];
-    const re = /"((?:\\.|[^"\\])*)"|“([^”]*)”/gs;
+    const re = /"((?:\\.|[^"\\\r\n])*)"|([“”])([^“”\r\n]*)([“”])/g;
     let match;
     while ((match = re.exec(source))) {
-      const original = match[1] !== undefined ? match[1] : match[2];
+      const original = match[1] !== undefined ? match[1] : match[3];
       if (!/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(original)) continue;
       spans.push({
         start: match.index,
         end: re.lastIndex,
-        open: match[1] !== undefined ? '"' : '“',
-        close: match[1] !== undefined ? '"' : '”',
+        open: match[1] !== undefined ? '"' : match[2],
+        close: match[1] !== undefined ? '"' : match[4],
         original,
       });
     }
@@ -306,7 +306,7 @@
           currentTurn = [];
         }
         const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content || '');
-        currentTurn.push(`${role}: ${compactText(content, 240)}`);
+        currentTurn.push(`${role}: ${compactText(content, 360)}`);
         if (role === '상대' && currentTurn.some(line => line.startsWith('나: '))) {
           turns.push(currentTurn);
           currentTurn = [];
@@ -328,6 +328,9 @@
       'Use the character voice and recent context only to choose tone, register, pronouns, and idioms.',
       'Keep names, titles, nicknames, and forms of address consistent with their established English rendering in recent turns.',
       'Treat each [Turn] block as one user-and-character exchange. Prefer established address terms over inventing a new variant.',
+      'The Korean dialogue being translated is spoken by 나 (the user character) to 상대 (the AI character).',
+      'Resolve every omitted Korean subject, object, beneficiary, and action owner from the full sentence and recent relationship context. Never default an omitted action owner to the current speaker.',
+      'Example: for "결혼하고, 요리해 주고. 그게 네가 원하는 거야?", if context establishes 상대 as the devoted caregiver, preserve the meaning that 상대 wants to marry 나 and cook for 나; do not reverse it into 나 cooking for 상대.',
       'Preserve meaning. Do not add actions, narration, explanations, quotation marks, parentheses, or Korean.',
       'Return one English translation per item in exactly the same order.',
       '',
@@ -395,7 +398,7 @@
           generationConfig: {
             temperature: 0.2,
             maxOutputTokens: Math.min(720, Math.max(96, dialogueCount * 64)),
-            thinkingConfig: { thinkingLevel: 'minimal' },
+            thinkingConfig: { thinkingLevel: 'low' },
             responseMimeType: 'application/json',
             responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
           },

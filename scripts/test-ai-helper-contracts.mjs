@@ -22,16 +22,29 @@ assert.equal(
   'dialogue replacement must preserve narration and line breaks',
 );
 assert.equal(helpers.findDialogueSpans('"Already translated."\n*지문*').length, 0);
+const unclosed = '“안녕.\n*지문은 번역하면 안 됨.*\n“괜찮아?”';
+assert.deepEqual(
+  helpers.findDialogueSpans(unclosed).map(item => item.original),
+  ['괜찮아?'],
+  'an unclosed quote must not consume narration or the next line',
+);
+assert.deepEqual(
+  helpers.findDialogueSpans('”아이폰 따옴표 방향이 뒤집혀도“').map(item => item.original),
+  ['아이폰 따옴표 방향이 뒤집혀도'],
+  'either smart-quote glyph must be accepted at each same-line boundary',
+);
 assert.throws(() => helpers.applyTranslations(source, spans, ['Hello.']), /번역 개수/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
-assert.match(translator, /thinkingLevel: 'minimal'/);
+assert.match(translator, /thinkingLevel: 'low'/);
 assert.match(translator, /const CONTEXT_TURNS = 5/);
 assert.match(translator, /CONTEXT_MESSAGES = CONTEXT_TURNS \* 2/);
 assert.match(translator, /names, titles, nicknames, and forms of address consistent/);
 assert.match(translator, /\[Turn \$\{index \+ 1\}\]/);
+assert.match(translator, /Never default an omitted action owner to the current speaker/);
+assert.match(translator, /상대 wants to marry 나 and cook for 나/);
 
 assert.match(assistant, /const CWA_VERSION = '2\.40\.1'/);
 assert.match(assistant, /button\[aria-label="단축어 패널 열기"\]/);
