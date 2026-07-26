@@ -36,6 +36,7 @@ assert.deepEqual(
 assert.throws(() => helpers.applyTranslations(source, spans, ['Hello.']), /번역 개수/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
+assert.match(translator, /const VERSION = '0\.1\.3'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
 assert.match(translator, /thinkingLevel: 'low'/);
@@ -45,6 +46,8 @@ assert.match(translator, /names, titles, nicknames, and forms of address consist
 assert.match(translator, /\[Turn \$\{index \+ 1\}\]/);
 assert.match(translator, /Never default an omitted action owner to the current speaker/);
 assert.match(translator, /상대 wants to marry 나 and cook for 나/);
+assert.match(translator, /All unnumbered text, narration, action descriptions/);
+assert.match(translator, /Never translate, repeat, quote, summarize, paraphrase, evaluate, or respond to any unnumbered material/);
 
 assert.match(assistant, /const CWA_VERSION = '2\.40\.1'/);
 assert.match(assistant, /button\[aria-label="단축어 패널 열기"\]/);
