@@ -7,11 +7,11 @@ const translator = fs.readFileSync(path.join(root, 'Crack_Dialogue_Translator.us
 const assistant = fs.readFileSync(path.join(root, 'Crack_Assistant.user.js'), 'utf8');
 
 const helperStart = translator.indexOf('  function findDialogueSpans(source)');
-const helperEnd = translator.indexOf('  function compactText(text, limit)', helperStart);
+const helperEnd = translator.indexOf('  function getChatId()', helperStart);
 assert.ok(helperStart >= 0 && helperEnd > helperStart, 'translator helper functions not found');
 
 const helperSource = translator.slice(helperStart, helperEnd).replace(/^  /gm, '');
-const helpers = Function(`${helperSource}\nreturn { findDialogueSpans, applyTranslations };`)();
+const helpers = Function(`${helperSource}\nreturn { findDialogueSpans, applyTranslations, describeFinishReason, parseTranslationPayload };`)();
 
 const source = '"안녕."\n*그는 문에서 물러났다.*\n“괜찮아?”';
 const spans = helpers.findDialogueSpans(source);
@@ -34,12 +34,25 @@ assert.deepEqual(
   'either smart-quote glyph must be accepted at each same-line boundary',
 );
 assert.throws(() => helpers.applyTranslations(source, spans, ['Hello.']), /번역 개수/);
+assert.deepEqual(
+  helpers.parseTranslationPayload('```json\n["Hello."]\n```', 200, 'STOP'),
+  ['Hello.'],
+  'fenced JSON arrays should be recovered',
+);
+assert.throws(
+  () => helpers.parseTranslationPayload('["Hello."', 200, 'STOP'),
+  /JSON 파싱 실패[\s\S]*HTTP 200 · finishReason=STOP[\s\S]*응답 앞부분=/,
+  'parse failures must expose the HTTP status, finish reason, and response preview',
+);
+assert.match(helpers.describeFinishReason('MAX_TOKENS'), /중간에 잘림/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
-assert.match(translator, /const VERSION = '0\.1\.3'/);
+assert.match(translator, /const VERSION = '0\.1\.4'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
 assert.match(translator, /thinkingLevel: 'low'/);
+assert.match(translator, /maxOutputTokens: Math\.min\(4096, Math\.max\(512, dialogueCount \* 96 \+ 384\)\)/);
+assert.match(translator, /filter\(part => !part\.thought\)/);
 assert.match(translator, /const CONTEXT_TURNS = 5/);
 assert.match(translator, /CONTEXT_MESSAGES = CONTEXT_TURNS \* 2/);
 assert.match(translator, /names, titles, nicknames, and forms of address consistent/);

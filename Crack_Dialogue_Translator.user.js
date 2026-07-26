@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.1.3
+// @version      0.1.4
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사만 영문으로 번역하고 원문 대사를 함께 보존합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.3';
+  const VERSION = '0.1.4';
   const MODEL = 'gemini-3.1-flash-lite';
   const INPUT_USD_PER_M = 0.25;
   const OUTPUT_USD_PER_M = 1.50;
@@ -66,7 +66,7 @@
     }
     .cdt-btn.primary{background:#9FC7E3;color:#173247}
     .cdt-btn:disabled{opacity:.55;cursor:not-allowed}
-    #cdt-status{min-height:20px;margin-top:10px;font-size:12px;line-height:1.5;color:#526C80;text-align:center;word-break:keep-all}
+    #cdt-status{min-height:20px;margin-top:10px;font-size:12px;line-height:1.5;color:#526C80;text-align:center;word-break:break-word;white-space:pre-wrap}
     #cdt-cost{margin-top:4px;font-size:11px;color:#74899A;text-align:center}
     @media(max-width:640px){
       #cdt-panel{left:12px;right:12px;bottom:118px;width:auto;max-width:none;padding:14px;border-radius:16px}
@@ -245,7 +245,9 @@
   }
 
   function applyTranslations(source, spans, translations) {
-    if (spans.length !== translations.length) throw new Error('번역 개수가 원문 대사 개수와 다름. 다시 시도해줘.');
+    if (spans.length !== translations.length) {
+      throw new Error(`번역 개수 불일치: 원문 ${spans.length}개 / Gemini ${translations.length}개.`);
+    }
     let output = source;
     for (let i = spans.length - 1; i >= 0; i--) {
       const span = spans[i];
@@ -260,6 +262,57 @@
   function compactText(text, limit) {
     const normalized = String(text || '').replace(/\s+/g, ' ').trim();
     return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
+  }
+
+  function describeFinishReason(reason) {
+    const descriptions = {
+      MAX_TOKENS: '출력 토큰 한도에 걸려 응답이 중간에 잘림.',
+      SAFETY: 'Gemini 안전 필터가 응답 생성을 중단함.',
+      RECITATION: '인용·재현 감지로 응답 생성이 중단됨.',
+      BLOCKLIST: '차단 목록 감지로 응답 생성이 중단됨.',
+      PROHIBITED_CONTENT: '금지 콘텐츠 감지로 응답 생성이 중단됨.',
+      SPII: '민감한 개인정보 감지로 응답 생성이 중단됨.',
+      MALFORMED_FUNCTION_CALL: 'Gemini가 잘못된 함수 호출 형식을 생성함.',
+      OTHER: 'Gemini가 분류되지 않은 이유로 응답 생성을 중단함.',
+    };
+    return descriptions[reason] || 'Gemini가 정상 종료(STOP)하지 않음.';
+  }
+
+  function responsePreview(raw) {
+    return compactText(raw || '(빈 응답)', 320);
+  }
+
+  function parseTranslationPayload(raw, status, finishReason) {
+    const cleaned = String(raw || '').trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
+    if (!cleaned) {
+      throw new Error(`Gemini 최종 응답이 비어 있음.\nHTTP ${status} · finishReason=${finishReason || '없음'}`);
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (error) {
+      console.error('[CDT] Gemini JSON parse failed', { status, finishReason, raw, error });
+      throw new Error(
+        `Gemini 응답 JSON 파싱 실패.\n` +
+        `HTTP ${status} · finishReason=${finishReason || '없음'}\n` +
+        `JSON 오류=${error.message}\n` +
+        `응답 앞부분=${responsePreview(raw)}`
+      );
+    }
+
+    const translations = Array.isArray(parsed) ? parsed : parsed?.translations;
+    if (!Array.isArray(translations)) {
+      throw new Error(
+        `Gemini 응답 JSON이 번역 배열이 아님.\n` +
+        `HTTP ${status} · finishReason=${finishReason || '없음'}\n` +
+        `응답 앞부분=${responsePreview(raw)}`
+      );
+    }
+    return translations;
   }
 
   function getChatId() {
@@ -401,7 +454,7 @@
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: Math.min(720, Math.max(96, dialogueCount * 64)),
+            maxOutputTokens: Math.min(4096, Math.max(512, dialogueCount * 96 + 384)),
             thinkingConfig: { thinkingLevel: 'low' },
             responseMimeType: 'application/json',
             responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
@@ -418,13 +471,27 @@
               throw new Error(data.error?.message || `Gemini HTTP ${response.status}`);
             }
             const candidate = data.candidates?.[0];
-            if (!candidate) throw new Error(data.promptFeedback?.blockReason || 'Gemini 번역 결과가 없음.');
-            const raw = (candidate.content?.parts || []).map(part => part.text || '').join('').trim();
-            let translations;
-            try { translations = JSON.parse(raw); }
-            catch (_) { throw new Error('Gemini 번역 형식이 올바르지 않음. 다시 시도해줘.'); }
-            if (!Array.isArray(translations)) translations = translations?.translations;
-            if (!Array.isArray(translations)) throw new Error('Gemini가 번역 목록을 반환하지 않음.');
+            if (!candidate) {
+              throw new Error(
+                `Gemini candidate 없음.\n` +
+                `HTTP ${response.status} · blockReason=${data.promptFeedback?.blockReason || '없음'}`
+              );
+            }
+            const finishReason = candidate.finishReason || '';
+            const raw = (candidate.content?.parts || [])
+              .filter(part => !part.thought)
+              .map(part => part.text || '')
+              .join('')
+              .trim();
+            if (finishReason && finishReason !== 'STOP') {
+              console.error('[CDT] Gemini generation stopped', { status: response.status, finishReason, raw, data });
+              throw new Error(
+                `${describeFinishReason(finishReason)}\n` +
+                `HTTP ${response.status} · finishReason=${finishReason}\n` +
+                `응답 앞부분=${responsePreview(raw)}`
+              );
+            }
+            const translations = parseTranslationPayload(raw, response.status, finishReason);
             resolve({ translations, usage: data.usageMetadata || {} });
           } catch (error) { reject(error); }
         },
