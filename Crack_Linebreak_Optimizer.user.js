@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         ↩️ 줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.4.0
+// @version      1.4.1
 // @description  🧪 BETA · 줄바꿈을 최적화하고 Enter 오전송을 막아 PC는 Ctrl+Enter, iPhone/iPad는 Command+Enter로 전송합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
-// @run-at       document-idle
+// @run-at       document-start
 // @inject-into  content
 // @grant        GM_addStyle
 // @grant        GM.addStyle
@@ -20,6 +20,7 @@
 
   const STYLE_ID = 'crack-linebreak-optimizer-style';
   const CHAT_INPUT_SELECTOR = 'textarea[placeholder*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap';
+  const KEYBOARD_EVENT_TYPES = ['keydown', 'keypress', 'keyup'];
   const CSS = `
     /* 크랙 강제 쪼개기(break-all) 방지 */
     html body .break-all,
@@ -91,7 +92,6 @@
   function start() {
     injectManagerStyle();
     injectNativeStyle();
-    document.addEventListener('keydown', handleChatInputKeydown, true);
   }
 
   function getChatInput(target) {
@@ -161,7 +161,7 @@
     button.click();
   }
 
-  function handleChatInputKeydown(event) {
+  function handleChatInputKeyEvent(event) {
     if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
 
     const input = getChatInput(event.target);
@@ -175,7 +175,7 @@
     if (shouldSend) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      sendChatMessage(input);
+      if (event.type === 'keydown' && !event.repeat) sendChatMessage(input);
       return;
     }
 
@@ -183,6 +183,15 @@
       event.stopImmediatePropagation();
     }
   }
+
+  function bindKeyboardGuard() {
+    KEYBOARD_EVENT_TYPES.forEach(type => {
+      window.addEventListener(type, handleChatInputKeyEvent, true);
+    });
+  }
+
+  // 크랙의 React 키 핸들러보다 먼저 등록해야 Enter 전송을 확실히 막을 수 있음.
+  bindKeyboardGuard();
 
   if (document.documentElement) start();
   else document.addEventListener('DOMContentLoaded', start, { once: true });
