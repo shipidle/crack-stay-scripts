@@ -9,6 +9,7 @@ const source = fs.readFileSync(path.join(root, 'Crack_Linebreak_Optimizer.user.j
 function createHarness({ appleTouch = false } = {}) {
   const guards = new Map();
   let sends = 0;
+  let pageGuardSource = '';
 
   class MockElement {}
   const button = new MockElement();
@@ -37,10 +38,14 @@ function createHarness({ appleTouch = false } = {}) {
   });
 
   const document = {
-    documentElement: {},
+    documentElement: {
+      dataset: {},
+      appendChild: node => { pageGuardSource = node.textContent; },
+    },
     head: { appendChild: () => {} },
     getElementById: () => null,
-    createElement: () => ({ id: '', textContent: '' }),
+    querySelector: () => null,
+    createElement: () => ({ id: '', textContent: '', remove: () => {} }),
     addEventListener: () => {},
   };
   const window = {
@@ -90,11 +95,95 @@ function createHarness({ appleTouch = false } = {}) {
     return { defaultPrevented, propagationStopped };
   }
 
-  return { dispatch, sends: () => sends };
+  return { dispatch, pageGuardSource: () => pageGuardSource, sends: () => sends };
 }
 
 assert.match(source, /@run-at\s+document-start/);
-assert.match(source, /@version\s+1\.4\.2/);
+assert.match(source, /@version\s+1\.5\.0/);
+assert.match(source, /crackEnterGuardPage/);
+assert.match(source, /new KeyboardEvent\('keydown'/);
+assert.match(source, /shiftKey:\s*true/);
+
+{
+  const injected = createHarness().pageGuardSource();
+  assert.ok(injected.includes('crackEnterGuardPage'), 'page-world guard must be injected');
+  new vm.Script(injected);
+
+  const pageGuards = new Map();
+  const syntheticEvents = [];
+  let insertedLineBreaks = 0;
+  let pageSends = 0;
+  const sendButton = {
+    matches: selector => selector === 'button[type="submit"]:not(:disabled)',
+    getAttribute: () => null,
+    textContent: '',
+    click: () => { pageSends += 1; },
+  };
+  const form = { querySelectorAll: () => [sendButton] };
+  const pageInput = {
+    dataset: {},
+    parentElement: null,
+    closest: selector => {
+      if (selector.includes('textarea')) return pageInput;
+      if (selector === 'form') return form;
+      return null;
+    },
+    dispatchEvent: event => { syntheticEvents.push(event); return true; },
+  };
+  const pageWindow = {
+    addEventListener: (type, handler) => pageGuards.set(type, handler),
+  };
+  class MockKeyboardEvent {
+    constructor(type, init) { Object.assign(this, init, { type }); }
+  }
+  vm.runInNewContext(injected, {
+    window: pageWindow,
+    document: {
+      documentElement: { dataset: {} },
+      execCommand: command => {
+        assert.equal(command, 'insertLineBreak');
+        insertedLineBreaks += 1;
+      },
+    },
+    navigator: { userAgent: 'Windows', platform: 'Win32', maxTouchPoints: 0 },
+    KeyboardEvent: MockKeyboardEvent,
+  });
+
+  function dispatchPage(init = {}) {
+    let defaultPrevented = false;
+    let propagationStopped = false;
+    pageGuards.get('keydown')({
+      type: 'keydown',
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      target: pageInput,
+      isComposing: false,
+      repeat: false,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      preventDefault: () => { defaultPrevented = true; },
+      stopImmediatePropagation: () => { propagationStopped = true; },
+      ...init,
+    });
+    return { defaultPrevented, propagationStopped };
+  }
+
+  const plain = dispatchPage();
+  assert.equal(plain.defaultPrevented, true, 'page-world Enter default must be replaced');
+  assert.equal(plain.propagationStopped, true, 'page-world Enter must not reach Crack');
+  assert.equal(syntheticEvents.length, 1);
+  assert.equal(syntheticEvents[0].shiftKey, true, 'page-world Enter must become Shift+Enter');
+  assert.equal(insertedLineBreaks, 1, 'unhandled synthetic Shift+Enter must insert a line break');
+
+  const shortcut = dispatchPage({ ctrlKey: true });
+  assert.equal(shortcut.defaultPrevented, true);
+  assert.equal(shortcut.propagationStopped, true);
+  assert.equal(pageSends, 1, 'page-world Ctrl+Enter must send once');
+}
 
 {
   const desktop = createHarness();

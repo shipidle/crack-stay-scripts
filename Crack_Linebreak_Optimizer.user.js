@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ↩️ 줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.4.2
+// @version      1.5.0
 // @description  줄바꿈을 최적화하고 Enter 오전송을 막아 PC는 Ctrl+Enter, iPhone/iPad는 Command+Enter로 전송합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,6 +19,7 @@
   'use strict';
 
   const STYLE_ID = 'crack-linebreak-optimizer-style';
+  const GUARD_VERSION = '1.5.0';
   const CHAT_INPUT_SELECTOR = 'textarea[placeholder*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap';
   const KEYBOARD_EVENT_TYPES = ['keydown', 'keypress', 'keyup'];
   const CSS = `
@@ -161,6 +162,100 @@
     button.click();
   }
 
+  function pageKeyboardGuard(config) {
+    if (window.__crackLinebreakPageGuardVersion === config.version) return;
+    window.__crackLinebreakPageGuardVersion = config.version;
+    document.documentElement.dataset.crackEnterGuardPage = config.version;
+
+    const getInput = target => target?.closest?.(config.selector) || null;
+    const isAppleTouch = () => /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isEnter = event => event.key === 'Enter'
+      || event.code === 'Enter'
+      || event.code === 'NumpadEnter'
+      || event.keyCode === 13
+      || event.which === 13;
+    const findSend = (input) => {
+      const roots = [input.closest('form')];
+      let ancestor = input.parentElement;
+      for (let depth = 0; ancestor && depth < 6; depth += 1, ancestor = ancestor.parentElement) roots.push(ancestor);
+
+      for (const root of roots.filter(Boolean)) {
+        const buttons = Array.from(root.querySelectorAll('button, [role="button"]'));
+        const labeled = buttons.find((button) => {
+          if (button.matches(':disabled, [aria-disabled="true"]')) return false;
+          const label = [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent]
+            .filter(Boolean)
+            .join(' ');
+          return /전송|보내기|send|submit/i.test(label);
+        });
+        if (labeled) return labeled;
+        const submit = buttons.find(button => button.matches('button[type="submit"]:not(:disabled)'));
+        if (submit) return submit;
+      }
+      return null;
+    };
+
+    const handler = (event) => {
+      if (!isEnter(event)) return;
+      const input = getInput(event.target);
+      if (!input || input.dataset.loreRefinerMessageId || input.closest('.bg-surface_tertiary')) return;
+
+      const appleTouch = isAppleTouch();
+      const shouldSend = appleTouch
+        ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+        : event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+
+      if (shouldSend && !event.isComposing && event.keyCode !== 229) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.type === 'keydown' && !event.repeat) findSend(input)?.click();
+        return;
+      }
+
+      if (appleTouch || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+
+      event.stopImmediatePropagation();
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+
+      if (event.type === 'keydown' && !event.repeat) {
+        const accepted = input.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: event.code === 'NumpadEnter' ? 'NumpadEnter' : 'Enter',
+          keyCode: 13,
+          which: 13,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        }));
+        if (accepted) document.execCommand('insertLineBreak', false, null);
+      }
+    };
+
+    ['keydown', 'keypress', 'keyup'].forEach(type => window.addEventListener(type, handler, true));
+  }
+
+  function injectPageKeyboardGuard() {
+    const target = document.documentElement || document.head;
+    if (!target) {
+      document.addEventListener('readystatechange', injectPageKeyboardGuard, { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    const nonceSource = document.querySelector('script[nonce]');
+    if (nonceSource?.nonce) script.nonce = nonceSource.nonce;
+    script.textContent = `;(${pageKeyboardGuard.toString()})(${JSON.stringify({
+      version: GUARD_VERSION,
+      selector: CHAT_INPUT_SELECTOR,
+    })});`;
+    target.appendChild(script);
+    script.remove();
+    document.documentElement.dataset.crackEnterGuardVersion = GUARD_VERSION;
+  }
+
   function isEnterKeyEvent(event) {
     return event.key === 'Enter'
       || event.code === 'Enter'
@@ -170,6 +265,7 @@
   }
 
   function handleChatInputKeyEvent(event) {
+    if (document.documentElement.dataset.crackEnterGuardPage === GUARD_VERSION) return;
     if (!isEnterKeyEvent(event)) return;
 
     const input = getChatInput(event.target);
@@ -198,7 +294,8 @@
     });
   }
 
-  // 크랙의 React 키 핸들러보다 먼저 등록해야 Enter 전송을 확실히 막을 수 있음.
+  // content 격리 영역과 크랙 본체 영역은 키 이벤트 처리가 분리될 수 있어 본체 영역에도 가드를 설치함.
+  injectPageKeyboardGuard();
   bindKeyboardGuard();
 
   if (document.documentElement) start();
