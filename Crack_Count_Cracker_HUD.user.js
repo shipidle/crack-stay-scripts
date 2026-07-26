@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         📊 턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.2.0
-// @description  🧪 BETA · 입력창 내부 상단에 턴수와 크래커를 표시하고 입력 중에는 자동으로 숨깁니다.
+// @version      1.1.11
+// @description  🧪 BETA · 입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
@@ -118,11 +118,6 @@
 
             #my-custom-info-display.is-under-side-layer {
                 --info-display-z: 1;
-                visibility: hidden;
-                pointer-events: none;
-            }
-
-            #my-custom-info-display.is-input-focused {
                 visibility: hidden;
                 pointer-events: none;
             }
@@ -283,8 +278,6 @@
 
         window.addEventListener('scroll', hideSettingsMenu, true);
         window.addEventListener('resize', hideSettingsMenu);
-        document.addEventListener('focusin', scheduleUpdate, true);
-        document.addEventListener('focusout', scheduleUpdate, true);
     }
 
     function startObserver() {
@@ -806,17 +799,6 @@
 
     function updateLayout(inputEl) {
         if (!counterBadge || !counterBadge.parentElement) return;
-
-        const activeElement = document.activeElement;
-        const inputFocused = inputEl === activeElement || inputEl.contains(activeElement);
-        counterBadge.classList.toggle('is-input-focused', inputFocused);
-
-        if (inputFocused) {
-            inputEl.style.removeProperty('padding-top');
-            inputEl.style.removeProperty('min-height');
-            hideSettingsMenu();
-            return;
-        }
 
         const otherTopMenu = document.getElementById('my-custom-btn-menu');
         const otherIsInsideContainer =
