@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ↩️ 줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.0
-// @description  🧪 BETA · 크랙의 강제 글자 쪼개기를 막고 인용문 여백과 단어 기준 줄바꿈을 최적화합니다.
+// @version      1.4.0
+// @description  🧪 BETA · 줄바꿈을 최적화하고 Enter 오전송을 막아 PC는 Ctrl+Enter, iPhone/iPad는 Command+Enter로 전송합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -19,6 +19,7 @@
   'use strict';
 
   const STYLE_ID = 'crack-linebreak-optimizer-style';
+  const CHAT_INPUT_SELECTOR = 'textarea[placeholder*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap';
   const CSS = `
     /* 크랙 강제 쪼개기(break-all) 방지 */
     html body .break-all,
@@ -90,6 +91,97 @@
   function start() {
     injectManagerStyle();
     injectNativeStyle();
+    document.addEventListener('keydown', handleChatInputKeydown, true);
+  }
+
+  function getChatInput(target) {
+    const input = target?.closest?.(CHAT_INPUT_SELECTOR);
+    if (!input || input.dataset.loreRefinerMessageId || input.closest('.bg-surface_tertiary')) return null;
+
+    const wrapperText = input.closest('div.flex.flex-col')?.innerText || '';
+    if (wrapperText.includes('수정 완료') || wrapperText.includes('취소')) return null;
+    return input;
+  }
+
+  function isAppleTouchDevice() {
+    return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function isVisibleEnabledButton(button) {
+    if (!(button instanceof HTMLElement) || button.matches(':disabled, [aria-disabled="true"]')) return false;
+    const style = getComputedStyle(button);
+    const rect = button.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  }
+
+  function findSendButton(input) {
+    const form = input.closest('form');
+    const roots = [form];
+    let ancestor = input.parentElement;
+
+    for (let depth = 0; ancestor && depth < 6; depth += 1, ancestor = ancestor.parentElement) {
+      roots.push(ancestor);
+    }
+
+    for (const root of roots.filter(Boolean)) {
+      const buttons = Array.from(root.querySelectorAll('button, [role="button"]')).filter(isVisibleEnabledButton);
+      const labeled = buttons.find((button) => {
+        const label = [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent]
+          .filter(Boolean)
+          .join(' ');
+        return /전송|보내기|send|submit/i.test(label);
+      });
+      if (labeled) return labeled;
+
+      const submit = buttons.find(button => button.matches('button[type="submit"]'));
+      if (submit) return submit;
+    }
+
+    const inputRect = input.getBoundingClientRect();
+    const nearbyButtons = Array.from((roots[roots.length - 1] || document).querySelectorAll('button'))
+      .filter(button => isVisibleEnabledButton(button) && button.querySelector('svg'))
+      .map(button => ({ button, rect: button.getBoundingClientRect() }))
+      .filter(({ rect }) => (
+        rect.left >= inputRect.left + inputRect.width * 0.55
+        && rect.top < inputRect.bottom + 12
+        && rect.bottom > inputRect.top - 12
+      ))
+      .sort((a, b) => Math.abs(a.rect.right - inputRect.right) - Math.abs(b.rect.right - inputRect.right));
+
+    return nearbyButtons[0]?.button || null;
+  }
+
+  function sendChatMessage(input) {
+    const button = findSendButton(input);
+    if (!button) {
+      console.warn('[줄바꿈 최적화] 전송 버튼을 찾지 못해 단축키 전송을 취소했습니다.');
+      return;
+    }
+    button.click();
+  }
+
+  function handleChatInputKeydown(event) {
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+
+    const input = getChatInput(event.target);
+    if (!input) return;
+
+    const appleTouch = isAppleTouchDevice();
+    const shouldSend = appleTouch
+      ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+      : event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+
+    if (shouldSend) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      sendChatMessage(input);
+      return;
+    }
+
+    if (!appleTouch) {
+      event.stopImmediatePropagation();
+    }
   }
 
   if (document.documentElement) start();
