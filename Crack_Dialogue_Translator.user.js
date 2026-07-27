@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.1.9
+// @version      0.2.0
 // @description  크랙 채팅 입력문의 한국어 대사만 영문으로 번역하고 원문 대사를 함께 보존합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      generativelanguage.googleapis.com
 // @connect      open.er-api.com
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Dialogue_Translator.user.js
@@ -19,7 +20,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.9';
+  const VERSION = '0.2.0';
   const MODEL = 'gemini-3.1-flash-lite';
   const INPUT_USD_PER_M = 0.25;
   const OUTPUT_USD_PER_M = 1.50;
@@ -28,9 +29,14 @@
   const CONTEXT_MESSAGES = CONTEXT_TURNS * 2;
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen';
   const KEY = 'shipidle:dialogue-translator:v1';
+  const CLOUD_API_KEY = '__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__';
+  const BRIDGE = unsafeWindow || window;
 
   let busy = false;
+  let cloudBusy = false;
   let exchangeRate = null;
+  let loadedRoomPath = '';
+  let roomSettings = { voice: '', notes: '', cloudRevision: 0 };
 
   GM_addStyle(`
     #cdt-toolbar-btn{pointer-events:auto}
@@ -60,6 +66,7 @@
     .cdt-textarea{min-height:86px;resize:vertical;line-height:1.5}
     .cdt-meta{font-size:11px;line-height:1.45;color:#74899A;margin-top:6px}
     .cdt-actions{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
+    .cdt-cloud-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
     .cdt-btn{
       border:0;border-radius:12px;padding:12px 14px;background:#CEDEF2;color:#29445B;
       font-weight:800;font-size:13px;cursor:pointer;
@@ -83,9 +90,15 @@
     <div class="cdt-desc">따옴표 안 한국어 대사만 <b>"English" (한국어 원문)</b>으로 바꿈. 지문·줄바꿈은 그대로 둠.</div>
 
     <div class="cdt-card">
-      <label class="cdt-label" for="cdt-voice">내 캐릭터 성격·말투</label>
+      <label class="cdt-label" for="cdt-voice">방별 캐릭터 설정·관계</label>
       <textarea class="cdt-textarea" id="cdt-voice" maxlength="1200" placeholder="예: 무뚝뚝한 20대 용병. 짧게 말하고 냉소적이지만 동료에게는 은근히 다정함. 영국식 영어."></textarea>
       <div class="cdt-meta">나+상대 한 쌍을 1턴으로 묶어 최근 5턴을 참고함. 호칭·이름 번역을 우선 통일함.</div>
+    </div>
+
+    <div class="cdt-card">
+      <label class="cdt-label" for="cdt-notes">방별 번역 노트</label>
+      <textarea class="cdt-textarea" id="cdt-notes" maxlength="3000" placeholder="예: Felix는 펠릭스. Till은 틸. master는 주인님. 펠릭스가 틸을 돌보고 요리해주는 관계."></textarea>
+      <div class="cdt-meta">고유명사·호칭·주체 관계 등 이 방에서만 쓸 규칙을 적으면 프롬프트에 참고시킴.</div>
     </div>
 
     <div class="cdt-card">
@@ -98,6 +111,15 @@
       <button class="cdt-btn primary" id="cdt-run" type="button">대사만 번역해서 교체</button>
       <button class="cdt-btn" id="cdt-save" type="button">설정 저장</button>
     </div>
+    <div class="cdt-card">
+      <label class="cdt-label">☁️ Lore Sync 계정으로 방 설정 보관</label>
+      <div class="cdt-meta" id="cdt-cloud-status">Lore Sync 연결 상태 확인 전</div>
+      <div class="cdt-cloud-actions">
+        <button class="cdt-btn primary" id="cdt-cloud-upload" type="button">클라우드에 올리기</button>
+        <button class="cdt-btn" id="cdt-cloud-download" type="button">클라우드에서 받기</button>
+      </div>
+      <div class="cdt-meta">자동 동기화 없음 · Gemini API 키는 업로드하지 않음</div>
+    </div>
     <div id="cdt-status">v${VERSION} · 입력창을 읽을 준비됨</div>
     <div id="cdt-cost">이번 요청 - · 누적 0.00원</div>
   `;
@@ -107,6 +129,131 @@
   toolbarButton.id = 'cdt-toolbar-btn';
 
   const $ = selector => panel.querySelector(selector);
+
+  function roomStorageKey(path = location.pathname) {
+    return `${KEY}:room:${encodeURIComponent(path)}`;
+  }
+
+  function normalizeRoomSettings(value) {
+    let saved = value;
+    if (typeof saved === 'string') {
+      try { saved = JSON.parse(saved); } catch { saved = null; }
+    }
+    return {
+      voice: String(saved?.voice || '').slice(0, 1200),
+      notes: String(saved?.notes || '').slice(0, 3000),
+      cloudRevision: Math.max(0, Number(saved?.cloudRevision) || 0),
+    };
+  }
+
+  function loadRoomSettings(force = false) {
+    if (!isChatRoomPage()) return;
+    if (!force && loadedRoomPath === location.pathname) return;
+    loadedRoomPath = location.pathname;
+    const stored = GM_getValue(roomStorageKey(), null);
+    roomSettings = normalizeRoomSettings(stored);
+    if (!stored && !GM_getValue(`${KEY}:voiceMigrated`, false)) {
+      roomSettings.voice = String(GM_getValue(`${KEY}:voice`, '') || '').slice(0, 1200);
+      GM_setValue(`${KEY}:voiceMigrated`, true);
+      if (roomSettings.voice) GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+    }
+    $('#cdt-voice').value = roomSettings.voice;
+    $('#cdt-notes').value = roomSettings.notes;
+  }
+
+  function saveRoomSettings(showStatus = true) {
+    roomSettings.voice = $('#cdt-voice').value.trim().slice(0, 1200);
+    roomSettings.notes = $('#cdt-notes').value.trim().slice(0, 3000);
+    GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+    if (showStatus) $('#cdt-status').textContent = '이 방의 설정을 저장했음.';
+  }
+
+  function sharedCloudApi() {
+    return BRIDGE[CLOUD_API_KEY] || null;
+  }
+
+  function sharedCloudStatus() {
+    const api = sharedCloudApi();
+    if (!api) return { ready: false, reason: 'Lore Sync 확장프로그램을 최신 beta로 업데이트해주셈.' };
+    try { return api.getStatus(); } catch (error) { return { ready: false, reason: error?.message || 'Lore Sync 상태 확인 실패.' }; }
+  }
+
+  function refreshCloudStatus() {
+    const status = sharedCloudStatus();
+    $('#cdt-cloud-status').textContent = status.ready
+      ? `🟢 ${status.email || '저장된 계정'} 로그인됨`
+      : status.reason;
+    $('#cdt-cloud-upload').disabled = cloudBusy || !status.ready;
+    $('#cdt-cloud-download').disabled = cloudBusy || !status.ready;
+  }
+
+  function cloudErrorMessage(error, fallback) {
+    const raw = String(error?.message || error || '');
+    if (/dialogue_translator_sync|PGRST205|schema cache/i.test(raw)) return 'Supabase에서 supabase/dialogue_translator_sync.sql을 먼저 Run해주셈.';
+    return raw || fallback;
+  }
+
+  async function uploadRoomSettings() {
+    if (cloudBusy) return;
+    cloudBusy = true;
+    refreshCloudStatus();
+    $('#cdt-status').textContent = '클라우드 저장본 확인 중…';
+    try {
+      saveRoomSettings(false);
+      const api = sharedCloudApi();
+      const status = sharedCloudStatus();
+      if (!api || !status.ready) throw new Error(status.reason);
+      const remote = await api.getSettings(location.pathname);
+      if (remote && Number(remote.revision) > roomSettings.cloudRevision
+        && !confirm(`다른 기기의 더 최신 번역 설정(rev ${remote.revision})이 있음. 현재 설정으로 덮어쓸까요?`)) return;
+      const revision = Math.max(roomSettings.cloudRevision, Number(remote?.revision) || 0) + 1;
+      const saved = await api.saveSettings({
+        roomKey: location.pathname,
+        settings: { voice: roomSettings.voice, notes: roomSettings.notes },
+        revision,
+        deviceLabel: status.deviceLabel || '내 기기',
+      });
+      roomSettings.cloudRevision = Number(saved?.revision) || revision;
+      GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+      $('#cdt-status').textContent = `클라우드 저장 완료 · rev ${roomSettings.cloudRevision}`;
+    } catch (error) {
+      console.warn('[CDT] cloud upload failed:', error);
+      $('#cdt-status').textContent = `오류: ${cloudErrorMessage(error, '클라우드 저장 실패')}`;
+    } finally {
+      cloudBusy = false;
+      refreshCloudStatus();
+    }
+  }
+
+  async function downloadRoomSettings() {
+    if (cloudBusy) return;
+    cloudBusy = true;
+    refreshCloudStatus();
+    $('#cdt-status').textContent = '클라우드 번역 설정 확인 중…';
+    try {
+      const api = sharedCloudApi();
+      const status = sharedCloudStatus();
+      if (!api || !status.ready) throw new Error(status.reason);
+      const remote = await api.getSettings(location.pathname);
+      if (!remote) throw new Error('이 채팅방의 클라우드 저장본이 없음.');
+      const next = normalizeRoomSettings({ ...remote.settings, cloudRevision: remote.revision });
+      const localHasContent = $('#cdt-voice').value.trim() || $('#cdt-notes').value.trim();
+      const differs = next.voice !== $('#cdt-voice').value.trim() || next.notes !== $('#cdt-notes').value.trim();
+      if (localHasContent && differs
+        && !confirm(`${remote.device_label || '다른 기기'}의 rev ${remote.revision} 설정으로 현재 입력을 바꿀까요?`)) return;
+      roomSettings = next;
+      $('#cdt-voice').value = next.voice;
+      $('#cdt-notes').value = next.notes;
+      GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+      $('#cdt-status').textContent = `클라우드 설정 받기 완료 · rev ${roomSettings.cloudRevision}`;
+    } catch (error) {
+      console.warn('[CDT] cloud download failed:', error);
+      $('#cdt-status').textContent = `오류: ${cloudErrorMessage(error, '클라우드 받기 실패')}`;
+    } finally {
+      cloudBusy = false;
+      refreshCloudStatus();
+    }
+  }
 
   function isChatRoomPage() {
     return /\/stories\/[^/]+\/episodes\/[^/]+/.test(location.pathname)
@@ -374,7 +521,7 @@
     }
   }
 
-  function buildPrompt(spans, context, voice) {
+  function buildPrompt(spans, context, voice, notes) {
     const lines = spans.map((span, index) => `${index + 1}. ${span.original}`).join('\n');
     return [
       'This is a dialogue-translation task using fictional roleplay context.',
@@ -396,6 +543,7 @@
       'Return one English translation per item in exactly the same order.',
       '',
       `[Character voice]\n${voice || '(not provided)'}`,
+      `[Translation notes]\n${notes || '(not provided)'}`,
       `[Last ${CONTEXT_TURNS} conversation turns]\n${context}`,
       `[Korean dialogue]\n${lines}`,
     ].join('\n');
@@ -507,8 +655,7 @@
 
   function saveSettings(showStatus = true) {
     GM_setValue(`${KEY}:apiKey`, $('#cdt-api-key').value.trim());
-    GM_setValue(`${KEY}:voice`, $('#cdt-voice').value.trim());
-    if (showStatus) $('#cdt-status').textContent = '설정 저장 완료.';
+    saveRoomSettings(showStatus);
   }
 
   async function translateInput() {
@@ -529,7 +676,12 @@
       $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
       const context = await fetchRecentContext();
       $('#cdt-status').textContent = `대사 ${spans.length}개 번역 중…`;
-      const result = await callGemini(buildPrompt(spans, context, compactText($('#cdt-voice').value, 1200)));
+      const result = await callGemini(buildPrompt(
+        spans,
+        context,
+        compactText($('#cdt-voice').value, 1200),
+        compactText($('#cdt-notes').value, 3000),
+      ));
       const replaced = applyTranslations(source, spans, result.translations);
       setInputText(input, replaced);
 
@@ -556,6 +708,8 @@
     event?.stopPropagation?.();
     panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
     if (panel.style.display === 'block') {
+      loadRoomSettings();
+      refreshCloudStatus();
       const input = findChatInput();
       const count = findDialogueSpans(getInputText(input)).length;
       $('#cdt-status').textContent = count ? `한국어 대사 ${count}개 감지됨.` : '따옴표 안 한국어 대사를 입력해줘.';
@@ -563,12 +717,14 @@
   }
 
   $('#cdt-api-key').value = GM_getValue(`${KEY}:apiKey`, '');
-  $('#cdt-voice').value = GM_getValue(`${KEY}:voice`, '');
+  loadRoomSettings(true);
   updateCost();
   fetchExchangeRate();
 
   $('#cdt-close').addEventListener('click', () => { panel.style.display = 'none'; });
   $('#cdt-save').addEventListener('click', () => saveSettings(true));
+  $('#cdt-cloud-upload').addEventListener('click', uploadRoomSettings);
+  $('#cdt-cloud-download').addEventListener('click', downloadRoomSettings);
   $('#cdt-run').addEventListener('click', translateInput);
   toolbarButton.addEventListener('click', togglePanel, true);
   toolbarButton.addEventListener('mousedown', event => event.stopPropagation(), true);
@@ -576,6 +732,7 @@
 
   let injectTimer = null;
   const observer = new MutationObserver(() => {
+    if (loadedRoomPath && loadedRoomPath !== location.pathname && isChatRoomPage()) loadRoomSettings(true);
     clearTimeout(injectTimer);
     injectTimer = setTimeout(injectToolbarButton, 150);
   });
