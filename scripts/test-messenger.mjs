@@ -20,6 +20,8 @@ assert.match(messenger, /finishReason === 'MAX_TOKENS'/);
 assert.match(messenger, /if \(state\.timeMode === 'custom'\) \{ state\.timeMode = 'continue'/);
 assert.match(messenger, /font-family:"Pretendard"/);
 assert.doesNotMatch(messenger, /ONE Mobile Title/);
+assert.match(messenger, /const VERSION = '0\.3\.1'/);
+assert.match(messenger, /\.cms-bubble\{[^}]*font-size:15px/);
 assert.match(messenger, /bindCropEditor\('character'/);
 assert.match(messenger, /pointerdown/);
 assert.match(messenger, /data-cms-crop-action="reset"/);
