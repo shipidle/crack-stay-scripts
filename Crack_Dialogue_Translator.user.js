@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.1.8
+// @version      0.1.9
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사만 영문으로 번역하고 원문 대사를 함께 보존합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.8';
+  const VERSION = '0.1.9';
   const MODEL = 'gemini-3.1-flash-lite';
   const INPUT_USD_PER_M = 0.25;
   const OUTPUT_USD_PER_M = 1.50;
@@ -459,7 +459,7 @@
           generationConfig: {
             temperature: 0.2,
             maxOutputTokens: 4096,
-            thinkingConfig: { thinkingLevel: 'minimal' },
+            thinkingConfig: { thinkingLevel: 'low' },
             responseMimeType: 'application/json',
             responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
           },

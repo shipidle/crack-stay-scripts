@@ -47,10 +47,10 @@ assert.throws(
 assert.match(helpers.describeFinishReason('MAX_TOKENS'), /중간에 잘림/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
-assert.match(translator, /const VERSION = '0\.1\.8'/);
+assert.match(translator, /const VERSION = '0\.1\.9'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
-assert.match(translator, /thinkingLevel: 'minimal'/);
+assert.match(translator, /thinkingLevel: 'low'/);
 assert.match(translator, /maxOutputTokens: 4096/);
 assert.doesNotMatch(translator, /function callGemini\(prompt, dialogueCount\)/);
 assert.match(translator, /filter\(part => !part\.thought\)/);
