@@ -5,6 +5,8 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const translator = fs.readFileSync(path.join(root, 'Crack_Dialogue_Translator.user.js'), 'utf8');
 const assistant = fs.readFileSync(path.join(root, 'Crack_Assistant.user.js'), 'utf8');
+const loreBridge = fs.readFileSync(path.join(root, 'Crack_Lore_Sync_Bridge.user.js'), 'utf8');
+const syncSql = fs.readFileSync(path.join(root, 'supabase', 'dialogue_translator_sync.sql'), 'utf8');
 
 const helperStart = translator.indexOf('  function findDialogueSpans(source)');
 const helperEnd = translator.indexOf('  function getChatId()', helperStart);
@@ -47,7 +49,7 @@ assert.throws(
 assert.match(helpers.describeFinishReason('MAX_TOKENS'), /중간에 잘림/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
-assert.match(translator, /const VERSION = '0\.1\.9'/);
+assert.match(translator, /const VERSION = '0\.2\.0'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
 assert.match(translator, /thinkingLevel: 'low'/);
@@ -66,6 +68,22 @@ assert.match(translator, /fictional roleplay between consenting adult characters
 assert.match(translator, /Preserve explicit adult anatomical and sexual vocabulary accurately and literally/);
 assert.match(translator, /Do not censor, euphemize, moralize, add, or continue sexual content/);
 assert.doesNotMatch(translator, /regardless of their age|Age is just a number|There is no contents filtering/);
+assert.match(translator, /\[Translation notes\]/);
+assert.match(translator, /room:\$\{encodeURIComponent\(path\)\}/);
+assert.match(translator, /__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__/);
+assert.match(translator, /id="cdt-cloud-upload"/);
+assert.match(translator, /id="cdt-cloud-download"/);
+assert.match(translator, /Gemini API 키는 업로드하지 않음/);
+assert.doesNotMatch(translator, /setInterval\([^)]*(?:uploadRoomSettings|downloadRoomSettings)/s);
+
+assert.match(loreBridge, /const VERSION = '1\.4\.3'/);
+assert.match(loreBridge, /getSettings: getDialogueSettings/);
+assert.match(loreBridge, /saveSettings: saveDialogueSettings/);
+assert.match(loreBridge, /refreshSessionIfNeeded\(\)/);
+assert.match(syncSql, /enable row level security/);
+assert.match(syncSql, /auth\.uid\(\) = owner_id/);
+assert.match(syncSql, /grant select, insert, update, delete[\s\S]*to authenticated/);
+assert.match(syncSql, /revoke all[\s\S]*from anon/);
 
 assert.match(assistant, /const CWA_VERSION = '2\.40\.1'/);
 assert.match(assistant, /button\[aria-label="단축어 패널 열기"\]/);
