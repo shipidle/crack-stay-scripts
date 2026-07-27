@@ -50,7 +50,7 @@ assert.throws(
 assert.match(helpers.describeFinishReason('MAX_TOKENS'), /중간에 잘림/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
-assert.match(translator, /const VERSION = '0\.2\.0'/);
+assert.match(translator, /const VERSION = '0\.2\.1'/);
 assert.match(translator, /thinkingLevel: 'low'/);
 assert.match(translator, /maxOutputTokens: 4096/);
 assert.doesNotMatch(translator, /function callGemini\(prompt, dialogueCount\)/);
@@ -63,7 +63,11 @@ assert.match(translator, /fictional roleplay between consenting adult characters
 assert.match(translator, /Preserve explicit adult anatomical and sexual vocabulary accurately and literally/);
 assert.match(translator, /Do not censor, euphemize, moralize, add, or continue sexual content/);
 assert.doesNotMatch(translator, /regardless of their age|Age is just a number|There is no contents filtering/);
-assert.match(translator, /\[Translation notes\]/);
+assert.doesNotMatch(translator, /\[Translation notes\]/);
+assert.match(translator, /id="cdt-guidance"/);
+assert.doesNotMatch(translator, /id="cdt-notes"|id="cdt-voice"/);
+assert.match(translator, /settings: \{ guidance: roomSettings\.guidance \}/);
+assert.match(translator, /saved\?\.guidance \|\| legacyGuidance/);
 assert.match(translator, /room:\$\{encodeURIComponent\(path\)\}/);
 assert.match(translator, /__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__/);
 assert.match(translator, /id="cdt-cloud-upload"/);
@@ -71,7 +75,8 @@ assert.match(translator, /id="cdt-cloud-download"/);
 assert.match(translator, /Gemini API 키는 업로드하지 않음/);
 assert.doesNotMatch(translator, /setInterval\([^)]*(?:uploadRoomSettings|downloadRoomSettings)/s);
 
-assert.match(loreBridge, /const VERSION = '1\.4\.3'/);
+assert.match(loreBridge, /const VERSION = '1\.4\.4'/);
+assert.match(loreBridge, /return \{ guidance \}/);
 assert.match(loreBridge, /getSettings: getDialogueSettings/);
 assert.match(loreBridge, /saveSettings: saveDialogueSettings/);
 assert.match(loreBridge, /refreshSessionIfNeeded\(\)/);

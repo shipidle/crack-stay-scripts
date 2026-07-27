@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.2.0
+// @version      0.2.1
 // @description  크랙 채팅 입력문의 한국어 대사만 영문으로 번역하고 원문 대사를 함께 보존합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -20,7 +20,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   const MODEL = 'gemini-3.1-flash-lite';
   const INPUT_USD_PER_M = 0.25;
   const OUTPUT_USD_PER_M = 1.50;
@@ -36,7 +36,7 @@
   let cloudBusy = false;
   let exchangeRate = null;
   let loadedRoomPath = '';
-  let roomSettings = { voice: '', notes: '', cloudRevision: 0 };
+  let roomSettings = { guidance: '', cloudRevision: 0 };
 
   GM_addStyle(`
     #cdt-toolbar-btn{pointer-events:auto}
@@ -90,15 +90,9 @@
     <div class="cdt-desc">따옴표 안 한국어 대사만 <b>"English" (한국어 원문)</b>으로 바꿈. 지문·줄바꿈은 그대로 둠.</div>
 
     <div class="cdt-card">
-      <label class="cdt-label" for="cdt-voice">방별 캐릭터 설정·관계</label>
-      <textarea class="cdt-textarea" id="cdt-voice" maxlength="1200" placeholder="예: 무뚝뚝한 20대 용병. 짧게 말하고 냉소적이지만 동료에게는 은근히 다정함. 영국식 영어."></textarea>
-      <div class="cdt-meta">나+상대 한 쌍을 1턴으로 묶어 최근 5턴을 참고함. 호칭·이름 번역을 우선 통일함.</div>
-    </div>
-
-    <div class="cdt-card">
-      <label class="cdt-label" for="cdt-notes">방별 번역 노트</label>
-      <textarea class="cdt-textarea" id="cdt-notes" maxlength="3000" placeholder="예: Felix는 펠릭스. Till은 틸. master는 주인님. 펠릭스가 틸을 돌보고 요리해주는 관계."></textarea>
-      <div class="cdt-meta">고유명사·호칭·주체 관계 등 이 방에서만 쓸 규칙을 적으면 프롬프트에 참고시킴.</div>
+      <label class="cdt-label" for="cdt-guidance">방별 캐릭터 설정·번역 노트</label>
+      <textarea class="cdt-textarea" id="cdt-guidance" maxlength="3000" placeholder="예: Felix는 펠릭스. Till은 틸. 펠릭스가 틸을 돌보고 요리해주는 관계. 틸은 짧고 무뚝뚝하게 말함."></textarea>
+      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 한 칸에 적으면 최근 5턴과 함께 참고함.</div>
     </div>
 
     <div class="cdt-card">
@@ -139,9 +133,9 @@
     if (typeof saved === 'string') {
       try { saved = JSON.parse(saved); } catch { saved = null; }
     }
+    const legacyGuidance = [saved?.voice, saved?.notes].map(item => String(item || '').trim()).filter(Boolean).join('\n');
     return {
-      voice: String(saved?.voice || '').slice(0, 1200),
-      notes: String(saved?.notes || '').slice(0, 3000),
+      guidance: String(saved?.guidance || legacyGuidance).slice(0, 3000),
       cloudRevision: Math.max(0, Number(saved?.cloudRevision) || 0),
     };
   }
@@ -153,17 +147,15 @@
     const stored = GM_getValue(roomStorageKey(), null);
     roomSettings = normalizeRoomSettings(stored);
     if (!stored && !GM_getValue(`${KEY}:voiceMigrated`, false)) {
-      roomSettings.voice = String(GM_getValue(`${KEY}:voice`, '') || '').slice(0, 1200);
+      roomSettings.guidance = String(GM_getValue(`${KEY}:voice`, '') || '').slice(0, 3000);
       GM_setValue(`${KEY}:voiceMigrated`, true);
-      if (roomSettings.voice) GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+      if (roomSettings.guidance) GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
     }
-    $('#cdt-voice').value = roomSettings.voice;
-    $('#cdt-notes').value = roomSettings.notes;
+    $('#cdt-guidance').value = roomSettings.guidance;
   }
 
   function saveRoomSettings(showStatus = true) {
-    roomSettings.voice = $('#cdt-voice').value.trim().slice(0, 1200);
-    roomSettings.notes = $('#cdt-notes').value.trim().slice(0, 3000);
+    roomSettings.guidance = $('#cdt-guidance').value.trim().slice(0, 3000);
     GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
     if (showStatus) $('#cdt-status').textContent = '이 방의 설정을 저장했음.';
   }
@@ -209,7 +201,7 @@
       const revision = Math.max(roomSettings.cloudRevision, Number(remote?.revision) || 0) + 1;
       const saved = await api.saveSettings({
         roomKey: location.pathname,
-        settings: { voice: roomSettings.voice, notes: roomSettings.notes },
+        settings: { guidance: roomSettings.guidance },
         revision,
         deviceLabel: status.deviceLabel || '내 기기',
       });
@@ -237,13 +229,12 @@
       const remote = await api.getSettings(location.pathname);
       if (!remote) throw new Error('이 채팅방의 클라우드 저장본이 없음.');
       const next = normalizeRoomSettings({ ...remote.settings, cloudRevision: remote.revision });
-      const localHasContent = $('#cdt-voice').value.trim() || $('#cdt-notes').value.trim();
-      const differs = next.voice !== $('#cdt-voice').value.trim() || next.notes !== $('#cdt-notes').value.trim();
+      const localHasContent = $('#cdt-guidance').value.trim();
+      const differs = next.guidance !== localHasContent;
       if (localHasContent && differs
         && !confirm(`${remote.device_label || '다른 기기'}의 rev ${remote.revision} 설정으로 현재 입력을 바꿀까요?`)) return;
       roomSettings = next;
-      $('#cdt-voice').value = next.voice;
-      $('#cdt-notes').value = next.notes;
+      $('#cdt-guidance').value = next.guidance;
       GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
       $('#cdt-status').textContent = `클라우드 설정 받기 완료 · rev ${roomSettings.cloudRevision}`;
     } catch (error) {
@@ -521,7 +512,7 @@
     }
   }
 
-  function buildPrompt(spans, context, voice, notes) {
+  function buildPrompt(spans, context, voice) {
     const lines = spans.map((span, index) => `${index + 1}. ${span.original}`).join('\n');
     return [
       'This is a dialogue-translation task using fictional roleplay context.',
@@ -543,7 +534,6 @@
       'Return one English translation per item in exactly the same order.',
       '',
       `[Character voice]\n${voice || '(not provided)'}`,
-      `[Translation notes]\n${notes || '(not provided)'}`,
       `[Last ${CONTEXT_TURNS} conversation turns]\n${context}`,
       `[Korean dialogue]\n${lines}`,
     ].join('\n');
@@ -679,8 +669,7 @@
       const result = await callGemini(buildPrompt(
         spans,
         context,
-        compactText($('#cdt-voice').value, 1200),
-        compactText($('#cdt-notes').value, 3000),
+        compactText($('#cdt-guidance').value, 3000),
       ));
       const replaced = applyTranslations(source, spans, result.translations);
       setInputText(input, replaced);
