@@ -80,7 +80,7 @@ assert.match(translator, /id="cdt-cloud-download"/);
 assert.match(translator, /Gemini API 키는 업로드하지 않음/);
 assert.doesNotMatch(translator, /setInterval\([^)]*(?:uploadRoomSettings|downloadRoomSettings)/s);
 
-assert.match(loreBridge, /const VERSION = '1\.5\.2'/);
+assert.match(loreBridge, /const VERSION = '1\.5\.3'/);
 assert.match(loreBridge, /return \{ guidance \}/);
 assert.match(loreBridge, /getSettings: getDialogueSettings/);
 assert.match(loreBridge, /saveSettings: saveDialogueSettings/);
