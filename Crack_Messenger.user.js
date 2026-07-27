@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💌 크랙 메신저
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-messenger
-// @version      0.4.0
+// @version      0.4.1
 // @description  🧪 BETA · 현재 채팅방의 캐릭터와 짧은 메시지를 주고받는 방별 메신저입니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%92%8C%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -22,7 +22,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
   const KEY = 'shipidle:crack-messenger:v1';
   const API_BASE = 'https://crack-api.wrtn.ai';
   const CLOUD_API_KEY = '__SHIPIDLE_MESSENGER_SYNC__';
@@ -57,10 +57,10 @@
     #cms-overlay button,#cms-overlay input,#cms-overlay textarea,#cms-overlay select{font-family:inherit}
     .cms-shell{position:relative;width:min(520px,100%);height:min(780px,calc(100dvh - 36px));display:flex;flex-direction:column;overflow:hidden;border:1px solid #e8ebee;border-radius:24px;background:#fff;box-shadow:0 24px 72px rgba(20,26,34,.22)}
     .cms-head{min-height:66px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid #eef0f2;background:rgba(255,255,255,.97);backdrop-filter:blur(14px)}
-    .cms-head-avatar,.cms-avatar{flex:0 0 auto;overflow:hidden;border-radius:13px;background:#f1f3f5;color:#7c858f;display:flex;align-items:center;justify-content:center}
+    .cms-head-avatar,.cms-avatar{position:relative;flex:0 0 auto;overflow:hidden;border-radius:13px;background:#f1f3f5;color:#7c858f;display:flex;align-items:center;justify-content:center}
     .cms-head-avatar{width:40px;height:40px}
     .cms-avatar{width:32px;height:32px;border-radius:11px;font-size:12px}
-    .cms-head-avatar img,.cms-avatar img{width:100%;height:100%;object-fit:cover}
+    .cms-head-avatar img,.cms-avatar img{position:absolute;max-width:none;max-height:none;object-fit:cover}
     .cms-head-copy{min-width:0;flex:1}
     .cms-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;font-weight:700;letter-spacing:-.02em}
     .cms-subtitle{margin-top:2px;font-size:11.5px;color:#8b949e}
@@ -114,9 +114,9 @@
     .cms-help{margin-top:5px;color:#8b949d;font-size:11.5px;line-height:1.5}
     .cms-avatar-grid{display:grid;grid-template-columns:1fr;gap:10px}
     .cms-avatar-editor{min-width:0;display:grid;grid-template-columns:112px minmax(0,1fr);gap:12px;align-items:center;padding:11px;border:1px solid #e7eaed;border-radius:14px;background:#fafbfb}
-    .cms-avatar-stage{width:112px;height:112px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid #e2e6e9;border-radius:20px;background:#eef1f3;color:#7c858f;font-size:18px;touch-action:none;cursor:grab;user-select:none}
+    .cms-avatar-stage{position:relative;width:112px;height:112px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid #e2e6e9;border-radius:20px;background:#eef1f3;color:#7c858f;font-size:18px;touch-action:none;cursor:grab;user-select:none}
     .cms-avatar-stage[data-dragging="true"]{cursor:grabbing}
-    .cms-avatar-stage img{width:100%;height:100%;object-fit:cover;pointer-events:none;-webkit-user-drag:none}
+    .cms-avatar-stage img{position:absolute;max-width:none;max-height:none;object-fit:cover;pointer-events:none;-webkit-user-drag:none}
     .cms-avatar-editor-title{font-size:13px;font-weight:700;color:#424b54}
     .cms-avatar-editor-tools{min-width:0}
     .cms-file-label{display:inline-flex;align-items:center;justify-content:center;min-height:32px;margin-top:8px;padding:0 10px;border:1px solid #dfe3e6;border-radius:9px;background:#fff;font-size:12px;font-weight:600;color:#59636d;cursor:pointer}
@@ -441,8 +441,11 @@
 
   function avatarMarkup(src, fallback, crop) {
     const frame = normalizeCrop(crop);
+    const size = frame.zoom * 100;
+    const left = -(size - 100) * frame.x / 100;
+    const top = -(size - 100) * frame.y / 100;
     return src
-      ? `<img src="${src}" alt="" style="object-position:${frame.x}% ${frame.y}%;transform:scale(${frame.zoom});transform-origin:${frame.x}% ${frame.y}%">`
+      ? `<img src="${src}" alt="" style="width:${size.toFixed(2)}%;height:${size.toFixed(2)}%;left:${left.toFixed(2)}%;top:${top.toFixed(2)}%;object-position:${frame.x}% ${frame.y}%">`
       : escapeHtml(fallback || '?').slice(0, 2);
   }
 
@@ -578,8 +581,8 @@
         <div class="cms-card"><h3 class="cms-card-title">상대 캐릭터</h3>
           <label class="cms-field"><span class="cms-label">상호작용할 캐릭터 이름</span><input class="cms-input" id="cms-character-name" maxlength="80" value="${escapeHtml(state.settings.characterName)}" placeholder="예: 펠릭스"></label>
           <label class="cms-field"><span class="cms-label">상단 상태 메시지</span><input class="cms-input" id="cms-status-message" maxlength="120" value="${escapeHtml(state.settings.statusMessage)}" placeholder="메시지로 가볍게 이어가는 중"></label>
-          <label class="cms-field"><span class="cms-label">캐릭터라면 이렇게 할 것 같다는 지침</span><textarea class="cms-textarea" id="cms-instructions" maxlength="4000" placeholder="관계, 성격, 지금의 감정, 꼭 지킬 반응 방식">${escapeHtml(state.settings.instructions)}</textarea></label>
-          <label class="cms-field"><span class="cms-label">말투·자잘한 메시지 습관</span><textarea class="cms-textarea" id="cms-habits" maxlength="2500" placeholder="말끝, 이모티콘, 답장 길이, 메시지를 나누는 습관 등">${escapeHtml(state.settings.habits)}</textarea></label>
+          <label class="cms-field"><span class="cms-label">캐릭터라면 이렇게 할 것 같다는 지침</span><textarea class="cms-textarea" id="cms-instructions" name="cms-character-instructions" autocomplete="off" maxlength="4000" placeholder="관계, 성격, 지금의 감정, 꼭 지킬 반응 방식">${escapeHtml(state.settings.instructions)}</textarea></label>
+          <label class="cms-field"><span class="cms-label">말투·자잘한 메시지 습관</span><textarea class="cms-textarea" id="cms-habits" name="cms-character-habits" autocomplete="off" maxlength="2500" placeholder="말끝, 이모티콘, 답장 길이, 메시지를 나누는 습관 등">${escapeHtml(state.settings.habits)}</textarea></label>
         </div>
         <div class="cms-card"><h3 class="cms-card-title">프로필 사진</h3><div class="cms-avatar-grid">
           ${avatarEditor('character', '상대 프사', state.settings.characterAvatar, state.settings.characterName || '캐', state.settings.characterCrop)}
@@ -706,7 +709,7 @@
         const image = new Image();
         image.onerror = () => reject(new Error('지원하지 않는 이미지'));
         image.onload = () => {
-          const maxSize = 640;
+          const maxSize = 768;
           const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
           const width = Math.max(1, Math.round(image.naturalWidth * scale));
           const height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -714,7 +717,14 @@
           canvas.width = width; canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(image, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', .78));
+          let quality = .90;
+          let encoded = canvas.toDataURL('image/jpeg', quality);
+          while (encoded.length > 680000 && quality > .58) {
+            quality -= .08;
+            encoded = canvas.toDataURL('image/jpeg', quality);
+          }
+          if (encoded.length > 700000) reject(new Error('이미지 용량을 충분히 줄이지 못했음'));
+          else resolve(encoded);
         };
         image.src = reader.result;
       };
@@ -811,17 +821,24 @@
     overlay.innerHTML = `<main class="cms-shell" role="dialog" aria-modal="true" aria-label="크랙 메신저">
       <header class="cms-head"><div class="cms-head-avatar" id="cms-head-avatar"></div><div class="cms-head-copy"><div class="cms-title" id="cms-title"></div><div class="cms-subtitle" id="cms-subtitle"></div></div><button class="cms-icon-btn" id="cms-open-settings" type="button" aria-label="설정">⚙</button><button class="cms-icon-btn" id="cms-close" type="button" aria-label="닫기">×</button></header>
       <section class="cms-chat" id="cms-chat"></section>
-      <footer class="cms-composer"><div class="cms-timebar"><button class="cms-time-btn" data-mode="custom" type="button">메시지 보내는 시간</button><button class="cms-time-btn" data-mode="continue" type="button">메시지 이어서</button><input id="cms-custom-time" type="datetime-local"></div><div class="cms-inputrow"><textarea id="cms-input" rows="1" maxlength="4000" placeholder="메시지 입력"></textarea><button id="cms-send" type="button" aria-label="보내기">↑</button></div><div class="cms-foot"><div id="cms-status">준비됨</div><div id="cms-cost"></div></div></footer>
+      <footer class="cms-composer"><div class="cms-timebar"><button class="cms-time-btn" data-mode="custom" type="button">메시지 보내는 시간</button><button class="cms-time-btn" data-mode="continue" type="button">메시지 이어서</button><input id="cms-custom-time" type="datetime-local"></div><div class="cms-inputrow"><textarea id="cms-input" name="cms-message-composer" autocomplete="off" rows="1" maxlength="4000" placeholder="메시지 입력"></textarea><button id="cms-send" type="button" aria-label="보내기">↑</button></div><div class="cms-foot"><div id="cms-status">준비됨</div><div id="cms-cost"></div></div></footer>
     </main>`;
     document.body.appendChild(overlay);
+    const composerInput = document.getElementById('cms-input');
+    composerInput.value = '';
+    composerInput.defaultValue = '';
+    requestAnimationFrame(() => {
+      composerInput.value = '';
+      composerInput.defaultValue = '';
+    });
     document.getElementById('cms-header-button')?.setAttribute('data-open', 'true');
     document.getElementById('cms-close').addEventListener('click', closeMessenger);
     document.getElementById('cms-open-settings').addEventListener('click', openSettings);
     document.getElementById('cms-send').addEventListener('click', () => void sendMessage());
-    document.getElementById('cms-input').addEventListener('keydown', event => {
+    composerInput.addEventListener('keydown', event => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); void sendMessage(); }
     });
-    document.getElementById('cms-input').addEventListener('input', event => {
+    composerInput.addEventListener('input', event => {
       event.currentTarget.style.height = 'auto'; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 112)}px`;
     });
     document.querySelectorAll('.cms-time-btn').forEach(button => button.addEventListener('click', () => {
