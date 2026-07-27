@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💌 크랙 메신저
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-messenger
-// @version      0.1.0
+// @version      0.2.0
 // @description  🧪 BETA · 현재 채팅방의 캐릭터와 짧은 메시지를 주고받는 방별 메신저입니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%92%8C%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -22,7 +22,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const KEY = 'shipidle:crack-messenger:v1';
   const API_BASE = 'https://crack-api.wrtn.ai';
   const CLOUD_API_KEY = '__SHIPIDLE_MESSENGER_SYNC__';
@@ -42,37 +42,40 @@
   let scanTimer = 0;
   let exchangeRate = null;
   let staticContextCache = null;
+  let cropSaveTimer = 0;
 
   GM_addStyle(`
+    @font-face{font-family:"ONE Mobile Title";src:url("https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_2105_2@1.0/ONE-Mobile-Title.woff") format("woff");font-style:normal;font-weight:400;font-display:swap}
     #cms-header-button{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #f3dfe5;border-radius:10px;background:#fff4f7;color:#5b4650;padding:0;box-shadow:0 1px 2px rgba(57,36,45,.05);cursor:pointer;-webkit-tap-highlight-color:transparent}
     #cms-header-button:hover,#cms-header-button[data-open="true"]{background:#fbe8ee;border-color:#edccd7}
     #cms-header-button .cms-header-emoji{display:block;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",emoji;font-size:18px;font-weight:400;line-height:1}
-    #cms-overlay{position:fixed;inset:0;z-index:2147483500;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.34);font-family:"Pretendard","Apple SD Gothic Neo",-apple-system,BlinkMacSystemFont,"Segoe UI","Apple Color Emoji","Segoe UI Emoji",sans-serif;color:#252a31;-webkit-font-smoothing:antialiased}
+    #cms-overlay{position:fixed;inset:0;z-index:2147483500;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.34);font-family:"ONE Mobile Title","Apple SD Gothic Neo",sans-serif;font-weight:400;color:#252a31;-webkit-font-smoothing:antialiased}
     #cms-overlay *{box-sizing:border-box}
+    #cms-overlay button,#cms-overlay input,#cms-overlay textarea,#cms-overlay select{font-family:inherit;font-weight:400}
     .cms-shell{position:relative;width:min(520px,100%);height:min(780px,calc(100dvh - 36px));display:flex;flex-direction:column;overflow:hidden;border:1px solid #e8ebee;border-radius:24px;background:#fff;box-shadow:0 24px 72px rgba(20,26,34,.22)}
     .cms-head{min-height:66px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid #eef0f2;background:rgba(255,255,255,.97);backdrop-filter:blur(14px)}
-    .cms-head-avatar,.cms-avatar{flex:0 0 auto;overflow:hidden;border-radius:13px;background:#f1f3f5;color:#7c858f;display:flex;align-items:center;justify-content:center;font-weight:800}
+    .cms-head-avatar,.cms-avatar{flex:0 0 auto;overflow:hidden;border-radius:13px;background:#f1f3f5;color:#7c858f;display:flex;align-items:center;justify-content:center}
     .cms-head-avatar{width:40px;height:40px}
     .cms-avatar{width:32px;height:32px;border-radius:11px;font-size:12px}
     .cms-head-avatar img,.cms-avatar img{width:100%;height:100%;object-fit:cover}
     .cms-head-copy{min-width:0;flex:1}
-    .cms-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;font-weight:800;letter-spacing:-.02em}
-    .cms-subtitle{margin-top:2px;font-size:11px;color:#8b949e}
-    .cms-icon-btn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:11px;background:#f4f5f6;color:#5e6771;font:700 17px inherit;cursor:pointer}
+    .cms-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;letter-spacing:-.02em}
+    .cms-subtitle{margin-top:2px;font-size:9.5px;color:#8b949e}
+    .cms-icon-btn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:11px;background:#f4f5f6;color:#5e6771;font-size:16px;cursor:pointer}
     .cms-icon-btn:hover{background:#eceff1}
     .cms-chat{flex:1;min-height:0;overflow:auto;padding:18px 14px 12px;background:#f6f7f8;overscroll-behavior:contain}
     .cms-empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#8a929b;padding:32px}
     .cms-empty-icon{font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",emoji;font-size:34px;margin-bottom:10px}
-    .cms-empty strong{color:#4d555e;font-size:14px;margin-bottom:5px}
-    .cms-empty span{font-size:12px;line-height:1.55}
+    .cms-empty strong{color:#4d555e;font-size:13px;margin-bottom:5px}
+    .cms-empty span{font-size:11px;line-height:1.55}
     .cms-day{display:flex;justify-content:center;margin:5px 0 15px}
     .cms-day span{padding:5px 9px;border-radius:999px;background:#e9ecef;color:#7a838d;font-size:10px;font-weight:650}
     .cms-row{display:flex;align-items:flex-end;gap:7px;margin:0 0 11px}
     .cms-row.user{flex-direction:row-reverse}
     .cms-stack{max-width:76%;display:flex;flex-direction:column;gap:3px}
     .cms-row.user .cms-stack{align-items:flex-end}
-    .cms-name{padding:0 3px;font-size:10px;font-weight:700;color:#747d87}
-    .cms-bubble{padding:10px 12px;border:1px solid #e7eaed;border-radius:8px 17px 17px 17px;background:#fff;box-shadow:0 1px 2px rgba(25,31,38,.04);font-size:14px;line-height:1.48;white-space:pre-wrap;word-break:break-word}
+    .cms-name{padding:0 3px;font-size:9.5px;color:#747d87}
+    .cms-bubble{padding:10px 12px;border:1px solid #e7eaed;border-radius:8px 17px 17px 17px;background:#fff;box-shadow:0 1px 2px rgba(25,31,38,.04);font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
     .cms-row.user .cms-bubble{border-color:#dfe4e8;border-radius:17px 8px 17px 17px;background:#e9edf0}
     .cms-time{padding:0 3px;font-size:9px;color:#9aa1a9}
     .cms-typing{display:flex;gap:4px;padding:12px 14px}
@@ -81,42 +84,46 @@
     @keyframes cms-bounce{0%,60%,100%{transform:translateY(0);opacity:.55}30%{transform:translateY(-4px);opacity:1}}
     .cms-composer{padding:10px 12px 12px;border-top:1px solid #e9ecef;background:#fff}
     .cms-timebar{display:flex;align-items:center;gap:6px;margin-bottom:8px}
-    .cms-time-btn{height:29px;border:1px solid #e2e5e8;border-radius:9px;background:#fff;color:#65707b;padding:0 9px;font:700 11px inherit;cursor:pointer}
+    .cms-time-btn{height:29px;border:1px solid #e2e5e8;border-radius:9px;background:#fff;color:#65707b;padding:0 9px;font-size:10px;cursor:pointer}
     .cms-time-btn[data-active="true"]{border-color:#d5dbe0;background:#f0f2f4;color:#313941}
-    #cms-custom-time{height:29px;min-width:0;flex:1;border:1px solid #e2e5e8;border-radius:9px;background:#fff;color:#4d5660;padding:0 7px;font:600 11px inherit}
+    #cms-custom-time{height:29px;min-width:0;flex:1;border:1px solid #e2e5e8;border-radius:9px;background:#fff;color:#4d5660;padding:0 7px;font-size:10px}
     .cms-inputrow{display:flex;align-items:flex-end;gap:8px;padding:7px 7px 7px 12px;border:1px solid #dfe3e6;border-radius:17px;background:#f8f9fa;transition:border-color .15s,box-shadow .15s}
     .cms-inputrow:focus-within{border-color:#b9c1c8;box-shadow:0 0 0 3px rgba(107,119,130,.09)}
-    #cms-input{min-height:38px;max-height:112px;flex:1;resize:none;border:0;outline:0;background:transparent;color:#252b31;padding:8px 0;font:500 14px/1.45 inherit}
+    #cms-input{min-height:38px;max-height:112px;flex:1;resize:none;border:0;outline:0;background:transparent;color:#252b31;padding:8px 0;font-size:13px;line-height:1.48}
     #cms-input::placeholder{color:#a0a7ae}
-    #cms-send{width:38px;height:38px;flex:0 0 auto;border:0;border-radius:13px;background:#333b43;color:#fff;font:800 17px inherit;cursor:pointer}
+    #cms-send{width:38px;height:38px;flex:0 0 auto;border:0;border-radius:13px;background:#333b43;color:#fff;font-size:16px;cursor:pointer}
     #cms-send:disabled{opacity:.42;cursor:default}
     .cms-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px;padding:0 3px}
     #cms-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#8a929a}
     #cms-cost{flex:0 0 auto;font-size:10px;color:#8a929a}
     .cms-settings{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;background:#f7f8f9}
     .cms-settings-head{min-height:62px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid #e7eaed;background:#fff}
-    .cms-settings-title{flex:1;font-size:16px;font-weight:800}
-    .cms-settings-body{flex:1;overflow:auto;padding:14px}
-    .cms-card{margin-bottom:12px;padding:14px;border:1px solid #e6e9ec;border-radius:16px;background:#fff}
-    .cms-card-title{margin:0 0 11px;font-size:13px;font-weight:800;color:#343b43}
-    .cms-field{display:block;margin-bottom:11px}
+    .cms-settings-title{flex:1;font-size:14px}
+    .cms-settings-body{flex:1;overflow:auto;padding:12px 14px 14px}
+    .cms-card{margin-bottom:10px;padding:13px;border:1px solid #e6e9ec;border-radius:16px;background:#fff}
+    .cms-card-title{margin:0 0 10px;font-size:12px;font-weight:400;color:#343b43}
+    .cms-field{display:block;margin-bottom:10px}
     .cms-field:last-child{margin-bottom:0}
-    .cms-label{display:block;margin:0 0 6px;font-size:11px;font-weight:750;color:#606a74}
-    .cms-input,.cms-select,.cms-textarea{width:100%;border:1px solid #dfe3e6;border-radius:11px;background:#fafbfb;color:#293039;padding:10px 11px;outline:0;font:500 13px/1.45 inherit}
+    .cms-label{display:block;margin:0 0 5px;font-size:10px;color:#606a74}
+    .cms-input,.cms-select,.cms-textarea{width:100%;border:1px solid #dfe3e6;border-radius:11px;background:#fafbfb;color:#293039;padding:9px 10px;outline:0;font-size:11.5px;line-height:1.45}
     .cms-input:focus,.cms-select:focus,.cms-textarea:focus{border-color:#aeb8c1;box-shadow:0 0 0 3px rgba(110,124,136,.09)}
     .cms-textarea{min-height:90px;resize:vertical}
-    .cms-help{margin-top:5px;color:#8b949d;font-size:10px;line-height:1.5}
-    .cms-avatar-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    .cms-avatar-pick{display:flex;align-items:center;gap:9px;padding:9px;border:1px solid #e7eaed;border-radius:12px;background:#fafbfb}
-    .cms-avatar-pick .cms-head-avatar{width:38px;height:38px}
-    .cms-file-label{font-size:11px;font-weight:750;color:#59636d;cursor:pointer}
+    .cms-help{margin-top:5px;color:#8b949d;font-size:9.5px;line-height:1.5}
+    .cms-avatar-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+    .cms-avatar-editor{min-width:0;padding:10px;border:1px solid #e7eaed;border-radius:12px;background:#fafbfb}
+    .cms-avatar-pick{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+    .cms-avatar-pick .cms-head-avatar{width:54px;height:54px;border-radius:15px}
+    .cms-file-label{font-size:10px;color:#59636d;cursor:pointer}
     .cms-file-label input{display:none}
+    .cms-crop-row{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;gap:5px;margin-top:5px}
+    .cms-crop-label{font-size:9px;color:#8b949d}
+    .cms-crop-row input{width:100%;accent-color:#737d86}
     .cms-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .cms-btn{min-height:40px;border:1px solid #dfe3e6;border-radius:12px;background:#fff;color:#424b54;padding:0 12px;font:750 12px inherit;cursor:pointer}
+    .cms-btn{min-height:38px;border:1px solid #dfe3e6;border-radius:12px;background:#fff;color:#424b54;padding:0 12px;font-size:10.5px;cursor:pointer}
     .cms-btn.primary{border-color:#343c44;background:#343c44;color:#fff}
     .cms-btn.danger{border-color:#f0d6dc;background:#fff6f8;color:#a14457}
     .cms-btn:disabled{opacity:.45;cursor:default}
-    #cms-settings-status{min-height:18px;margin-top:8px;text-align:center;color:#7c858e;font-size:10px;line-height:1.5}
+    #cms-settings-status{min-height:18px;margin-top:8px;text-align:center;color:#7c858e;font-size:9.5px;line-height:1.5}
     @media(max-width:640px){#cms-overlay{padding:0;align-items:stretch}.cms-shell{width:100%;height:100dvh;border:0;border-radius:0}.cms-head{padding-top:env(safe-area-inset-top);min-height:calc(62px + env(safe-area-inset-top))}.cms-composer{padding-bottom:max(12px,env(safe-area-inset-bottom))}.cms-stack{max-width:80%}.cms-settings-head{padding-top:env(safe-area-inset-top);min-height:calc(58px + env(safe-area-inset-top))}}
   `);
 
@@ -124,6 +131,7 @@
     return {
       characterName: '', instructions: '', habits: '', model: 'gemini-3.1-flash-lite',
       contextTurns: 14, cloudRevision: 0, characterAvatar: '', userAvatar: '',
+      characterCrop: { x: 50, y: 50, zoom: 1 }, userCrop: { x: 50, y: 50, zoom: 1 },
     };
   }
 
@@ -154,9 +162,29 @@
       model: MODELS[value?.model] ? value.model : base.model,
       contextTurns: [10, 14, 20].includes(Number(value?.contextTurns)) ? Number(value.contextTurns) : base.contextTurns,
       cloudRevision: Math.max(0, Number(value?.cloudRevision) || 0),
-      characterAvatar: /^data:image\/(?:png|jpeg|webp);base64,/.test(String(value?.characterAvatar || '')) ? value.characterAvatar : '',
-      userAvatar: /^data:image\/(?:png|jpeg|webp);base64,/.test(String(value?.userAvatar || '')) ? value.userAvatar : '',
+      characterAvatar: normalizeAvatar(value?.characterAvatar),
+      userAvatar: normalizeAvatar(value?.userAvatar),
+      characterCrop: normalizeCrop(value?.characterCrop),
+      userCrop: normalizeCrop(value?.userCrop),
     };
+  }
+
+  function normalizeCrop(value) {
+    return {
+      x: clampNumber(value?.x, 0, 100, 50),
+      y: clampNumber(value?.y, 0, 100, 50),
+      zoom: clampNumber(value?.zoom, 1, 3, 1),
+    };
+  }
+
+  function normalizeAvatar(value) {
+    const avatar = String(value || '');
+    return avatar.length <= 700000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar) ? avatar : '';
+  }
+
+  function clampNumber(value, min, max, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
   }
 
   function normalizeState(value) {
@@ -401,8 +429,11 @@
     return Math.max(Number(last) + Math.max(60_000, Date.now() - state.lastRealSentAt), Number(last) + 60_000);
   }
 
-  function avatarMarkup(src, fallback) {
-    return src ? `<img src="${src}" alt="">` : escapeHtml(fallback || '?').slice(0, 2);
+  function avatarMarkup(src, fallback, crop) {
+    const frame = normalizeCrop(crop);
+    return src
+      ? `<img src="${src}" alt="" style="object-position:${frame.x}% ${frame.y}%;transform:scale(${frame.zoom});transform-origin:${frame.x}% ${frame.y}%">`
+      : escapeHtml(fallback || '?').slice(0, 2);
   }
 
   function escapeHtml(value) {
@@ -424,9 +455,10 @@
       const user = item.role === 'user';
       const name = user ? '나' : (state.settings.characterName || '캐릭터');
       const avatar = user ? state.settings.userAvatar : state.settings.characterAvatar;
-      parts.push(`<div class="cms-row ${user ? 'user' : 'assistant'}"><div class="cms-avatar">${avatarMarkup(avatar, name)}</div><div class="cms-stack"><div class="cms-name">${escapeHtml(name)}</div><div class="cms-bubble">${escapeHtml(item.text)}</div><div class="cms-time">${new Date(item.time).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}</div></div></div>`);
+      const crop = user ? state.settings.userCrop : state.settings.characterCrop;
+      parts.push(`<div class="cms-row ${user ? 'user' : 'assistant'}"><div class="cms-avatar">${avatarMarkup(avatar, name, crop)}</div><div class="cms-stack"><div class="cms-name">${escapeHtml(name)}</div><div class="cms-bubble">${escapeHtml(item.text)}</div><div class="cms-time">${new Date(item.time).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}</div></div></div>`);
     }
-    if (busy) parts.push(`<div class="cms-row assistant"><div class="cms-avatar">${avatarMarkup(state.settings.characterAvatar, state.settings.characterName || '캐')}</div><div class="cms-stack"><div class="cms-typing"><i></i><i></i><i></i></div></div></div>`);
+    if (busy) parts.push(`<div class="cms-row assistant"><div class="cms-avatar">${avatarMarkup(state.settings.characterAvatar, state.settings.characterName || '캐', state.settings.characterCrop)}</div><div class="cms-stack"><div class="cms-typing"><i></i><i></i><i></i></div></div></div>`);
     root.innerHTML = parts.join('');
     requestAnimationFrame(() => { root.scrollTop = root.scrollHeight; });
   }
@@ -436,7 +468,7 @@
     const title = document.getElementById('cms-title');
     const avatar = document.getElementById('cms-head-avatar');
     if (title) title.textContent = name;
-    if (avatar) avatar.innerHTML = avatarMarkup(state.settings.characterAvatar, name);
+    if (avatar) avatar.innerHTML = avatarMarkup(state.settings.characterAvatar, name, state.settings.characterCrop);
   }
 
   function updateTimeControls() {
@@ -512,6 +544,13 @@
     return Object.entries(MODELS).map(([value, item]) => `<option value="${value}" ${state.settings.model === value ? 'selected' : ''}>${item.label}</option>`).join('');
   }
 
+  function cropControls(prefix, crop) {
+    const frame = normalizeCrop(crop);
+    return `<div class="cms-crop-row"><span class="cms-crop-label">가로</span><input id="cms-${prefix}-crop-x" type="range" min="0" max="100" step="1" value="${frame.x}" aria-label="가로 위치"></div>
+      <div class="cms-crop-row"><span class="cms-crop-label">세로</span><input id="cms-${prefix}-crop-y" type="range" min="0" max="100" step="1" value="${frame.y}" aria-label="세로 위치"></div>
+      <div class="cms-crop-row"><span class="cms-crop-label">확대</span><input id="cms-${prefix}-crop-zoom" type="range" min="1" max="3" step="0.05" value="${frame.zoom}" aria-label="확대"></div>`;
+  }
+
   function openSettings() {
     const shell = document.querySelector('.cms-shell');
     if (!shell || document.getElementById('cms-settings')) return;
@@ -527,15 +566,15 @@
           <label class="cms-field"><span class="cms-label">말투·자잘한 메시지 습관</span><textarea class="cms-textarea" id="cms-habits" maxlength="2500" placeholder="말끝, 이모티콘, 답장 길이, 메시지를 나누는 습관 등">${escapeHtml(state.settings.habits)}</textarea></label>
         </div>
         <div class="cms-card"><h3 class="cms-card-title">프로필 사진</h3><div class="cms-avatar-grid">
-          <div class="cms-avatar-pick"><div class="cms-head-avatar" id="cms-character-preview">${avatarMarkup(state.settings.characterAvatar, state.settings.characterName || '캐')}</div><label class="cms-file-label">상대 프사<input id="cms-character-file" type="file" accept="image/*"></label></div>
-          <div class="cms-avatar-pick"><div class="cms-head-avatar" id="cms-user-preview">${avatarMarkup(state.settings.userAvatar, '나')}</div><label class="cms-file-label">내 프사<input id="cms-user-file" type="file" accept="image/*"></label></div>
-        </div><div class="cms-help">프사는 이 기기에만 저장됨. Lore Sync·Gemini에는 업로드하지 않음.</div></div>
+          <div class="cms-avatar-editor"><div class="cms-avatar-pick"><div class="cms-head-avatar" id="cms-character-preview">${avatarMarkup(state.settings.characterAvatar, state.settings.characterName || '캐', state.settings.characterCrop)}</div><label class="cms-file-label">상대 프사<input id="cms-character-file" type="file" accept="image/*"></label></div>${cropControls('character', state.settings.characterCrop)}</div>
+          <div class="cms-avatar-editor"><div class="cms-avatar-pick"><div class="cms-head-avatar" id="cms-user-preview">${avatarMarkup(state.settings.userAvatar, '나', state.settings.userCrop)}</div><label class="cms-file-label">내 프사<input id="cms-user-file" type="file" accept="image/*"></label></div>${cropControls('user', state.settings.userCrop)}</div>
+        </div><div class="cms-help">프사와 구도는 Lore Sync 방 설정에 함께 저장됨. Gemini에는 보내지 않음.</div></div>
         <div class="cms-card"><h3 class="cms-card-title">Gemini</h3>
           <label class="cms-field"><span class="cms-label">모델</span><select class="cms-select" id="cms-model">${settingOptions()}</select></label>
           <label class="cms-field"><span class="cms-label">Gemini API Key</span><input class="cms-input" id="cms-api-key" type="password" autocomplete="off" value="${escapeHtml(String(GM_getValue(`${KEY}:apiKey`, '') || ''))}" placeholder="AIza..."><div class="cms-help">키는 이 기기에만 저장되며 Lore Sync에 올리지 않음.</div></label>
           <label class="cms-field"><span class="cms-label">본채팅 최근 대화 참고</span><select class="cms-select" id="cms-context-turns"><option value="10">최근 10턴</option><option value="14">최근 14턴</option><option value="20">최근 20턴</option></select></label>
         </div>
-        <div class="cms-card"><h3 class="cms-card-title">☁️ Lore Sync 방 설정</h3><div class="cms-help" id="cms-cloud-status">연결 상태 확인 중…</div><div class="cms-actions" style="margin-top:10px"><button class="cms-btn primary" id="cms-cloud-upload" type="button">클라우드에 올리기</button><button class="cms-btn" id="cms-cloud-download" type="button">클라우드에서 받기</button></div><div class="cms-help">캐릭터명·지침·말투·모델·참고 턴 수만 수동 동기화함.</div></div>
+        <div class="cms-card"><h3 class="cms-card-title">☁️ Lore Sync 방 설정</h3><div class="cms-help" id="cms-cloud-status">연결 상태 확인 중…</div><div class="cms-actions" style="margin-top:10px"><button class="cms-btn primary" id="cms-cloud-upload" type="button">클라우드에 올리기</button><button class="cms-btn" id="cms-cloud-download" type="button">클라우드에서 받기</button></div><div class="cms-help">캐릭터명·지침·말투·모델·참고 턴 수·프사·구도를 수동 동기화함.</div></div>
         <div class="cms-card"><h3 class="cms-card-title">대화 관리</h3><button class="cms-btn danger" id="cms-clear" type="button" style="width:100%">이 방의 메신저 대화 전체 지우기</button><div class="cms-help">Crack 본채팅과 장기기억은 건드리지 않음.</div></div>
         <div class="cms-actions"><button class="cms-btn primary" id="cms-save-settings" type="button">설정 저장</button><button class="cms-btn" id="cms-cancel-settings" type="button">닫기</button></div><div id="cms-settings-status">v${VERSION}</div>
       </div>`;
@@ -545,8 +584,10 @@
     document.getElementById('cms-cancel-settings').addEventListener('click', closeSettings);
     document.getElementById('cms-save-settings').addEventListener('click', () => void saveSettingsFromForm());
     document.getElementById('cms-clear').addEventListener('click', () => void clearMessages());
-    document.getElementById('cms-character-file').addEventListener('change', event => void loadAvatar(event, 'characterAvatar', 'cms-character-preview'));
-    document.getElementById('cms-user-file').addEventListener('change', event => void loadAvatar(event, 'userAvatar', 'cms-user-preview'));
+    document.getElementById('cms-character-file').addEventListener('change', event => void loadAvatar(event, 'characterAvatar', 'characterCrop', 'cms-character-preview'));
+    document.getElementById('cms-user-file').addEventListener('change', event => void loadAvatar(event, 'userAvatar', 'userCrop', 'cms-user-preview'));
+    bindCropControls('character', 'characterCrop', 'characterAvatar', 'cms-character-preview');
+    bindCropControls('user', 'userCrop', 'userAvatar', 'cms-user-preview');
     document.getElementById('cms-cloud-upload').addEventListener('click', () => void uploadSettings());
     document.getElementById('cms-cloud-download').addEventListener('click', () => void downloadSettings());
     refreshCloudStatus();
@@ -572,13 +613,29 @@
     if (showStatus) document.getElementById('cms-settings-status').textContent = '이 방의 설정을 저장했음.';
   }
 
-  async function loadAvatar(event, key, previewId) {
+  function bindCropControls(prefix, cropKey, avatarKey, previewId) {
+    const controls = ['x', 'y', 'zoom'].map(axis => document.getElementById(`cms-${prefix}-crop-${axis}`));
+    controls.forEach(control => control?.addEventListener('input', () => {
+      state.settings[cropKey] = normalizeCrop({ x: controls[0]?.value, y: controls[1]?.value, zoom: controls[2]?.value });
+      const preview = document.getElementById(previewId);
+      if (preview) preview.innerHTML = avatarMarkup(state.settings[avatarKey], '', state.settings[cropKey]);
+      clearTimeout(cropSaveTimer);
+      cropSaveTimer = setTimeout(() => void saveState(), 160);
+    }));
+  }
+
+  async function loadAvatar(event, key, cropKey, previewId) {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
       const dataUrl = await resizeImage(file);
       state.settings[key] = dataUrl;
-      document.getElementById(previewId).innerHTML = avatarMarkup(dataUrl, '');
+      state.settings[cropKey] = { x: 50, y: 50, zoom: 1 };
+      document.getElementById(previewId).innerHTML = avatarMarkup(dataUrl, '', state.settings[cropKey]);
+      ['x', 'y', 'zoom'].forEach(axis => {
+        const control = document.getElementById(`cms-${key === 'characterAvatar' ? 'character' : 'user'}-crop-${axis}`);
+        if (control) control.value = String(state.settings[cropKey][axis]);
+      });
       await saveState();
     } catch (error) { document.getElementById('cms-settings-status').textContent = `프사 오류: ${error.message}`; }
   }
@@ -591,15 +648,15 @@
         const image = new Image();
         image.onerror = () => reject(new Error('지원하지 않는 이미지'));
         image.onload = () => {
-          const size = 256;
+          const maxSize = 640;
+          const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
+          const width = Math.max(1, Math.round(image.naturalWidth * scale));
+          const height = Math.max(1, Math.round(image.naturalHeight * scale));
           const canvas = document.createElement('canvas');
-          canvas.width = size; canvas.height = size;
+          canvas.width = width; canvas.height = height;
           const ctx = canvas.getContext('2d');
-          const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
-          const width = image.naturalWidth * scale;
-          const height = image.naturalHeight * scale;
-          ctx.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
-          resolve(canvas.toDataURL('image/jpeg', .82));
+          ctx.drawImage(image, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', .78));
         };
         image.src = reader.result;
       };
@@ -635,8 +692,14 @@
   }
 
   function cloudSafeSettings() {
-    const { characterName, instructions, habits, model, contextTurns } = state.settings;
-    return { characterName, instructions, habits, model, contextTurns };
+    const {
+      characterName, instructions, habits, model, contextTurns,
+      characterAvatar, userAvatar, characterCrop, userCrop,
+    } = state.settings;
+    return {
+      characterName, instructions, habits, model, contextTurns,
+      characterAvatar, userAvatar, characterCrop, userCrop,
+    };
   }
 
   async function uploadSettings() {
