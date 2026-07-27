@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.5.0
+// @version      1.5.1
 // @description  개인 Supabase에 로어 백업·메모리 체크포인트·메신저 방 설정을 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -25,7 +25,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.1';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const BACKGROUND_SYNC_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -349,6 +349,27 @@
       habits: String(settings?.habits || '').trim().slice(0, 2500),
       model,
       contextTurns,
+      characterAvatar: normalizeMessengerAvatar(settings?.characterAvatar),
+      userAvatar: normalizeMessengerAvatar(settings?.userAvatar),
+      characterCrop: normalizeMessengerCrop(settings?.characterCrop),
+      userCrop: normalizeMessengerCrop(settings?.userCrop),
+    };
+  }
+
+  function normalizeMessengerAvatar(value) {
+    const avatar = String(value || '');
+    return avatar.length <= 700000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar) ? avatar : '';
+  }
+
+  function normalizeMessengerCrop(value) {
+    const clamp = (input, min, max, fallback) => {
+      const number = Number(input);
+      return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+    };
+    return {
+      x: clamp(value?.x, 0, 100, 50),
+      y: clamp(value?.y, 0, 100, 50),
+      zoom: clamp(value?.zoom, 1, 3, 1),
     };
   }
 
