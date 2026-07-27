@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.5.2
+// @version      1.5.3
 // @description  🧪 BETA · 개인 Supabase에 로어 백업·메모리 체크포인트·방별 설정을 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -25,7 +25,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.5.2';
+  const VERSION = '1.5.3';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const BACKGROUND_SYNC_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -381,8 +381,10 @@
   }
 
   function normalizeMessengerSettings(settings) {
-    const allowedModels = new Set(['gemini-3.1-flash-lite', 'gemini-2.5-pro', 'gemini-3.1-pro-preview']);
-    const model = allowedModels.has(String(settings?.model || '')) ? String(settings.model) : 'gemini-3.1-flash-lite';
+    const allowedModels = new Set(['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.1-pro-preview']);
+    const legacyModels = { 'gemini-3.1-flash-lite': 'gemini-3.5-flash-lite', 'gemini-2.5-pro': 'gemini-3.6-flash' };
+    const requestedModel = legacyModels[String(settings?.model || '')] || String(settings?.model || '');
+    const model = allowedModels.has(requestedModel) ? requestedModel : 'gemini-3.6-flash';
     const contextTurns = [10, 14, 20].includes(Number(settings?.contextTurns)) ? Number(settings.contextTurns) : 14;
     return {
       characterName: String(settings?.characterName || '').trim().slice(0, 80),

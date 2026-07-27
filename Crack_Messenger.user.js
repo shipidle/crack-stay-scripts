@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💌 크랙 메신저
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-messenger
-// @version      0.3.1
+// @version      0.4.0
 // @description  🧪 BETA · 현재 채팅방의 캐릭터와 짧은 메시지를 주고받는 방별 메신저입니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%92%8C%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -22,7 +22,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.1';
+  const VERSION = '0.4.0';
   const KEY = 'shipidle:crack-messenger:v1';
   const API_BASE = 'https://crack-api.wrtn.ai';
   const CLOUD_API_KEY = '__SHIPIDLE_MESSENGER_SYNC__';
@@ -30,9 +30,13 @@
   const STATIC_CACHE_MS = 5 * 60 * 1000;
   const MAX_LOCAL_MESSAGES = 300;
   const MODELS = Object.freeze({
-    'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', input: 0.25, output: 1.50, thinking: 'minimal' },
-    'gemini-2.5-pro': { label: 'Gemini 2.5 Pro', input: 1.25, output: 10.00, thinking: null },
+    'gemini-3.5-flash-lite': { label: 'Gemini 3.5 Flash-Lite · 초절약', input: 0.30, output: 2.50, thinking: 'minimal' },
+    'gemini-3.6-flash': { label: 'Gemini 3.6 Flash · 추천', input: 1.50, output: 7.50, thinking: 'low' },
     'gemini-3.1-pro-preview': { label: 'Gemini 3.1 Pro Preview', input: 2.00, output: 12.00, thinking: 'low' },
+  });
+  const LEGACY_MODELS = Object.freeze({
+    'gemini-3.1-flash-lite': 'gemini-3.5-flash-lite',
+    'gemini-2.5-pro': 'gemini-3.6-flash',
   });
 
   let currentPath = '';
@@ -93,7 +97,7 @@
     #cms-send{width:38px;height:38px;flex:0 0 auto;border:0;border-radius:13px;background:#333b43;color:#fff;font-size:16px;cursor:pointer}
     #cms-send:disabled{opacity:.42;cursor:default}
     .cms-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px;padding:0 3px}
-    #cms-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#8a929a}
+    #cms-status{min-width:0;flex:1;white-space:normal;overflow-wrap:anywhere;font-size:11px;line-height:1.45;color:#8a929a}
     #cms-cost{flex:0 0 auto;font-size:11px;color:#8a929a}
     .cms-settings{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;background:#f7f8f9}
     .cms-settings-head{min-height:62px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid #e7eaed;background:#fff}
@@ -133,7 +137,7 @@
 
   function defaultSettings() {
     return {
-      characterName: '', statusMessage: '', instructions: '', habits: '', model: 'gemini-3.1-flash-lite',
+      characterName: '', statusMessage: '', instructions: '', habits: '', model: 'gemini-3.6-flash',
       contextTurns: 14, cloudRevision: 0, characterAvatar: '', userAvatar: '',
       characterCrop: { x: 50, y: 50, zoom: 1 }, userCrop: { x: 50, y: 50, zoom: 1 },
     };
@@ -159,12 +163,13 @@
 
   function normalizeSettings(value) {
     const base = defaultSettings();
+    const requestedModel = LEGACY_MODELS[value?.model] || value?.model;
     return {
       characterName: String(value?.characterName || '').trim().slice(0, 80),
       statusMessage: String(value?.statusMessage || '').trim().slice(0, 120),
       instructions: String(value?.instructions || '').trim().slice(0, 4000),
       habits: String(value?.habits || '').trim().slice(0, 2500),
-      model: MODELS[value?.model] ? value.model : base.model,
+      model: MODELS[requestedModel] ? requestedModel : base.model,
       contextTurns: [10, 14, 20].includes(Number(value?.contextTurns)) ? Number(value.contextTurns) : base.contextTurns,
       cloudRevision: Math.max(0, Number(value?.cloudRevision) || 0),
       characterAvatar: normalizeAvatar(value?.characterAvatar),
@@ -387,9 +392,9 @@
     const model = MODELS[state.settings.model];
     if (!model) return null;
     const promptTokens = Number(usage?.promptTokenCount || 0);
-    const inputRate = promptTokens > 200000 && state.settings.model !== 'gemini-3.1-flash-lite' ? model.input * 2 : model.input;
-    const outputRate = promptTokens > 200000 && state.settings.model === 'gemini-2.5-pro' ? 15
-      : promptTokens > 200000 && state.settings.model === 'gemini-3.1-pro-preview' ? 18 : model.output;
+    const proLongContext = promptTokens > 200000 && state.settings.model === 'gemini-3.1-pro-preview';
+    const inputRate = proLongContext ? 4 : model.input;
+    const outputRate = proLongContext ? 18 : model.output;
     return (promptTokens / 1e6 * inputRate + billableOutputTokens(usage) / 1e6 * outputRate) * exchangeRate;
   }
 
