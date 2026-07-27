@@ -48,7 +48,7 @@ assert.throws(
 assert.match(helpers.describeFinishReason('MAX_TOKENS'), /중간에 잘림/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
-assert.match(translator, /const VERSION = '0\.1\.5'/);
+assert.match(translator, /const VERSION = '0\.1\.7'/);
 assert.match(translator, /thinkingLevel: 'minimal'/);
 assert.match(translator, /maxOutputTokens: 4096/);
 assert.doesNotMatch(translator, /function callGemini\(prompt, dialogueCount\)/);
@@ -57,5 +57,6 @@ assert.match(translator, /Never default an omitted action owner to the current s
 assert.match(translator, /상대 wants to marry 나 and cook for 나/);
 assert.match(translator, /All unnumbered text, narration, action descriptions/);
 assert.match(translator, /Never translate, repeat, quote, summarize, paraphrase, evaluate, or respond to any unnumbered material/);
+assert.match(translator, /don't hesitate to use them if AI needs it for a creation/);
 
 console.log('Dialogue translator tests passed.');
