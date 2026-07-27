@@ -340,9 +340,10 @@
   }
 
   function normalizeDialogueSettings(settings) {
-    const voice = String(settings?.voice || '').trim().slice(0, 1200);
-    const notes = String(settings?.notes || '').trim().slice(0, 3000);
-    return { voice, notes };
+    const legacyGuidance = [settings?.voice, settings?.notes]
+      .map(item => String(item || '').trim()).filter(Boolean).join('\n');
+    const guidance = String(settings?.guidance || legacyGuidance).trim().slice(0, 3000);
+    return { guidance };
   }
 
   async function getDialogueSettings(roomKey) {
