@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.4
+// @version      0.1.5
 // @description  NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const APP_NAME = 'NAI Prompt Selector';
-  const APP_VERSION = '0.1.4';
+  const APP_VERSION = '0.1.5';
   const STORAGE_KEY = 'crackNaiPromptSelector.state.v1';
   const BACKUP_KEY = 'crackNaiPromptSelector.backups.v1';
   const MAX_ACTIVE_CHARACTERS = 6;
@@ -848,7 +848,7 @@
   function placeCaretAtEnd(editor) {
     editor.focus();
     const range = document.createRange();
-    range.selectNodeContents(editor);
+    range.selectNodeContents(editor.lastElementChild || editor);
     range.collapse(false);
     const selection = getSelection();
     selection.removeAllRanges();
@@ -890,19 +890,27 @@
       chunk.name === spec.name && normalizeText(chunk.content) === normalizeText(spec.content)
     ));
     if (!nativeChunk) throw new Error(`NAI에 동기화된 Chunk가 없습니다: ${spec.name}`);
-    placeCaretAtEnd(editor);
-    const before = editor.innerHTML;
+    const countMatchingMacros = () => Array.from(editor.querySelectorAll('.macro-node')).filter(node => (
+      node.getAttribute('data-macro-label') === spec.name
+      && normalizeText(node.getAttribute('data-macro-expansion')) === normalizeText(spec.content)
+    )).length;
+    const beforeCount = countMatchingMacros();
     nativeChunk.item.click();
-    const changed = await waitFor(() => editor.innerHTML !== before, 1800, 80);
-    if (!changed) throw new Error(`네이티브 Chunk 삽입을 확인하지 못했습니다: ${spec.name}`);
-    insertEditorText(editor, /[,]\s*$/.test(spec.content) ? ' ' : ', ');
+    const inserted = await waitFor(() => countMatchingMacros() > beforeCount, 1800, 80);
+    if (!inserted) throw new Error(`네이티브 Chunk 삽입을 확인하지 못했습니다: ${spec.name}`);
   }
 
   async function applyTarget(editor, specs, quickPrompt, label) {
     if (!editor) throw new Error(`${label} 입력 칸을 찾지 못했습니다.`);
     await clearEditor(editor);
+    placeCaretAtEnd(editor);
     for (const spec of specs) await insertNativeChunk(editor, spec);
-    if (normalizeText(quickPrompt)) insertEditorText(editor, normalizeText(quickPrompt));
+    const normalizedQuickPrompt = normalizeText(quickPrompt);
+    if (normalizedQuickPrompt) {
+      const lastContent = specs.at(-1)?.content || '';
+      const separator = specs.length ? (/[,]\s*$/.test(lastContent) ? ' ' : ', ') : '';
+      insertEditorText(editor, `${separator}${normalizedQuickPrompt}`);
+    }
   }
 
   function specsForSlots(slots) {
