@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.4.2
-// @description  개인 Supabase에 로어 백업과 메모리 요약 턴 체크포인트를 안전하게 동기화합니다.
+// @version      1.4.4
+// @description  개인 Supabase에 로어 백업·메모리 체크포인트·방별 설정을 안전하게 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -25,12 +25,14 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.4';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const BACKGROUND_SYNC_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
+  const DIALOGUE_SYNC_API_KEY = '__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__';
   const BACKGROUND_BUCKET = 'chat-backgrounds';
   const BACKGROUND_TABLE = 'chat_background_sync';
+  const DIALOGUE_TABLE = 'dialogue_translator_sync';
   const BACKGROUND_MAX_BYTES = 700 * 1024;
   const BRIDGE = unsafeWindow || window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
@@ -321,6 +323,45 @@
     if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Lore Sync에 Supabase 연결 정보를 저장해주셈.' };
     if (!session?.access_token) return { ready: false, reason: 'Lore Sync에서 Supabase 로그인해주셈.' };
     return { ready: true, email: session.user?.email || config.email || '', deviceLabel: config.deviceLabel || '내 기기' };
+  }
+
+  function dialogueSyncStatus() {
+    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Lore Sync에 Supabase 연결 정보를 저장해주셈.' };
+    if (!session?.access_token) return { ready: false, reason: 'Lore Sync에서 Supabase 로그인해주셈.' };
+    return { ready: true, email: session.user?.email || config.email || '', deviceLabel: config.deviceLabel || '내 기기' };
+  }
+
+  function validateDialogueRoomKey(roomKey) {
+    const value = String(roomKey || '');
+    if (!/^\/(stories\/[^/]+\/episodes|characters\/[^/]+\/chats|u\/[^/]+\/c)\/[^/?#]+$/.test(value)) throw new Error('번역 설정 채팅방 경로가 올바르지 않음.');
+    return value;
+  }
+
+  function normalizeDialogueSettings(settings) {
+    const legacyGuidance = [settings?.voice, settings?.notes]
+      .map(item => String(item || '').trim()).filter(Boolean).join('\n');
+    const guidance = String(settings?.guidance || legacyGuidance).trim().slice(0, 3000);
+    return { guidance };
+  }
+
+  async function getDialogueSettings(roomKey) {
+    const active = await refreshSessionIfNeeded();
+    const path = validateDialogueRoomKey(roomKey);
+    const query = `owner_id=eq.${encodeURIComponent(active.user.id)}&room_key=eq.${encodeURIComponent(path)}&select=settings,revision,updated_at,device_label`;
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/${DIALOGUE_TABLE}?${query}`);
+    return rows?.[0] || null;
+  }
+
+  async function saveDialogueSettings({ roomKey, settings, revision, deviceLabel } = {}) {
+    const active = await refreshSessionIfNeeded();
+    const path = validateDialogueRoomKey(roomKey);
+    const safeRevision = Math.max(1, Number(revision) || 1);
+    const safeSettings = normalizeDialogueSettings(settings);
+    const rows = await authedRequest(`${config.projectUrl}/rest/v1/${DIALOGUE_TABLE}?on_conflict=owner_id,room_key`, {
+      method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+      body: { owner_id: active.user.id, room_key: path, settings: safeSettings, revision: safeRevision, device_label: String(deviceLabel || config.deviceLabel || '내 기기').slice(0, 80) },
+    });
+    return rows?.[0] || { revision: safeRevision };
   }
 
   function validateBackgroundRoomKey(roomKey) {
@@ -1085,6 +1126,16 @@
       saveManifest: saveBackgroundManifest,
       uploadImage: uploadBackgroundImage,
       downloadImage: downloadBackgroundImage,
+    }),
+  });
+
+  Object.defineProperty(BRIDGE, DIALOGUE_SYNC_API_KEY, {
+    configurable: true,
+    value: Object.freeze({
+      version: 1,
+      getStatus: dialogueSyncStatus,
+      getSettings: getDialogueSettings,
+      saveSettings: saveDialogueSettings,
     }),
   });
 
