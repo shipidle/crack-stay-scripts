@@ -149,6 +149,7 @@ assert.match(source, /nativeChunk\.item\.click\(\)/, '네이티브 Chunk 클릭 
 assert.match(source, /Base Prompt 설정 버튼/, 'Prompt Chunks는 Base Prompt 설정에서 열어야 함');
 assert.match(source, /getComputedStyle\(element\)\.cursor === 'pointer'/, 'Prompt Chunks 탭 전환 계약이 필요함');
 assert.match(source, /data-action="apply-character-bulk"/, '캐릭터 메인·네거에도 여러 줄 입력 UI가 필요함');
+assert.match(source, /panelOpen:\s*false/, 'NAI 진입 시 Selector 패널은 닫힌 상태여야 함');
 assert.doesNotMatch(source, /Delete All/, '원격 전체 삭제 문구나 호출 경로가 있으면 안 됨');
 assert.match(source, /MAX_ACTIVE_CHARACTERS = 6/);
 assert.match(source, /@match\s+https:\/\/novelai\.net\/image\*/);

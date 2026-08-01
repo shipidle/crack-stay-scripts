@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.3
+// @version      0.1.4
 // @description  🧪 BETA · NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const APP_NAME = 'NAI Prompt Selector';
-  const APP_VERSION = '0.1.3';
+  const APP_VERSION = '0.1.4';
   const STORAGE_KEY = 'crackNaiPromptSelector.state.v1';
   const BACKUP_KEY = 'crackNaiPromptSelector.backups.v1';
   const MAX_ACTIVE_CHARACTERS = 6;
@@ -358,7 +358,7 @@
   let statusTimer = null;
   let dirty = false;
   const runtime = {
-    panelOpen: true,
+    panelOpen: false,
     tab: 'main',
     selectedSlotId: state.slots.find(slot => slot.type === 'main')?.id || null,
     selectedCharacterId: state.characters[0]?.id || null,
