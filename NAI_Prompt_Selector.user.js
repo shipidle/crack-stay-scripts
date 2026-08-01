@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.0
+// @version      0.1.1
 // @description  NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const APP_NAME = 'NAI Prompt Selector';
-  const APP_VERSION = '0.1.0';
+  const APP_VERSION = '0.1.1';
   const STORAGE_KEY = 'crackNaiPromptSelector.state.v1';
   const BACKUP_KEY = 'crackNaiPromptSelector.backups.v1';
   const MAX_ACTIVE_CHARACTERS = 6;
@@ -196,6 +196,13 @@
     }));
   }
 
+  function parseBulkRows(text, type = 'main', fallbackName = 'Chunk', existingRows = []) {
+    const usedNames = new Set(existingRows.map(row => normalizeText(row?.name)).filter(Boolean));
+    return parseBulkText(text, type, fallbackName)
+      .flatMap(section => section.rows)
+      .map(row => ({ ...row, name: uniqueName(row.name, usedNames) }));
+  }
+
   function categoryForSlot(slot) {
     return slot.type === 'negative' ? `[네거] ${slot.name}` : `[메인] ${slot.name}`;
   }
@@ -303,6 +310,7 @@
     categoryForSlot,
     countActiveCharacters,
     createDefaultState,
+    parseBulkRows,
     parseBulkText,
     prepareImportMerge,
     sanitizeState,
@@ -1168,6 +1176,12 @@
           </div>
           <div class="nps-segments"><button type="button" data-action="character-kind" data-kind="main" class="${kind === 'main' ? 'is-active' : ''}">메인</button><button type="button" data-action="character-kind" data-kind="negative" class="${kind === 'negative' ? 'is-active' : ''}">네거</button></div>
           <div class="nps-card"><div class="nps-folder-name">NAI 폴더 · ${escapeHtml(categoryForCharacter(character, kind))}</div><div class="nps-card-head"><strong>Chunk 줄</strong><button type="button" class="nps-soft-btn" data-action="add-row" data-owner="${character.id}" data-owner-type="character-${kind}">＋ 줄 추가</button></div><div class="nps-rows">${renderRows(character, target.rows, `character-${kind}`)}</div></div>
+          <details class="nps-card">
+            <summary>여러 줄 일괄 붙여넣기</summary>
+            <p class="nps-help">한 줄마다 Chunk 하나로 추가함. <code>눈 = blue eyes</code>처럼 이름을 지정하거나 내용만 붙여넣어도 됨. <code>[외형]</code> 같은 구분 헤더는 Chunk로 저장하지 않음.</p>
+            <textarea class="nps-bulk" data-bulk-character="${character.id}" data-bulk-kind="${kind}" placeholder="검은머리 = black hair\nblue eyes\nsmile"></textarea>
+            <button type="button" class="nps-primary" data-action="apply-character-bulk" data-character="${character.id}" data-kind="${kind}">줄 반영</button>
+          </details>
           <div class="nps-card"><label>빠른 프롬프트<textarea data-field="character-quick" data-character="${character.id}" data-kind="${kind}" rows="3">${escapeHtml(target.quickPrompt)}</textarea></label></div>
           <div class="nps-card"><div class="nps-card-head"><strong>확장 미리보기</strong><span>${preview.length}자</span></div><pre class="nps-preview">${escapeHtml(preview || '선택한 Chunk가 없음')}</pre></div>
         </section>
@@ -1367,6 +1381,19 @@
       persistState({ immediate: true });
       render();
       setStatus(`${parsed.length}개 슬롯에 줄을 반영했습니다.`, 'ok');
+    } else if (action === 'apply-character-bulk') {
+      const character = state.characters.find(item => item.id === button.dataset.character);
+      const kind = button.dataset.kind === 'negative' ? 'negative' : 'main';
+      if (!character) return setStatus('캐릭터를 찾지 못했습니다.', 'error');
+      const textarea = Array.from(shadow.querySelectorAll('.nps-bulk[data-bulk-character]')).find(input => (
+        input.dataset.bulkCharacter === character.id && input.dataset.bulkKind === kind
+      ));
+      const incomingRows = parseBulkRows(textarea?.value, kind, character.name, character[kind].rows);
+      if (!incomingRows.length) return setStatus('반영할 줄이 없습니다.', 'warn');
+      character[kind].rows.push(...incomingRows);
+      persistState({ immediate: true });
+      render();
+      setStatus(`${character.name} ${kind === 'negative' ? '네거' : '메인'}에 ${incomingRows.length}줄을 반영했습니다.`, 'ok');
     } else if (action === 'add-character') {
       const character = createCharacter(`캐릭터 ${state.characters.length + 1}`);
       state.characters.push(character);
