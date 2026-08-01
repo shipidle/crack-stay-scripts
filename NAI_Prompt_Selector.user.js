@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.2
+// @version      0.1.3
 // @description  🧪 BETA · NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const APP_NAME = 'NAI Prompt Selector';
-  const APP_VERSION = '0.1.2';
+  const APP_VERSION = '0.1.3';
   const STORAGE_KEY = 'crackNaiPromptSelector.state.v1';
   const BACKUP_KEY = 'crackNaiPromptSelector.backups.v1';
   const MAX_ACTIVE_CHARACTERS = 6;
@@ -160,6 +160,14 @@
     };
   }
 
+  function parseNamedBulkLine(line) {
+    const match = String(line ?? '').match(/^(.{1,60}?)\s*(?:=>|=)\s*(.+)$/);
+    if (!match) return null;
+    const name = normalizeText(match[1]);
+    const content = normalizeText(match[2]);
+    return name && content ? { name, content } : null;
+  }
+
   function parseBulkText(text, type = 'main', fallbackName = '새 슬롯') {
     const sections = [];
     let current = null;
@@ -178,11 +186,11 @@
         continue;
       }
       if (!current) ensureSection(fallbackName);
-      const named = line.match(/^(.{1,60}?)\s+(?:=>|=)\s+(.+)$/);
-      const content = normalizeText(named?.[2] || line);
+      const named = parseNamedBulkLine(line);
+      const content = named?.content || normalizeText(line);
       const usedNames = new Set(current.rows.map(row => row.name));
       const name = named
-        ? uniqueName(named[1], usedNames)
+        ? uniqueName(named.name, usedNames)
         : inferChunkName(content, current.rows.length, usedNames);
       current.rows.push(createRow(name, content, true));
     }
@@ -198,9 +206,26 @@
 
   function parseBulkRows(text, type = 'main', fallbackName = 'Chunk', existingRows = []) {
     const usedNames = new Set(existingRows.map(row => normalizeText(row?.name)).filter(Boolean));
-    return parseBulkText(text, type, fallbackName)
-      .flatMap(section => section.rows)
-      .map(row => ({ ...row, name: uniqueName(row.name, usedNames) }));
+    const rows = [];
+    let headerName = '';
+    for (const rawLine of String(text ?? '').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const header = line.match(/^\[(.+?)]\s*$/);
+      if (header) {
+        headerName = normalizeText(header[1]);
+        continue;
+      }
+      const named = parseNamedBulkLine(line);
+      const content = named?.content || normalizeText(line);
+      const name = named
+        ? uniqueName(named.name, usedNames)
+        : headerName
+          ? uniqueName(headerName, usedNames)
+          : inferChunkName(content, rows.length, usedNames);
+      rows.push(createRow(name, content, true));
+    }
+    return rows;
   }
 
   function categoryForSlot(slot) {
@@ -1193,8 +1218,8 @@
           <div class="nps-card"><div class="nps-folder-name">NAI 폴더 · ${escapeHtml(categoryForCharacter(character, kind))} · 저장 이름 ${escapeHtml(character.name)}/Chunk명</div><div class="nps-card-head"><strong>Chunk 줄</strong><button type="button" class="nps-soft-btn" data-action="add-row" data-owner="${character.id}" data-owner-type="character-${kind}">＋ 줄 추가</button></div><div class="nps-rows">${renderRows(character, target.rows, `character-${kind}`)}</div></div>
           <details class="nps-card">
             <summary>여러 줄 일괄 붙여넣기</summary>
-            <p class="nps-help">한 줄마다 Chunk 하나로 추가함. <code>눈 = blue eyes</code>처럼 이름을 지정하거나 내용만 붙여넣어도 됨. <code>[외형]</code> 같은 구분 헤더는 Chunk로 저장하지 않음.</p>
-            <textarea class="nps-bulk" data-bulk-character="${character.id}" data-bulk-kind="${kind}" placeholder="검은머리 = black hair\nblue eyes\nsmile"></textarea>
+            <p class="nps-help">한 줄마다 Chunk 하나로 추가함. <code>[베이스]</code> 다음 이름 없는 줄은 <code>베이스 = 내용</code>으로 인식함. <code>눈=blue eyes</code>처럼 직접 이름을 지정해도 됨.</p>
+            <textarea class="nps-bulk" data-bulk-character="${character.id}" data-bulk-kind="${kind}" placeholder="[베이스]\n1 man, adult male, tall\n[눈]\ngolden eyes\n[의상]\n블랙탑=black tank top"></textarea>
             <button type="button" class="nps-primary" data-action="apply-character-bulk" data-character="${character.id}" data-kind="${kind}">줄 반영</button>
           </details>
           <div class="nps-card"><label>빠른 프롬프트<textarea data-field="character-quick" data-character="${character.id}" data-kind="${kind}" rows="3">${escapeHtml(target.quickPrompt)}</textarea></label></div>
