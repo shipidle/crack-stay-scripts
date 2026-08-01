@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.5
+// @version      0.1.6
 // @description  🧪 BETA · NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const APP_NAME = 'NAI Prompt Selector';
-  const APP_VERSION = '0.1.5';
+  const APP_VERSION = '0.1.6';
   const STORAGE_KEY = 'crackNaiPromptSelector.state.v1';
   const BACKUP_KEY = 'crackNaiPromptSelector.backups.v1';
   const MAX_ACTIVE_CHARACTERS = 6;
@@ -335,6 +335,7 @@
 
   const testApi = {
     MAX_ACTIVE_CHARACTERS,
+    buildNativeConflictDecisions,
     buildExpandedPreview,
     categoryForCharacter,
     categoryForSlot,
@@ -642,6 +643,14 @@
     return [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
   }
 
+  function buildNativeConflictDecisions(conflicts, checkedIds) {
+    const selected = new Set(checkedIds);
+    return new Map(conflicts.map(conflict => [
+      conflict.key,
+      selected.has(conflict.id) ? 'overwrite' : 'skip',
+    ]));
+  }
+
   async function syncNative(decisions = new Map()) {
     if (runtime.busy) return;
     runtime.busy = true;
@@ -671,7 +680,8 @@
 
       const undecided = conflicts.filter(conflict => !decisions.has(conflict.spec.key));
       if (undecided.length) {
-        runtime.nativeConflicts = conflicts.map(conflict => ({
+        runtime.nativeConflicts = conflicts.map((conflict, index) => ({
+          id: `native-conflict-${index}`,
           key: conflict.spec.key,
           category: conflict.spec.category,
           name: conflict.spec.name,
@@ -1136,7 +1146,7 @@
     return rows.map((row, index) => `
       <article class="nps-row ${row.enabled ? 'is-enabled' : ''}">
         <button type="button" class="nps-line-toggle" data-action="toggle-row" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" title="선택/해제">${index + 1}</button>
-        <details class="nps-row-details">
+        <details class="nps-row-details" data-ui-details-key="row:${escapeHtml(row.id)}">
           <summary><span class="nps-row-title">${escapeHtml(row.name || '이름 없는 Chunk')}</span><span class="nps-row-enabled">${row.enabled ? '사용' : '꺼짐'}</span></summary>
           <div class="nps-row-expanded">
             <div class="nps-row-fields">
@@ -1182,7 +1192,7 @@
             <div class="nps-card-head"><strong>Chunk 줄</strong><button type="button" class="nps-soft-btn" data-action="add-row" data-owner="${slot.id}" data-owner-type="slot">＋ 줄 추가</button></div>
             <div class="nps-rows">${renderRows(slot, slot.rows, 'slot')}</div>
           </div>
-          <details class="nps-card">
+          <details class="nps-card" data-ui-details-key="bulk:${type}">
             <summary>여러 줄 일괄 붙여넣기</summary>
             <p class="nps-help"><code>[프로필]</code> 아래에 <code>흰배경 = white background</code>처럼 입력 가능. 이름 없이 내용만 넣은 뒤 줄별 이름을 수정해도 됨.</p>
             <textarea class="nps-bulk" data-bulk-type="${type}" placeholder="[프로필]\n흰배경 = white background\nportrait\n나보기 = looking at viewer"></textarea>
@@ -1224,7 +1234,7 @@
           </div>
           <div class="nps-segments"><button type="button" data-action="character-kind" data-kind="main" class="${kind === 'main' ? 'is-active' : ''}">메인</button><button type="button" data-action="character-kind" data-kind="negative" class="${kind === 'negative' ? 'is-active' : ''}">네거</button></div>
           <div class="nps-card"><div class="nps-folder-name">NAI 폴더 · ${escapeHtml(categoryForCharacter(character, kind))} · 저장 이름 ${escapeHtml(character.name)}/Chunk명</div><div class="nps-card-head"><strong>Chunk 줄</strong><button type="button" class="nps-soft-btn" data-action="add-row" data-owner="${character.id}" data-owner-type="character-${kind}">＋ 줄 추가</button></div><div class="nps-rows">${renderRows(character, target.rows, `character-${kind}`)}</div></div>
-          <details class="nps-card">
+          <details class="nps-card" data-ui-details-key="character-bulk:${escapeHtml(character.id)}:${kind}">
             <summary>여러 줄 일괄 붙여넣기</summary>
             <p class="nps-help">한 줄마다 Chunk 하나로 추가함. <code>[베이스]</code> 다음 이름 없는 줄은 <code>베이스 = 내용</code>으로 인식함. <code>눈=blue eyes</code>처럼 직접 이름을 지정해도 됨.</p>
             <textarea class="nps-bulk" data-bulk-character="${character.id}" data-bulk-kind="${kind}" placeholder="[베이스]\n1 man, adult male, tall\n[눈]\ngolden eyes\n[의상]\n블랙탑=black tank top"></textarea>
@@ -1270,7 +1280,7 @@
   function conflictOverlay() {
     if (runtime.nativeConflicts) {
       return `<div class="nps-overlay"><div class="nps-dialog"><h3>NAI Chunk 충돌</h3><p>체크한 항목만 이번 내용으로 덮어씀. 체크하지 않은 항목은 유지함.</p><div class="nps-conflicts">${runtime.nativeConflicts.map(conflict => `
-        <label class="nps-conflict"><input type="checkbox" data-native-conflict="${escapeHtml(conflict.key)}"><span><strong>${escapeHtml(conflict.category)} · ${escapeHtml(conflict.name)}</strong><small>${escapeHtml(conflict.reason)}</small><del>${escapeHtml(conflict.current)}</del><ins>${escapeHtml(conflict.incoming)}</ins></span></label>`).join('')}</div><div class="nps-dialog-actions"><button type="button" data-action="cancel-native-conflicts">취소</button><button type="button" class="nps-primary" data-action="apply-native-conflicts">선택대로 동기화</button></div></div></div>`;
+        <label class="nps-conflict"><input type="checkbox" data-native-conflict="${conflict.id}"><span><strong>${escapeHtml(conflict.category)} · ${escapeHtml(conflict.name)}</strong><small>${escapeHtml(conflict.reason)}</small><del>${escapeHtml(conflict.current)}</del><ins>${escapeHtml(conflict.incoming)}</ins></span></label>`).join('')}</div><div class="nps-dialog-actions"><button type="button" data-action="cancel-native-conflicts">취소</button><button type="button" class="nps-primary" data-action="apply-native-conflicts">선택대로 동기화</button></div></div></div>`;
     }
     if (runtime.importContext?.conflicts?.length) {
       return `<div class="nps-overlay"><div class="nps-dialog"><h3>JSON 가져오기 충돌</h3><p>체크한 항목만 가져온 내용으로 덮어씀. 나머지는 현재 값을 유지함.</p><div class="nps-conflicts">${runtime.importContext.conflicts.map(conflict => `
@@ -1279,8 +1289,31 @@
     return '';
   }
 
+  function captureUiView() {
+    if (!shadow?.querySelector('.nps-content')) return null;
+    return {
+      contentScrollTop: shadow.querySelector('.nps-content')?.scrollTop || 0,
+      slotListScrollTop: shadow.querySelector('.nps-slot-list')?.scrollTop || 0,
+      openDetails: Array.from(shadow.querySelectorAll('details[data-ui-details-key][open]'))
+        .map(details => details.dataset.uiDetailsKey),
+    };
+  }
+
+  function restoreUiView(view) {
+    if (!view) return;
+    const openDetails = new Set(view.openDetails || []);
+    shadow.querySelectorAll('details[data-ui-details-key]').forEach(details => {
+      details.open = openDetails.has(details.dataset.uiDetailsKey);
+    });
+    const content = shadow.querySelector('.nps-content');
+    const slotList = shadow.querySelector('.nps-slot-list');
+    if (content) content.scrollTop = view.contentScrollTop || 0;
+    if (slotList) slotList.scrollTop = view.slotListScrollTop || 0;
+  }
+
   function render() {
     if (!app) return;
+    const uiView = captureUiView();
     const view = runtime.tab === 'main'
       ? slotEditor('main')
       : runtime.tab === 'negative'
@@ -1296,6 +1329,7 @@
         <div class="nps-status" data-tone="${runtime.status.tone}">${escapeHtml(runtime.status.text)}</div>
         <main class="nps-content">${view}</main>
       </section>${conflictOverlay()}`;
+    restoreUiView(uiView);
   }
 
   function findRowOwner(ownerId, ownerType) {
@@ -1500,8 +1534,10 @@
       render();
       setStatus('NAI 동기화를 취소했습니다. 기존 데이터는 변경하지 않았습니다.', 'warn');
     } else if (action === 'apply-native-conflicts') {
-      const decisions = new Map(runtime.nativeConflicts.map(conflict => [conflict.key, 'skip']));
-      shadow.querySelectorAll('[data-native-conflict]:checked').forEach(input => decisions.set(input.dataset.nativeConflict, 'overwrite'));
+      const conflicts = runtime.nativeConflicts || [];
+      const checkedIds = Array.from(shadow.querySelectorAll('[data-native-conflict]:checked'))
+        .map(input => input.dataset.nativeConflict);
+      const decisions = buildNativeConflictDecisions(conflicts, checkedIds);
       runtime.nativeConflicts = null;
       await syncNative(decisions);
     } else if (action === 'cancel-import-conflicts') {
