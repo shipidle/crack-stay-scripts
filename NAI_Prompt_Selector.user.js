@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.6
+// @version      0.1.7
 // @description  🧪 BETA · NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const APP_NAME = 'NAI Prompt Selector';
-  const APP_VERSION = '0.1.6';
+  const APP_VERSION = '0.1.7';
   const STORAGE_KEY = 'crackNaiPromptSelector.state.v1';
   const BACKUP_KEY = 'crackNaiPromptSelector.backups.v1';
   const MAX_ACTIVE_CHARACTERS = 6;
@@ -99,7 +99,7 @@
       savedAt: new Date().toISOString(),
       slots: [createSlot('main', '베이스'), createSlot('negative', '기본 네거')],
       characters: [],
-      auto: { intervalSeconds: 3, count: '' },
+      auto: { intervalSeconds: 3, count: '', promptSource: 'selector' },
     };
   }
 
@@ -156,8 +156,13 @@
       auto: {
         intervalSeconds: Math.max(0.1, Number(value.auto?.intervalSeconds) || 3),
         count: Number.parseInt(value.auto?.count, 10) > 0 ? Number.parseInt(value.auto.count, 10) : '',
+        promptSource: value.auto?.promptSource === 'current' ? 'current' : 'selector',
       },
     };
+  }
+
+  function shouldApplyPromptsBeforeAuto(stateValue) {
+    return stateValue.auto?.promptSource !== 'current';
   }
 
   function parseNamedBulkLine(line) {
@@ -348,6 +353,7 @@
     prepareImportMerge,
     renderRows,
     sanitizeState,
+    shouldApplyPromptsBeforeAuto,
   };
   global.__NAI_PROMPT_SELECTOR_TEST__ = testApi;
   if (global.__NPS_DISABLE_BOOT__) return;
@@ -374,6 +380,7 @@
       completed: 0,
       target: 0,
       unitCost: 0,
+      promptSource: state.auto.promptSource,
       timer: null,
       nextTimer: null,
       sawDisabled: false,
@@ -1018,7 +1025,8 @@
     button.click();
     runtime.auto.submitted += 1;
     runtime.auto.sawDisabled = false;
-    setStatus(`자동 생성 진행 · 완료 ${runtime.auto.completed} / ${runtime.auto.target || '∞'} · 누적 ${runtime.auto.unitCost * runtime.auto.submitted} Anlas`, 'working');
+    const sourceLabel = runtime.auto.promptSource === 'current' ? '현재 NAI 유지' : '셀렉터 적용';
+    setStatus(`자동 생성 진행 · ${sourceLabel} · 완료 ${runtime.auto.completed} / ${runtime.auto.target || '∞'} · 누적 ${runtime.auto.unitCost * runtime.auto.submitted} Anlas`, 'working');
     render();
   }
 
@@ -1046,12 +1054,18 @@
   async function startAuto() {
     if (runtime.auto.active || runtime.busy) return;
     const cost = readGenerationCost();
-    if (cost > 0 && !global.confirm(`현재 1회 생성 비용은 ${cost} Anlas입니다. 자동 생성을 시작할까요?`)) {
+    const applySelectorPrompts = shouldApplyPromptsBeforeAuto(state);
+    const sourceLabel = applySelectorPrompts ? '셀렉터 내용을 적용한 뒤' : '현재 NAI 프롬프트를 그대로 유지하고';
+    if (cost > 0 && !global.confirm(`현재 1회 생성 비용은 ${cost} Anlas입니다. ${sourceLabel} 자동 생성을 시작할까요?`)) {
       setStatus('자동 생성을 취소했습니다.', 'warn');
       return;
     }
-    const applied = await applyAllPrompts();
-    if (!applied) return;
+    if (applySelectorPrompts) {
+      const applied = await applyAllPrompts();
+      if (!applied) return;
+    } else {
+      setStatus('현재 NAI 프롬프트를 변경하지 않고 자동 생성을 준비합니다.', 'working');
+    }
     const button = findGenerateButton();
     if (!button) {
       setStatus('NAI 생성 버튼을 찾지 못했습니다.', 'error');
@@ -1062,6 +1076,7 @@
     runtime.auto.completed = 0;
     runtime.auto.target = Number.parseInt(state.auto.count, 10) || 0;
     runtime.auto.unitCost = cost;
+    runtime.auto.promptSource = state.auto.promptSource;
     runtime.auto.sawDisabled = button.disabled;
     runtime.auto.timer = setInterval(watchAutoProgress, 500);
     if (!button.disabled) clickNextGeneration();
@@ -1248,6 +1263,7 @@
 
   function autoView() {
     const target = Number.parseInt(state.auto.count, 10) || 0;
+    const useCurrentPrompt = state.auto.promptSource === 'current';
     return `
       <div class="nps-grid-two">
         <section class="nps-card">
@@ -1255,7 +1271,9 @@
           <label>주기(초)<input type="number" min="0.1" step="0.1" data-field="auto-interval" value="${escapeHtml(state.auto.intervalSeconds)}"></label>
           <label>횟수<input type="number" min="0" step="1" data-field="auto-count" value="${escapeHtml(state.auto.count)}" placeholder="0 또는 빈칸 = 무한"></label>
           <div class="nps-presets">${[5, 10, 20, 30, 50].map(count => `<button type="button" data-action="auto-preset" data-count="${count}">${count}</button>`).join('')}<button type="button" data-action="auto-preset" data-count="">∞</button></div>
-          <button type="button" class="${runtime.auto.active ? 'nps-stop' : 'nps-primary'}" data-action="${runtime.auto.active ? 'stop-auto' : 'start-auto'}">${runtime.auto.active ? '■ 자동 생성 중지' : '▶ 적용 후 자동 생성'}</button>
+          <div class="nps-segments"><button type="button" data-action="auto-source" data-source="selector" class="${useCurrentPrompt ? '' : 'is-active'}" ${runtime.auto.active ? 'disabled' : ''}>셀렉터 적용</button><button type="button" data-action="auto-source" data-source="current" class="${useCurrentPrompt ? 'is-active' : ''}" ${runtime.auto.active ? 'disabled' : ''}>현재 NAI 그대로</button></div>
+          <button type="button" class="${runtime.auto.active ? 'nps-stop' : 'nps-primary'}" data-action="${runtime.auto.active ? 'stop-auto' : 'start-auto'}">${runtime.auto.active ? '■ 자동 생성 중지' : useCurrentPrompt ? '▶ 현재 NAI 내용으로 자동 생성' : '▶ 셀렉터 적용 후 자동 생성'}</button>
+          <p class="nps-help">현재 NAI 그대로 모드는 메인·네거·캐릭터 프롬프트와 슬롯 상태를 변경하지 않음.</p>
           <p class="nps-help">NAI가 표시하는 Anlas만 합산함. 원화 고정 환율이 없어 임의 환산하지 않음.</p>
         </section>
         <section class="nps-card">
@@ -1523,6 +1541,11 @@
       stopAuto();
     } else if (action === 'auto-preset') {
       state.auto.count = button.dataset.count ? Number(button.dataset.count) : '';
+      persistState({ immediate: true });
+      render();
+    } else if (action === 'auto-source') {
+      if (runtime.auto.active) return;
+      state.auto.promptSource = button.dataset.source === 'current' ? 'current' : 'selector';
       persistState({ immediate: true });
       render();
     } else if (action === 'export-json') {

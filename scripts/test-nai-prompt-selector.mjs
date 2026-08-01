@@ -41,6 +41,10 @@ const negative = api.parseBulkText('[손]\n손오류 = bad hands\n손가락 = ex
 assert.equal(api.categoryForSlot(negative), '[네거] 손');
 
 const state = api.createDefaultState();
+assert.equal(state.auto.promptSource, 'selector', '기존 자동 생성 동작을 위해 기본값은 셀렉터 적용이어야 함');
+assert.equal(api.shouldApplyPromptsBeforeAuto(state), true);
+state.auto.promptSource = 'current';
+assert.equal(api.shouldApplyPromptsBeforeAuto(state), false, '현재 NAI 모드는 셀렉터 프롬프트 적용을 건너뛰어야 함');
 state.slots[0].rows = [
   { id: 'a', name: 'A', content: 'first', enabled: true },
   { id: 'b', name: 'B', content: 'second', enabled: false },
@@ -157,6 +161,9 @@ assert.match(source, /Base Prompt 설정 버튼/, 'Prompt Chunks는 Base Prompt 
 assert.match(source, /getComputedStyle\(element\)\.cursor === 'pointer'/, 'Prompt Chunks 탭 전환 계약이 필요함');
 assert.match(source, /data-action="apply-character-bulk"/, '캐릭터 메인·네거에도 여러 줄 입력 UI가 필요함');
 assert.match(source, /panelOpen:\s*false/, 'NAI 진입 시 Selector 패널은 닫힌 상태여야 함');
+assert.match(source, /data-action="auto-source" data-source="current"/, '현재 NAI 프롬프트 그대로 자동 생성하는 모드가 필요함');
+assert.match(source, /if \(applySelectorPrompts\) \{[\s\S]*?await applyAllPrompts\(\)/, '셀렉터 모드에서만 프롬프트를 적용해야 함');
+assert.match(source, /현재 NAI 프롬프트와 슬롯 상태를 변경하지 않음|현재 NAI 그대로 모드는 메인·네거·캐릭터 프롬프트와 슬롯 상태를 변경하지 않음/, '현재 NAI 모드의 비파괴 동작을 UI에 설명해야 함');
 assert.match(source, /id: `native-conflict-\$\{index\}`/, '충돌 체크박스에는 HTML 안전 ID가 필요함');
 assert.doesNotMatch(source, /data-native-conflict="\$\{escapeHtml\(conflict\.key\)\}"/, 'NUL이 포함된 내부 충돌 키를 data 속성에 직접 넣으면 안 됨');
 assert.match(source, /buildNativeConflictDecisions\(conflicts, checkedIds\)/, '화면용 충돌 ID를 내부 키의 결정값으로 다시 매핑해야 함');
