@@ -83,12 +83,19 @@ assert.deepEqual(
   '캐릭터 Chunk는 캐릭터명/Chunk명으로 NAI 전체에서 구분되어야 함',
 );
 
+const nativeConflictDecisions = api.buildNativeConflictDecisions([
+  { id: 'native-conflict-0', key: '[메인] 슬롯\u0000Chunk A' },
+  { id: 'native-conflict-1', key: '[네거] 슬롯\u0000Chunk B' },
+], ['native-conflict-0']);
+assert.equal(nativeConflictDecisions.get('[메인] 슬롯\u0000Chunk A'), 'overwrite', '체크한 충돌은 NUL이 포함된 내부 키에도 덮어쓰기로 매핑되어야 함');
+assert.equal(nativeConflictDecisions.get('[네거] 슬롯\u0000Chunk B'), 'skip', '체크하지 않은 충돌은 유지해야 함');
+
 const collapsedRows = api.renderRows(
   { id: 'slot' },
   [{ id: 'row', name: '네거', content: 'bad hands', enabled: true }],
   'slot',
 );
-assert.match(collapsedRows, /<details class="nps-row-details">/, 'Chunk 줄은 기본 접힘 details여야 함');
+assert.match(collapsedRows, /<details class="nps-row-details" data-ui-details-key="row:row">/, 'Chunk 줄은 상태 복원용 고유 키가 있는 details여야 함');
 assert.doesNotMatch(collapsedRows, /<details class="nps-row-details"[^>]*\sopen(?:\s|>)/, 'Chunk 줄은 기본으로 펼쳐지면 안 됨');
 assert.match(collapsedRows, /<summary><span class="nps-row-title">네거<\/span>/, '접힌 상태에서도 Chunk 제목이 보여야 함');
 
@@ -150,6 +157,13 @@ assert.match(source, /Base Prompt 설정 버튼/, 'Prompt Chunks는 Base Prompt 
 assert.match(source, /getComputedStyle\(element\)\.cursor === 'pointer'/, 'Prompt Chunks 탭 전환 계약이 필요함');
 assert.match(source, /data-action="apply-character-bulk"/, '캐릭터 메인·네거에도 여러 줄 입력 UI가 필요함');
 assert.match(source, /panelOpen:\s*false/, 'NAI 진입 시 Selector 패널은 닫힌 상태여야 함');
+assert.match(source, /id: `native-conflict-\$\{index\}`/, '충돌 체크박스에는 HTML 안전 ID가 필요함');
+assert.doesNotMatch(source, /data-native-conflict="\$\{escapeHtml\(conflict\.key\)\}"/, 'NUL이 포함된 내부 충돌 키를 data 속성에 직접 넣으면 안 됨');
+assert.match(source, /buildNativeConflictDecisions\(conflicts, checkedIds\)/, '화면용 충돌 ID를 내부 키의 결정값으로 다시 매핑해야 함');
+assert.match(source, /function captureUiView\(\)/, '다시 그리기 전에 스크롤과 details 상태를 저장해야 함');
+assert.match(source, /function restoreUiView\(view\)/, '다시 그린 뒤 스크롤과 details 상태를 복원해야 함');
+assert.match(source, /content\.scrollTop = view\.contentScrollTop/, '콘텐츠 스크롤 위치를 복원해야 함');
+assert.match(source, /details\.open = openDetails\.has\(details\.dataset\.uiDetailsKey\)/, 'Chunk 펼침 상태를 복원해야 함');
 const nativeInsertBody = source.match(/async function insertNativeChunk[\s\S]*?\r?\n  }\r?\n\r?\n  async function applyTarget/)?.[0] || '';
 assert.match(nativeInsertBody, /data-macro-label/, '네이티브 Chunk 삽입은 실제 macro-node 증가로 확인해야 함');
 assert.doesNotMatch(nativeInsertBody, /insertEditorText/, 'Chunk 사이에 일반 쉼표 텍스트를 넣으면 다음 네이티브 Chunk 삽입이 깨짐');
