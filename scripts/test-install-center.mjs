@@ -16,7 +16,7 @@ assert.ok(files.length > 0, '활성 userscript가 없음');
 assert.doesNotMatch(install, /raw\.githubusercontent\.com\/[^\s)]+\/archive\//, '설치 링크에 archive 경로가 들어가면 안 됨');
 
 for (const file of files) {
-  assert.match(file, /^Crack_[A-Za-z0-9_]+\.user\.js$/, `${file}: 파일명은 Crack_*.user.js 형식이어야 함`);
+  assert.match(file, /^(?:Crack|NAI)_[A-Za-z0-9_]+\.user\.js$/, `${file}: 파일명은 Crack_*.user.js 또는 NAI_*.user.js 형식이어야 함`);
   const source = fs.readFileSync(path.join(root, file), 'utf8');
   const name = source.match(/^\/\/ @name\s+(.+)$/m)?.[1]?.trim() || '';
   const icon = source.match(/^\/\/ @icon\s+(.+)$/m)?.[1]?.trim() || '';
