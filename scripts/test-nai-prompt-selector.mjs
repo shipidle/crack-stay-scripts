@@ -150,6 +150,12 @@ assert.match(source, /Base Prompt 설정 버튼/, 'Prompt Chunks는 Base Prompt 
 assert.match(source, /getComputedStyle\(element\)\.cursor === 'pointer'/, 'Prompt Chunks 탭 전환 계약이 필요함');
 assert.match(source, /data-action="apply-character-bulk"/, '캐릭터 메인·네거에도 여러 줄 입력 UI가 필요함');
 assert.match(source, /panelOpen:\s*false/, 'NAI 진입 시 Selector 패널은 닫힌 상태여야 함');
+const nativeInsertBody = source.match(/async function insertNativeChunk[\s\S]*?\n  }\n\n  async function applyTarget/)?.[0] || '';
+assert.match(nativeInsertBody, /data-macro-label/, '네이티브 Chunk 삽입은 실제 macro-node 증가로 확인해야 함');
+assert.doesNotMatch(nativeInsertBody, /insertEditorText/, 'Chunk 사이에 일반 쉼표 텍스트를 넣으면 다음 네이티브 Chunk 삽입이 깨짐');
+assert.doesNotMatch(nativeInsertBody, /placeCaretAtEnd/, '연속 Chunk 클릭 사이에 캐럿을 다시 잡으면 NAI 네이티브 선택 상태가 깨질 수 있음');
+assert.match(source, /placeCaretAtEnd\(editor\);\n    for \(const spec of specs\) await insertNativeChunk/, 'Chunk 연속 삽입 전 캐럿은 한 번만 지정해야 함');
+assert.match(source, /range\.selectNodeContents\(editor\.lastElementChild \|\| editor\)/, '캐럿은 ProseMirror 루트 밖이 아닌 마지막 문단 안에 둬야 함');
 assert.doesNotMatch(source, /Delete All/, '원격 전체 삭제 문구나 호출 경로가 있으면 안 됨');
 assert.match(source, /MAX_ACTIVE_CHARACTERS = 6/);
 assert.match(source, /@match\s+https:\/\/novelai\.net\/image\*/);
