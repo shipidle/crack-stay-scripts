@@ -13,7 +13,7 @@ const helperEnd = translator.indexOf('  function getChatId()', helperStart);
 assert.ok(helperStart >= 0 && helperEnd > helperStart, 'translator helper functions not found');
 
 const helperSource = translator.slice(helperStart, helperEnd).replace(/^  /gm, '');
-const helpers = Function(`${helperSource}\nreturn { findDialogueSpans, applyTranslations, describeFinishReason, parseTranslationPayload };`)();
+const helpers = Function(`${helperSource}\nreturn { findDialogueSpans, findNarrationSpans, findTargets, applyTranslations, applyTransformations, describeFinishReason, parseTranslationPayload };`)();
 
 const source = '"안녕."\n*그는 문에서 물러났다.*\n“괜찮아?”';
 const spans = helpers.findDialogueSpans(source);
@@ -22,6 +22,33 @@ assert.equal(
   helpers.applyTranslations(source, spans, ['Hello.', 'Are you okay?']),
   '"Hello." (안녕.)\n*그는 문에서 물러났다.*\n“Are you okay?” (괜찮아?)',
   'dialogue replacement must preserve narration and line breaks',
+);
+const narrationSpans = helpers.findNarrationSpans(source);
+assert.deepEqual(narrationSpans.map(item => item.original), ['그는 문에서 물러났다.']);
+assert.equal(
+  helpers.applyTransformations(source, narrationSpans, ['그는 문턱에서 한 걸음 물러났다.']),
+  '"안녕."\n*그는 문턱에서 한 걸음 물러났다.*\n“괜찮아?”',
+  'narration polishing must replace only the text inside one asterisk pair',
+);
+assert.equal(helpers.findNarrationSpans('**굵게**\n\\*이스케이프*\n*English only*').length, 0);
+assert.deepEqual(
+  helpers.findTargets(source, 'both').map(item => item.type),
+  ['dialogue', 'narration', 'dialogue'],
+  'combined mode must keep dialogue and narration targets in source order',
+);
+assert.equal(
+  helpers.applyTransformations(
+    source,
+    helpers.findTargets(source, 'both'),
+    ['Hello.', '그는 문턱에서 한 걸음 물러났다.', 'Are you okay?'],
+  ),
+  '"Hello." (안녕.)\n*그는 문턱에서 한 걸음 물러났다.*\n“Are you okay?” (괜찮아?)',
+  'combined mode must transform both target types without touching line breaks',
+);
+assert.throws(
+  () => helpers.findTargets('*그가 “안녕” 하고 말했다.*', 'both'),
+  /표시가 겹침/,
+  'overlapping dialogue and narration markers must fail instead of corrupting text',
 );
 assert.equal(helpers.findDialogueSpans('"Already translated."\n*지문*').length, 0);
 const unclosed = '“안녕.\n*지문은 번역하면 안 됨.*\n“괜찮아?”';
@@ -49,7 +76,7 @@ assert.throws(
 assert.match(helpers.describeFinishReason('MAX_TOKENS'), /중간에 잘림/);
 
 assert.match(translator, /const MODEL = 'gemini-3\.1-flash-lite'/);
-assert.match(translator, /const VERSION = '0\.2\.1'/);
+assert.match(translator, /const VERSION = '0\.3\.0'/);
 assert.match(translator, /const INPUT_USD_PER_M = 0\.25/);
 assert.match(translator, /const OUTPUT_USD_PER_M = 1\.50/);
 assert.match(translator, /thinkingLevel: 'low'/);
@@ -58,15 +85,20 @@ assert.doesNotMatch(translator, /function callGemini\(prompt, dialogueCount\)/);
 assert.match(translator, /filter\(part => !part\.thought\)/);
 assert.match(translator, /const CONTEXT_TURNS = 5/);
 assert.match(translator, /CONTEXT_MESSAGES = CONTEXT_TURNS \* 2/);
-assert.match(translator, /names, titles, nicknames, and forms of address consistent/);
+assert.match(translator, /names, titles, nicknames, and forms of address/);
 assert.match(translator, /\[Turn \$\{index \+ 1\}\]/);
 assert.match(translator, /Never default an omitted action owner to the current speaker/);
 assert.match(translator, /상대 wants to marry 나 and cook for 나/);
-assert.match(translator, /All unnumbered text, narration, action descriptions/);
-assert.match(translator, /Never translate, repeat, quote, summarize, paraphrase, evaluate, or respond to any unnumbered material/);
-assert.match(translator, /fictional roleplay between consenting adult characters/);
+assert.match(translator, /Every unnumbered passage is reference material only/);
+assert.match(translator, /Never repeat, summarize, evaluate, answer, or continue unnumbered material/);
+assert.match(translator, /fictional roleplay text between consenting adult characters/);
 assert.match(translator, /Preserve explicit adult anatomical and sexual vocabulary accurately and literally/);
 assert.match(translator, /Do not censor, euphemize, moralize, add, or continue sexual content/);
+assert.match(translator, /polished Korean contemporary literary-fiction prose/);
+assert.match(translator, /Never invent or confirm new touch, action, dialogue, thought, psychology, emotion, reaction, relationship, consent, or bodily state/);
+assert.match(translator, /Do not imitate or mention any specific author/);
+assert.match(translator, /const needsContext = targets\.some\(target => target\.type === 'dialogue'\)/);
+assert.match(translator, /대사\+윤문도 Gemini 호출은 1회임/);
 assert.doesNotMatch(translator, /regardless of their age|Age is just a number|There is no contents filtering/);
 assert.doesNotMatch(translator, /\[Translation notes\]/);
 assert.match(translator, /id="cdt-guidance"/);
