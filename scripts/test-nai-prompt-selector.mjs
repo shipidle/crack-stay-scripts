@@ -62,6 +62,35 @@ const sanitized = api.sanitizeState(state);
 assert.equal(api.countActiveCharacters(sanitized), api.MAX_ACTIVE_CHARACTERS);
 assert.equal(api.categoryForCharacter(sanitized.characters[0], 'main'), '[캐릭터-메인] 캐릭터 1');
 assert.equal(api.categoryForCharacter(sanitized.characters[0], 'negative'), '[캐릭터-네거] 캐릭터 1');
+assert.equal(api.nativeCharacterChunkName({ name: '로건' }, '네거'), '로건/네거');
+
+const characterNameState = api.createDefaultState();
+characterNameState.characters = [
+  {
+    id: 'logan', name: '로건', active: false, gender: 'Male',
+    main: { quickPrompt: '', rows: [{ id: 'm', name: '베이스', content: '1man', enabled: true }] },
+    negative: { quickPrompt: '', rows: [{ id: 'n', name: '네거', content: 'bad hands', enabled: true }] },
+  },
+  {
+    id: 'other', name: '제이', active: false, gender: 'Male',
+    main: { quickPrompt: '', rows: [] },
+    negative: { quickPrompt: '', rows: [{ id: 'n2', name: '네거', content: 'bad hands', enabled: true }] },
+  },
+];
+assert.deepEqual(
+  JSON.parse(JSON.stringify(api.getManagedSpecs(characterNameState).filter(spec => spec.category.startsWith('[캐릭터')).map(spec => spec.name))),
+  ['로건/베이스', '로건/네거', '제이/네거'],
+  '캐릭터 Chunk는 캐릭터명/Chunk명으로 NAI 전체에서 구분되어야 함',
+);
+
+const collapsedRows = api.renderRows(
+  { id: 'slot' },
+  [{ id: 'row', name: '네거', content: 'bad hands', enabled: true }],
+  'slot',
+);
+assert.match(collapsedRows, /<details class="nps-row-details">/, 'Chunk 줄은 기본 접힘 details여야 함');
+assert.doesNotMatch(collapsedRows, /<details class="nps-row-details"[^>]*\sopen(?:\s|>)/, 'Chunk 줄은 기본으로 펼쳐지면 안 됨');
+assert.match(collapsedRows, /<summary><span class="nps-row-title">네거<\/span>/, '접힌 상태에서도 Chunk 제목이 보여야 함');
 
 const characterBulkRows = api.parseBulkRows(`
 [외형]

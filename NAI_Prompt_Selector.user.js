@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.1
+// @version      0.1.2
 // @description  🧪 BETA · NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const APP_NAME = 'NAI Prompt Selector';
-  const APP_VERSION = '0.1.1';
+  const APP_VERSION = '0.1.2';
   const STORAGE_KEY = 'crackNaiPromptSelector.state.v1';
   const BACKUP_KEY = 'crackNaiPromptSelector.backups.v1';
   const MAX_ACTIVE_CHARACTERS = 6;
@@ -213,6 +213,10 @@
       : `[캐릭터-메인] ${character.name}`;
   }
 
+  function nativeCharacterChunkName(character, chunkName) {
+    return `${normalizeText(character?.name) || '새 캐릭터'}/${normalizeText(chunkName) || 'Chunk'}`;
+  }
+
   function selectedRows(rows) {
     return sanitizeRows(rows).filter(row => row.enabled && row.name && row.content);
   }
@@ -244,7 +248,8 @@
         const category = categoryForCharacter(character, kind);
         for (const row of character[kind].rows) {
           if (!row.name || !row.content) continue;
-          specs.push({ key: `${category}\u0000${row.name}`, category, name: row.name, content: row.content });
+          const name = nativeCharacterChunkName(character, row.name);
+          specs.push({ key: `${category}\u0000${name}`, category, name, content: row.content });
         }
       }
     }
@@ -310,9 +315,12 @@
     categoryForSlot,
     countActiveCharacters,
     createDefaultState,
+    getManagedSpecs,
+    nativeCharacterChunkName,
     parseBulkRows,
     parseBulkText,
     prepareImportMerge,
+    renderRows,
     sanitizeState,
   };
   global.__NAI_PROMPT_SELECTOR_TEST__ = testApi;
@@ -880,7 +888,9 @@
 
   function specsForCharacter(character, kind) {
     return selectedRows(character[kind].rows).map(row => ({
-      category: categoryForCharacter(character, kind), name: row.name, content: row.content,
+      category: categoryForCharacter(character, kind),
+      name: nativeCharacterChunkName(character, row.name),
+      content: row.content,
     }));
   }
 
@@ -1093,15 +1103,20 @@
     return rows.map((row, index) => `
       <article class="nps-row ${row.enabled ? 'is-enabled' : ''}">
         <button type="button" class="nps-line-toggle" data-action="toggle-row" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" title="선택/해제">${index + 1}</button>
-        <div class="nps-row-fields">
-          <input data-field="row-name" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" value="${escapeHtml(row.name)}" placeholder="Chunk 이름">
-          <textarea data-field="row-content" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" rows="2" placeholder="NAI에 저장할 내용">${escapeHtml(row.content)}</textarea>
-        </div>
-        <div class="nps-row-actions">
-          <button type="button" data-action="move-row" data-direction="-1" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" aria-label="위로">↑</button>
-          <button type="button" data-action="move-row" data-direction="1" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" aria-label="아래로">↓</button>
-          <button type="button" data-action="remove-row" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" aria-label="제거">×</button>
-        </div>
+        <details class="nps-row-details">
+          <summary><span class="nps-row-title">${escapeHtml(row.name || '이름 없는 Chunk')}</span><span class="nps-row-enabled">${row.enabled ? '사용' : '꺼짐'}</span></summary>
+          <div class="nps-row-expanded">
+            <div class="nps-row-fields">
+              <input data-field="row-name" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" value="${escapeHtml(row.name)}" placeholder="Chunk 이름">
+              <textarea data-field="row-content" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" rows="2" placeholder="NAI에 저장할 내용">${escapeHtml(row.content)}</textarea>
+            </div>
+            <div class="nps-row-actions">
+              <button type="button" data-action="move-row" data-direction="-1" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" aria-label="위로">↑ 위로</button>
+              <button type="button" data-action="move-row" data-direction="1" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" aria-label="아래로">↓ 아래로</button>
+              <button type="button" data-action="remove-row" data-owner="${owner.id}" data-owner-type="${ownerType}" data-row="${row.id}" aria-label="제거">× 제거</button>
+            </div>
+          </div>
+        </details>
       </article>`).join('');
   }
 
@@ -1175,7 +1190,7 @@
             <button type="button" class="nps-danger-ghost" data-action="remove-character" data-character="${character.id}">목록에서 제거</button>
           </div>
           <div class="nps-segments"><button type="button" data-action="character-kind" data-kind="main" class="${kind === 'main' ? 'is-active' : ''}">메인</button><button type="button" data-action="character-kind" data-kind="negative" class="${kind === 'negative' ? 'is-active' : ''}">네거</button></div>
-          <div class="nps-card"><div class="nps-folder-name">NAI 폴더 · ${escapeHtml(categoryForCharacter(character, kind))}</div><div class="nps-card-head"><strong>Chunk 줄</strong><button type="button" class="nps-soft-btn" data-action="add-row" data-owner="${character.id}" data-owner-type="character-${kind}">＋ 줄 추가</button></div><div class="nps-rows">${renderRows(character, target.rows, `character-${kind}`)}</div></div>
+          <div class="nps-card"><div class="nps-folder-name">NAI 폴더 · ${escapeHtml(categoryForCharacter(character, kind))} · 저장 이름 ${escapeHtml(character.name)}/Chunk명</div><div class="nps-card-head"><strong>Chunk 줄</strong><button type="button" class="nps-soft-btn" data-action="add-row" data-owner="${character.id}" data-owner-type="character-${kind}">＋ 줄 추가</button></div><div class="nps-rows">${renderRows(character, target.rows, `character-${kind}`)}</div></div>
           <details class="nps-card">
             <summary>여러 줄 일괄 붙여넣기</summary>
             <p class="nps-help">한 줄마다 Chunk 하나로 추가함. <code>눈 = blue eyes</code>처럼 이름을 지정하거나 내용만 붙여넣어도 됨. <code>[외형]</code> 같은 구분 헤더는 Chunk로 저장하지 않음.</p>
@@ -1285,8 +1300,11 @@
       const owner = findRowOwner(target.dataset.owner, target.dataset.ownerType);
       const row = owner?.rows.find(item => item.id === target.dataset.row);
       if (!row) return;
-      if (field === 'row-name') row.name = target.value;
-      else row.content = target.value;
+      if (field === 'row-name') {
+        row.name = target.value;
+        const title = target.closest('.nps-row')?.querySelector('.nps-row-title');
+        if (title) title.textContent = normalizeText(target.value) || '이름 없는 Chunk';
+      } else row.content = target.value;
     } else if (field === 'character-name' || field === 'character-gender') {
       const character = state.characters.find(item => item.id === target.dataset.character);
       if (!character) return;
@@ -1489,10 +1507,10 @@
       .nps-status{padding:7px 14px;background:#f4f8fb;color:#647b8c;border-bottom:1px solid #e2ecf2;font-size:12px}.nps-status[data-tone="ok"]{color:#287057}.nps-status[data-tone="working"]{color:#326d9a}.nps-status[data-tone="warn"]{color:#9a6a22}.nps-status[data-tone="error"]{color:#b54747;background:#fff4f4}
       .nps-content{min-height:0;flex:1;overflow:auto;padding:12px}.nps-library{min-height:100%;display:grid;grid-template-columns:190px minmax(0,1fr);gap:10px}.nps-slot-list{min-height:0;padding:10px;border:1px solid #dce8f0;border-radius:16px;background:#fff;overflow:auto}.nps-list-title{margin-bottom:8px;color:#6b8293;font-size:11px;font-weight:800}.nps-slot-item,.nps-character-item{display:flex;align-items:center;gap:4px;margin-bottom:5px;padding:4px;border-radius:10px}.nps-slot-item.is-active,.nps-character-item.is-active{background:#EAF6FF}.nps-slot-item>button,.nps-character-item>button:nth-child(2){min-width:0;flex:1;overflow:hidden;border:0;background:transparent;color:#344f63;padding:6px;text-align:left;text-overflow:ellipsis;white-space:nowrap}.nps-slot-item span,.nps-character-item span{display:flex}.nps-slot-item span button,.nps-character-item span button{width:22px;border:0;background:transparent;color:#7b91a1}.nps-active-check{width:28px;height:28px;border:1px solid #d6e3ec;border-radius:9px;background:#fff;color:#8da0ad}.nps-active-check.is-on{border-color:#8fb7d2;background:#CEDEF2;color:#244c67;font-weight:900}
       .nps-editor-pane{min-width:0;display:flex;flex-direction:column;gap:9px}.nps-card{padding:12px;border:1px solid #dce8f0;border-radius:16px;background:#fff}.nps-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.nps-card-head span,.nps-folder-name,.nps-help{color:#708698;font-size:11px}.nps-slot-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}.nps-slot-head .nps-folder-name{grid-column:1/-1}.nps-slot-head label{margin:0}.nps-slot-head .nps-danger-ghost{grid-column:2;grid-row:1}
-      label{display:grid;gap:5px;color:#536d80;font-size:11px;font-weight:700}input,textarea,select{width:100%;border:1px solid #cedde8;border-radius:10px;background:#fbfdff;color:#17202a;padding:8px 10px;outline:none}input:focus,textarea:focus,select:focus{border-color:#91bad6;box-shadow:0 0 0 3px rgba(145,186,214,.18)}textarea{resize:vertical}.nps-rows{display:flex;flex-direction:column;gap:7px}.nps-row{display:grid;grid-template-columns:36px minmax(0,1fr) 28px;gap:7px;align-items:stretch;padding:7px;border:1px solid #e1eaf0;border-radius:13px;background:#fafcfd}.nps-row.is-enabled{border-color:#b9d3e5;background:#F4FAFE}.nps-line-toggle{border:1px solid #d2e0e9;border-radius:10px;background:#fff;color:#7c92a2;font-weight:900}.nps-row.is-enabled .nps-line-toggle{border-color:#91b9d4;background:#CEDEF2;color:#284e67}.nps-row-fields{display:grid;gap:5px}.nps-row-actions{display:flex;flex-direction:column;gap:3px}.nps-row-actions button{flex:1;border:0;border-radius:7px;background:#edf4f8;color:#577185}
+      label{display:grid;gap:5px;color:#536d80;font-size:11px;font-weight:700}input,textarea,select{width:100%;border:1px solid #cedde8;border-radius:10px;background:#fbfdff;color:#17202a;padding:8px 10px;outline:none}input:focus,textarea:focus,select:focus{border-color:#91bad6;box-shadow:0 0 0 3px rgba(145,186,214,.18)}textarea{resize:vertical}.nps-rows{display:flex;flex-direction:column;gap:5px}.nps-row{display:grid;grid-template-columns:32px minmax(0,1fr);gap:6px;align-items:start;padding:5px;border:1px solid #e1eaf0;border-radius:12px;background:#fafcfd}.nps-row.is-enabled{border-color:#b9d3e5;background:#F4FAFE}.nps-line-toggle{width:32px;height:30px;border:1px solid #d2e0e9;border-radius:9px;background:#fff;color:#7c92a2;font-weight:900}.nps-row.is-enabled .nps-line-toggle{border-color:#91b9d4;background:#CEDEF2;color:#284e67}.nps-row-details{min-width:0}.nps-row-details>summary{min-height:30px;display:flex;align-items:center;gap:7px;overflow:hidden;list-style:none;color:#38566b;font-weight:800;cursor:pointer}.nps-row-details>summary::-webkit-details-marker{display:none}.nps-row-details>summary::after{content:'⌄';margin-left:2px;color:#7a91a2;transition:transform .15s ease}.nps-row-details[open]>summary::after{transform:rotate(180deg)}.nps-row-title{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nps-row-enabled{flex:0 0 auto;color:#8095a4;font-size:10px;font-weight:700}.nps-row-expanded{display:grid;gap:7px;margin-top:5px;padding-top:7px;border-top:1px solid #dce7ee}.nps-row-fields{display:grid;gap:5px}.nps-row-actions{display:flex;justify-content:flex-end;gap:4px}.nps-row-actions button{border:0;border-radius:7px;background:#edf4f8;color:#577185;padding:6px 9px;font-size:11px}
       .nps-primary,.nps-soft-btn,.nps-stop,.nps-danger-ghost{border-radius:11px;padding:9px 12px;font-weight:800}.nps-primary{border:1px solid #8fb8d3;background:#CEDEF2;color:#244d68}.nps-soft-btn{border:1px solid #d3e1ea;background:#F4F8FB;color:#4c6c83}.nps-stop{border:1px solid #e8a6a6;background:#fff0f0;color:#a53e3e}.nps-danger-ghost{border:1px solid #efd5d5;background:#fff;color:#a25d5d;font-size:11px}.nps-empty{padding:22px;color:#7890a2;text-align:center}.nps-preview{max-height:150px;overflow:auto;margin:0;padding:10px;border-radius:11px;background:#f4f8fb;color:#39556a;white-space:pre-wrap;word-break:break-word;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.nps-segments{display:grid;grid-template-columns:1fr 1fr;gap:6px}.nps-segments button{border:1px solid #d6e3eb;border-radius:11px;background:#fff;color:#6b8292;padding:8px}.nps-segments button.is-active{border-color:#99bed6;background:#EAF6FF;color:#315c77;font-weight:800}.nps-grid-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.nps-grid-two .nps-card{display:flex;flex-direction:column;gap:9px}.nps-presets{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}.nps-presets button{border:1px solid #d7e4ec;border-radius:8px;background:#f6fafc;color:#5b7587;padding:5px}.nps-safety-card ul{margin:0;padding-left:18px;color:#60798b;font-size:12px}
       details summary{cursor:pointer;font-weight:800;color:#4c687c}.nps-bulk{min-height:100px;margin:8px 0}.nps-overlay{position:fixed;inset:0;z-index:2147483640;display:grid;place-items:center;padding:18px;background:rgba(13,30,43,.42)}.nps-dialog{width:min(640px,100%);max-height:min(720px,90vh);overflow:auto;padding:18px;border-radius:20px;background:#fff;box-shadow:0 24px 80px rgba(0,0,0,.28)}.nps-dialog h3{margin:0 0 6px}.nps-dialog>p{margin:0 0 12px;color:#60798b}.nps-conflicts{display:grid;gap:8px}.nps-conflict{display:grid;grid-template-columns:22px 1fr;gap:8px;padding:10px;border:1px solid #dce7ee;border-radius:12px}.nps-conflict input{width:auto}.nps-conflict span{display:grid;gap:4px}.nps-conflict small{color:#9b6c25}.nps-conflict del,.nps-conflict ins{padding:6px;border-radius:8px;text-decoration:none;white-space:pre-wrap}.nps-conflict del{background:#fff1f1;color:#9e5151}.nps-conflict ins{background:#eef9f4;color:#34735d}.nps-dialog-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:14px}.nps-dialog-actions button{border:1px solid #d4e1e9;border-radius:10px;background:#fff;padding:8px 12px}
-      @media(max-width:720px){:host{right:8px;bottom:8px}.nps-panel{width:calc(100vw - 16px);height:calc(100vh - 74px);border-radius:18px}.nps-library{grid-template-columns:1fr}.nps-slot-list{max-height:170px}.nps-grid-two{grid-template-columns:1fr}.nps-slot-head{grid-template-columns:1fr}.nps-slot-head .nps-danger-ghost{grid-column:1;grid-row:auto}.nps-row{grid-template-columns:32px minmax(0,1fr) 28px}}
+      @media(max-width:720px){:host{right:8px;bottom:8px}.nps-panel{width:calc(100vw - 16px);height:calc(100vh - 74px);border-radius:18px}.nps-library{grid-template-columns:1fr}.nps-slot-list{max-height:170px}.nps-grid-two{grid-template-columns:1fr}.nps-slot-head{grid-template-columns:1fr}.nps-slot-head .nps-danger-ghost{grid-column:1;grid-row:auto}.nps-row{grid-template-columns:32px minmax(0,1fr)}}
     </style><div id="nps-app"></div>`;
     app = shadow.querySelector('#nps-app');
     importFileInput = document.createElement('input');
