@@ -103,10 +103,33 @@ assert.deepEqual(
   JSON.parse(JSON.stringify(characterBulkRows.map(row => [row.name, row.content]))),
   [
     ['눈 (2)', 'blue eyes'],
-    ['smile', 'smile'],
+    ['외형', 'smile'],
     ['눈 (3)', 'eye ornament'],
   ],
-  '캐릭터 여러 줄 입력은 헤더를 제외하고 기존 이름과 겹치지 않게 추가해야 함',
+  '캐릭터 여러 줄 입력은 헤더를 이름 없는 줄의 Chunk명으로 쓰고 기존 이름과 겹치지 않게 추가해야 함',
+);
+
+const headerNamedCharacterRows = api.parseBulkRows(`
+#로건
+[베이스]
+1 man, adult male, tall, kind
+[표정]
+smile
+playful
+[의상]
+블랙탑=black tank top
+바지 = cargo pants
+`, 'main', '로건');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(headerNamedCharacterRows.map(row => [row.name, row.content]))),
+  [
+    ['베이스', '1 man, adult male, tall, kind'],
+    ['표정', 'smile'],
+    ['표정 (2)', 'playful'],
+    ['블랙탑', 'black tank top'],
+    ['바지', 'cargo pants'],
+  ],
+  '캐릭터 헤더 이름 지정과 = 양옆 공백 선택 입력을 모두 지원해야 함',
 );
 
 const current = api.createDefaultState();
