@@ -312,6 +312,7 @@
 
   // 모델 목록 — 별칭(-latest) 없이 구체 버전만. 최신 우선. (2026-05 기준)
   const MODELS = [
+    ['gemini-3.7-flash', 'Gemini 3.7 Flash (최신·권장)'],
     ['gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite (최신·권장)'],
     ['gemini-3.5-flash', 'Gemini 3.5 Flash (최신·권장)'],
     ['gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite (최저가)'],
