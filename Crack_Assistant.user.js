@@ -709,6 +709,8 @@
   // 모델별 100만 토큰당 단가(USD). Google Gemini API 공식 Standard/Paid Tier 기준, 2026-06 확인.
   // 출력 단가에는 Gemini 문서 기준 thinking tokens 가 포함된다.
   const MODEL_PRICES = {
+    'gemini-3.7-flash':       { in: 0.75, out: 3.75, label: '공식 Standard' },
+    'gemini-3.5-flash-lite':  { in: 0.30, out: 2.50, label: '공식 Standard' },    
     'gemini-3.5-flash':       { in: 1.50, out: 9.00, label: '공식 Standard' },
     'gemini-3.1-flash-lite':  { in: 0.25, out: 1.50, label: '공식 Standard' },
     'gemini-3.1-pro-preview': { in: 2.00, out: 12.00, inHigh: 4.00, outHigh: 18.00, threshold: 200000, label: '공식 Standard' },
