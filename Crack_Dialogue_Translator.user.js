@@ -21,9 +21,9 @@
   'use strict';
 
   const VERSION = '0.3.0';
-  const MODEL = 'gemini-3.1-flash-lite';
-  const INPUT_USD_PER_M = 0.25;
-  const OUTPUT_USD_PER_M = 1.50;
+  const MODEL = 'gemini-3.5-flash-lite';
+  const INPUT_USD_PER_M = 0.30;
+  const OUTPUT_USD_PER_M = 2.50;
   const MAX_TARGETS = 24;
   const CONTEXT_TURNS = 5;
   const CONTEXT_MESSAGES = CONTEXT_TURNS * 2;
