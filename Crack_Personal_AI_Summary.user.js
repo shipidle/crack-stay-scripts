@@ -32,6 +32,8 @@
   const KRW_PER_USD = 1500;
 
   const MODEL_OPTIONS = [
+    ['gemini-3.7-flash', 'Gemini 3.7 Flash'],    
+    ['gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite'],
     ['gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite'],
     ['gemini-3-flash-preview', 'Gemini 3 Flash Preview'],
     ['gemini-3.1-pro-preview', 'Gemini 3.1 Pro Preview'],
@@ -40,6 +42,8 @@
   ];
 
   const MODEL_PRICES = {
+    'gemini-3.7-flash': { input: 0.75, output: 3.75 },
+    'gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },    
     'gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
     'gemini-3-flash-preview': { input: 0.5, output: 3 },
     'gemini-3.1-pro-preview': { input: 2, output: 12 },
