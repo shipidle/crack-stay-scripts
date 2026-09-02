@@ -1,4 +1,4 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name         🤖 캐챗 어시스턴트
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
 // @version      2.40.1-local
@@ -312,6 +312,7 @@
 
   // 모델 목록 — 별칭(-latest) 없이 구체 버전만. 최신 우선. (2026-05 기준)
   const MODELS = [
+    ['gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite (최신·권장)'],
     ['gemini-3.5-flash', 'Gemini 3.5 Flash (최신·권장)'],
     ['gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite (최저가)'],
     ['gemini-3.1-pro-preview', 'Gemini 3.1 Pro (최고 품질)'],
