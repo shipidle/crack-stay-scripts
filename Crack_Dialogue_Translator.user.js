@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         🌐 대사 영문 번역기
+// @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.3.1
-// @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 영문으로 번역하거나 *지문*을 한국 현대문학풍으로 윤문합니다.
+// @version      0.4.0
+// @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -20,7 +20,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.1';
+  const VERSION = '0.4.0';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
@@ -33,6 +33,26 @@
   const KEY = 'shipidle:dialogue-translator:v1';
   const CLOUD_API_KEY = '__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__';
   const BRIDGE = unsafeWindow || window;
+
+  const LANGUAGES = {
+    en: { label: '영어', prompt: 'English' },
+    fr: { label: '프랑스어', prompt: 'French' },
+    es: { label: '스페인어', prompt: 'Spanish' },
+    fi: { label: '핀란드어', prompt: 'Finnish' },
+    ja: { label: '일본어', prompt: 'Japanese' },
+    zh: { label: '중국어', prompt: 'Chinese' },
+    de: { label: '독일어', prompt: 'German' },
+  };
+  const LANGUAGE_OVERRIDE_MAP = {
+    영: 'en', 영어: 'en',
+    프: 'fr', 불: 'fr', 프랑스어: 'fr',
+    스: 'es', 스페인어: 'es',
+    핀: 'fi', 핀란드어: 'fi',
+    일: 'ja', 일본어: 'ja',
+    중: 'zh', 중국어: 'zh',
+    독: 'de', 독일어: 'de',
+  };
+  const LANGUAGE_OVERRIDE_RE = /^[ \t]*-[ \t]*(프랑스어|스페인어|핀란드어|일본어|중국어|독일어|영어|영|프|불|스|핀|일|중|독)(?=$|[^가-힣ㄱ-ㅎㅏ-ㅣ])/;
 
   let busy = false;
   let cloudBusy = false;
@@ -87,19 +107,23 @@
   panel.id = 'cdt-panel';
   panel.innerHTML = `
     <div class="cdt-head">
-      <div class="cdt-title"><span class="cdt-emoji">🌐</span> 대사 번역 · 지문 윤문</div>
+      <div class="cdt-title"><span class="cdt-emoji">🌐</span> 대사 번역</div>
       <button class="cdt-close" id="cdt-close" type="button" aria-label="닫기">×</button>
     </div>
-    <div class="cdt-desc">따옴표 대사는 <b>"English" (한국어 원문)</b>으로, <b>*지문*</b>은 의미를 유지한 세련된 한국어 문장으로 바꿈.</div>
+    <div class="cdt-desc">따옴표 안 한국어 대사를 <b>"번역문" (한국어 원문)</b> 형식으로 바꿈. 대사 뒤에 <b>-프 / -일</b>처럼 적으면 그 대사만 언어를 바꿀 수 있음.</div>
 
     <div class="cdt-card">
-      <label class="cdt-label" for="cdt-mode">작업 선택</label>
-      <select class="cdt-select" id="cdt-mode">
-        <option value="dialogue">1. 대사만 교체</option>
-        <option value="narration">2. 지문만 윤문</option>
-        <option value="both">3. 대사 + 윤문</option>
+      <label class="cdt-label" for="cdt-language">기본 번역 언어</label>
+      <select class="cdt-select" id="cdt-language">
+        <option value="en">영어</option>
+        <option value="fr">프랑스어</option>
+        <option value="es">스페인어</option>
+        <option value="fi">핀란드어</option>
+        <option value="ja">일본어</option>
+        <option value="zh">중국어</option>
+        <option value="de">독일어</option>
       </select>
-      <div class="cdt-meta">지문은 별표 한 쌍 안의 한국어만 처리함. 대사+윤문도 Gemini 호출은 1회임.</div>
+      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어). 전체 언어명도 인식함.</div>
     </div>
 
     <div class="cdt-card">
@@ -115,7 +139,7 @@
     </div>
 
     <div class="cdt-actions">
-      <button class="cdt-btn primary" id="cdt-run" type="button">대사만 교체</button>
+      <button class="cdt-btn primary" id="cdt-run" type="button">대사 번역</button>
       <button class="cdt-btn" id="cdt-save" type="button">설정 저장</button>
     </div>
     <div class="cdt-card">
@@ -362,8 +386,8 @@
 
     toolbarButton.className = 'relative inline-flex items-center gap-1 rounded-full text-sm font-medium transition-colors border border-border bg-card text-line-gray-1 hover:bg-secondary p-0 size-7 justify-center';
     toolbarButton.type = 'button';
-    toolbarButton.title = '대사 번역 · 지문 윤문';
-    toolbarButton.setAttribute('aria-label', '대사 번역 · 지문 윤문');
+    toolbarButton.title = '대사 번역';
+    toolbarButton.setAttribute('aria-label', '대사 번역');
     toolbarButton.style.cssText = 'pointer-events:auto;width:28px;height:28px;min-width:28px;border-radius:9999px';
     toolbarButton.innerHTML = '<span class="cdt-emoji">🌐</span>';
     if (reference?.parentElement === container && reference.nextSibling) container.insertBefore(toolbarButton, reference.nextSibling);
@@ -371,55 +395,35 @@
     else container.insertBefore(toolbarButton, container.firstChild);
   }
 
-  function findDialogueSpans(source) {
+  function selectedLanguage() {
+    const value = $('#cdt-language').value;
+    return LANGUAGES[value] ? value : 'en';
+  }
+
+  function findDialogueSpans(source, defaultLanguage) {
     const spans = [];
     const re = /"((?:\\.|[^"\\\r\n])*)"|([“”])([^“”\r\n]*)([“”])/g;
     let match;
     while ((match = re.exec(source))) {
       const original = match[1] !== undefined ? match[1] : match[3];
       if (!/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(original)) continue;
+
+      const suffixSource = source.slice(re.lastIndex);
+      const override = suffixSource.match(LANGUAGE_OVERRIDE_RE);
+      const language = override ? LANGUAGE_OVERRIDE_MAP[override[1]] : defaultLanguage;
+      const suffixLength = override ? override[0].length : 0;
+
       spans.push({
         type: 'dialogue',
         start: match.index,
-        end: re.lastIndex,
+        end: re.lastIndex + suffixLength,
         open: match[1] !== undefined ? '"' : match[2],
         close: match[1] !== undefined ? '"' : match[4],
         original,
+        language,
       });
     }
     return spans;
-  }
-
-  function findNarrationSpans(source) {
-    const spans = [];
-    const re = /(^|[^\\*])\*([^*\r\n]+)\*(?!\*)/g;
-    let match;
-    while ((match = re.exec(source))) {
-      const original = match[2];
-      if (!/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(original)) continue;
-      const start = match.index + match[1].length;
-      spans.push({
-        type: 'narration',
-        start,
-        end: start + original.length + 2,
-        open: '*',
-        close: '*',
-        original,
-      });
-    }
-    return spans;
-  }
-
-  function findTargets(source, mode) {
-    const dialogues = mode === 'narration' ? [] : findDialogueSpans(source);
-    const narrations = mode === 'dialogue' ? [] : findNarrationSpans(source);
-    const targets = [...dialogues, ...narrations].sort((a, b) => a.start - b.start);
-    for (let i = 1; i < targets.length; i++) {
-      if (targets[i].start < targets[i - 1].end) {
-        throw new Error('따옴표 대사와 *지문* 표시가 겹침. 대사와 지문을 분리해서 입력해줘.');
-      }
-    }
-    return targets;
   }
 
   function cleanTranslation(text) {
@@ -428,38 +432,19 @@
       .replace(/^["“](.*)["”]$/s, '$1').trim();
   }
 
-  function cleanPolishing(text) {
-    const cleaned = String(text || '').trim()
-      .replace(/^```(?:text|markdown)?\s*/i, '').replace(/```$/i, '').trim();
-    return cleaned.startsWith('*') && cleaned.endsWith('*')
-      ? cleaned.slice(1, -1).trim()
-      : cleaned;
-  }
-
-  function applyTransformations(source, targets, transformations) {
-    if (targets.length !== transformations.length) {
-      throw new Error(`결과 개수 불일치: 원문 ${targets.length}개 / Gemini ${transformations.length}개.`);
+  function applyTranslations(source, targets, translations) {
+    if (targets.length !== translations.length) {
+      throw new Error(`번역 개수 불일치: 원문 ${targets.length}개 / Gemini ${translations.length}개.`);
     }
     let output = source;
     for (let i = targets.length - 1; i >= 0; i--) {
       const target = targets[i];
-      const transformed = target.type === 'narration'
-        ? cleanPolishing(transformations[i])
-        : cleanTranslation(transformations[i]);
-      if (!transformed) throw new Error(`${i + 1}번째 ${target.type === 'narration' ? '지문 윤문' : '대사 번역'} 결과가 비어 있음.`);
-      const replacement = target.type === 'narration'
-        ? `${target.open}${transformed}${target.close}`
-        : `${target.open}${transformed}${target.close} (${target.original})`;
+      const translated = cleanTranslation(translations[i]);
+      if (!translated) throw new Error(`${i + 1}번째 대사 번역 결과가 비어 있음.`);
+      const replacement = `${target.open}${translated}${target.close} (${target.original})`;
       output = output.slice(0, target.start) + replacement + output.slice(target.end);
     }
     return output;
-  }
-
-  function applyTranslations(source, spans, translations) {
-    if (spans.length !== translations.length) {
-      throw new Error(`번역 개수 불일치: 원문 ${spans.length}개 / Gemini ${translations.length}개.`);
-    }
-    return applyTransformations(source, spans.map(span => ({ ...span, type: 'dialogue' })), translations);
   }
 
   function compactText(text, limit) {
@@ -625,56 +610,33 @@
   }
 
   function buildPrompt(targets, contextInfo, guidance, source) {
-    const hasDialogue = targets.some(target => target.type === 'dialogue');
-    const hasNarration = targets.some(target => target.type === 'narration');
     const lines = targets.map((target, index) => (
-      `${index + 1}. [${target.type === 'narration' ? 'NARRATION' : 'DIALOGUE'}] ${target.original}`
+      `${index + 1}. [TARGET=${LANGUAGES[target.language]?.prompt || LANGUAGES.en.prompt}] ${target.original}`
     )).join('\n');
     const currentDraft = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET) || '(empty)';
     const instructions = [
-      'This is a constrained transformation task using fictional roleplay text between consenting adult characters.',
-      'Transform only the explicitly numbered items. Every unnumbered passage is reference material only.',
+      'This is a constrained translation task using fictional roleplay text between consenting adult characters.',
+      'Translate only the explicitly numbered dialogue items. Every unnumbered passage is reference material only.',
       'Never repeat, summarize, evaluate, answer, or continue unnumbered material.',
       'Do not censor, euphemize, moralize, add, or continue sexual content.',
-    ];
-
-    if (hasDialogue) instructions.push(
-      'For each [DIALOGUE] item, translate the Korean dialogue into natural English.',
+      'Each numbered item declares its target language as [TARGET=...]. Translate that item into exactly that language, even when different items use different target languages.',
       'Preserve explicit adult anatomical and sexual vocabulary accurately and literally when it appears in the numbered source dialogue.',
       'The Korean dialogue being translated is spoken by 나 (the user character) to 상대 (the AI character).',
       'Before translating each item, silently resolve: speaker, listener, omitted subject, omitted object or beneficiary, action owner, possessor, and the referent of pronouns or demonstratives.',
       'Use evidence in this priority order: (1) the full Current draft and its adjacent narration/dialogue, (2) the most recent 상대 message in Recent conversation, (3) earlier Recent conversation, (4) Room guidance.',
       'Do not assume an omitted Korean subject or action owner is the current speaker. Never reverse actor/recipient, giver/receiver, caregiver/beneficiary, possessor/possessed, or speaker/listener relationships.',
       'Use adjacent narration in the Current draft to resolve deictic expressions, implied actions, sarcasm, teasing, flirting, refusal, hesitation, and other subtext.',
-      'If the context still does not establish one interpretation, choose the least assumptive natural English wording rather than inventing a relationship, intention, emotion, or action owner.',
+      'Language markers written after a quoted line, such as -영, -프, -불, -스, -핀, -일, -중, -독 or their full Korean language names, are translator commands only. They are not part of the spoken dialogue or story meaning.',
+      'If the context still does not establish one interpretation, choose the least assumptive natural wording rather than inventing a relationship, intention, emotion, or action owner.',
       'Use context to preserve established tone, register, pronouns, idioms, names, titles, nicknames, and forms of address. Prefer established address terms over inventing a new variant.',
-      'Preserve meaning. Do not add actions, narration, explanations, quotation marks, parentheses, or Korean to a [DIALOGUE] result.',
-    );
-
-    if (hasNarration) instructions.push(
-      'For each [NARRATION] item, rewrite only that Korean prose in polished Korean contemporary literary-fiction prose.',
-      'Keep every fact, subject, action owner, event order, point of view, tense, intensity, and boundary unchanged.',
-      'Use the full Current draft to understand who is acting on whom and how adjacent sentences connect, but never transform or continue unnumbered text.',
-      'Never invent or confirm new touch, action, dialogue, thought, psychology, emotion, reaction, relationship, consent, or bodily state for either 나 or 상대.',
-      'Use restrained lyricism and precise sensory texture. Prefer air, humidity, light, fabric, body heat, scent, and fingertips only when the original meaning naturally supports them.',
-      'Avoid expository explanation and direct emotion labels. Use metaphor, personification, or synesthesia sparingly and organically rather than forcing them into every sentence.',
-      'When the source already contains affection, jealousy, protectiveness, embarrassment, or possessiveness, keep it implicit using only gaze, silence, distance, tone, or fingertip details already present in that source; never introduce a new cue or emotion.',
-      'Keep the result concise and close to the original length. Do not imitate or mention any specific author.',
-      'Return bare Korean prose for a [NARRATION] item without surrounding asterisks, labels, commentary, or alternatives.',
-    );
-
-    instructions.push(
-      'Return one transformed string per numbered item in exactly the same order as a JSON array.',
+      'Preserve meaning. Do not add actions, narration, explanations, quotation marks, parentheses, Korean source text, labels, or alternatives to any result.',
+      'Return one translated string per numbered item in exactly the same order as a JSON array.',
       '',
       `[Current draft — highest-priority reference only; do not transform unnumbered text]\n${currentDraft}`,
-    );
-    if (hasDialogue) instructions.push(
       `[Recent conversation — newest messages were preserved first]\n${contextInfo?.text || '(최근 맥락 없음)'}`,
-    );
-    instructions.push(
       `[Room guidance — lowest-priority reference]\n${guidance || '(not provided)'}`,
-      `[Items to transform]\n${lines}`,
-    );
+      `[Dialogue items to translate]\n${lines}`,
+    ];
     return instructions.join('\n\n');
   }
 
@@ -782,29 +744,21 @@
     });
   }
 
-  function selectedMode() {
-    const mode = $('#cdt-mode').value;
-    return ['dialogue', 'narration', 'both'].includes(mode) ? mode : 'dialogue';
-  }
-
   function targetSummary(targets) {
-    const dialogues = targets.filter(target => target.type === 'dialogue').length;
-    const narrations = targets.length - dialogues;
-    return [dialogues && `대사 ${dialogues}개`, narrations && `지문 ${narrations}개`].filter(Boolean).join(' · ');
-  }
-
-  function updateModeUi() {
-    const labels = {
-      dialogue: '대사만 교체',
-      narration: '지문만 윤문',
-      both: '대사 + 윤문 실행',
-    };
-    $('#cdt-run').textContent = labels[selectedMode()];
+    if (!targets.length) return '대사 0개';
+    const counts = {};
+    targets.forEach(target => {
+      counts[target.language] = (counts[target.language] || 0) + 1;
+    });
+    const languageText = Object.entries(counts)
+      .map(([code, count]) => `${LANGUAGES[code]?.label || code} ${count}`)
+      .join(' · ');
+    return `대사 ${targets.length}개 (${languageText})`;
   }
 
   function saveSettings(showStatus = true) {
     GM_setValue(`${KEY}:apiKey`, $('#cdt-api-key').value.trim());
-    GM_setValue(`${KEY}:mode`, selectedMode());
+    GM_setValue(`${KEY}:language`, selectedLanguage());
     saveRoomSettings(showStatus);
   }
 
@@ -813,42 +767,28 @@
     const input = findChatInput();
     if (!input) { $('#cdt-status').textContent = '입력창을 찾지 못함.'; return; }
     const source = getInputText(input);
-    const mode = selectedMode();
     if (!source.trim()) { $('#cdt-status').textContent = '입력창이 비어 있음.'; return; }
-    let targets;
-    try { targets = findTargets(source, mode); } catch (error) {
-      $('#cdt-status').textContent = `오류: ${error?.message || error}`;
-      return;
-    }
+
+    const targets = findDialogueSpans(source, selectedLanguage());
     if (!targets.length) {
-      $('#cdt-status').textContent = mode === 'dialogue'
-        ? '따옴표 안 한국어 대사가 없음.'
-        : mode === 'narration'
-          ? '별표 한 쌍 안의 한국어 지문이 없음.'
-          : '처리할 한국어 대사나 *지문*이 없음.';
+      $('#cdt-status').textContent = '따옴표 안 한국어 대사가 없음.';
       return;
     }
     if (targets.length > MAX_TARGETS) {
-      $('#cdt-status').textContent = `한 번에 대사와 지문을 합쳐 ${MAX_TARGETS}개까지만 처리 가능함.`;
+      $('#cdt-status').textContent = `한 번에 대사 ${MAX_TARGETS}개까지만 처리 가능함.`;
       return;
     }
 
     busy = true;
     $('#cdt-run').disabled = true;
     $('#cdt-save').disabled = true;
-    $('#cdt-mode').disabled = true;
+    $('#cdt-language').disabled = true;
     saveSettings(false);
     try {
-      const needsContext = targets.some(target => target.type === 'dialogue');
-      let contextInfo = { text: '', chars: 0, messageCount: 0, fetchedCount: 0 };
-      if (needsContext) {
-        $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
-        contextInfo = await fetchRecentContext();
-      }
+      $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
+      const contextInfo = await fetchRecentContext();
       const draftChars = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET).length;
-      const contextStatus = needsContext
-        ? ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`
-        : '';
+      const contextStatus = ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`;
       $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중… · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
       const result = await callGemini(buildPrompt(
         targets,
@@ -856,7 +796,7 @@
         compactText($('#cdt-guidance').value, 3000),
         source,
       ));
-      const replaced = applyTransformations(source, targets, result.translations);
+      const replaced = applyTranslations(source, targets, result.translations);
       setInputText(input, replaced);
 
       const cost = calculateCostKrw(result.usage);
@@ -866,7 +806,7 @@
         GM_setValue(`${KEY}:totalCostKrw`, (Number(GM_getValue(`${KEY}:totalCostKrw`, 0)) || 0) + cost);
         updateCost(cost);
       }
-      $('#cdt-status').textContent = `완료. ${targetSummary(targets)}만 교체함. · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
+      $('#cdt-status').textContent = `완료. ${targetSummary(targets)} 교체함. · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
       setTimeout(() => { panel.style.display = 'none'; }, 900);
     } catch (error) {
       $('#cdt-status').textContent = `오류: ${error?.message || error}`;
@@ -874,7 +814,7 @@
       busy = false;
       $('#cdt-run').disabled = false;
       $('#cdt-save').disabled = false;
-      $('#cdt-mode').disabled = false;
+      $('#cdt-language').disabled = false;
     }
   }
 
@@ -886,21 +826,16 @@
       loadRoomSettings();
       refreshCloudStatus();
       const input = findChatInput();
-      try {
-        const targets = findTargets(getInputText(input), selectedMode());
-        $('#cdt-status').textContent = targets.length
-          ? `${targetSummary(targets)} 감지됨.`
-          : '선택한 작업에 맞는 한국어 대사나 *지문*을 입력해줘.';
-      } catch (error) {
-        $('#cdt-status').textContent = `오류: ${error?.message || error}`;
-      }
+      const targets = findDialogueSpans(getInputText(input), selectedLanguage());
+      $('#cdt-status').textContent = targets.length
+        ? `${targetSummary(targets)} 감지됨.`
+        : '따옴표 안 한국어 대사를 입력해줘.';
     }
   }
 
   $('#cdt-api-key').value = GM_getValue(`${KEY}:apiKey`, '');
-  const savedMode = GM_getValue(`${KEY}:mode`, 'dialogue');
-  $('#cdt-mode').value = ['dialogue', 'narration', 'both'].includes(savedMode) ? savedMode : 'dialogue';
-  updateModeUi();
+  const savedLanguage = GM_getValue(`${KEY}:language`, 'en');
+  $('#cdt-language').value = LANGUAGES[savedLanguage] ? savedLanguage : 'en';
   loadRoomSettings(true);
   updateCost();
   fetchExchangeRate();
@@ -909,9 +844,8 @@
   $('#cdt-save').addEventListener('click', () => saveSettings(true));
   $('#cdt-cloud-upload').addEventListener('click', uploadRoomSettings);
   $('#cdt-cloud-download').addEventListener('click', downloadRoomSettings);
-  $('#cdt-mode').addEventListener('change', () => {
-    GM_setValue(`${KEY}:mode`, selectedMode());
-    updateModeUi();
+  $('#cdt-language').addEventListener('change', () => {
+    GM_setValue(`${KEY}:language`, selectedLanguage());
   });
   $('#cdt-run').addEventListener('click', transformInput);
   toolbarButton.addEventListener('click', togglePanel, true);
