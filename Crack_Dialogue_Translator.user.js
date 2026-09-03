@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 영문 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.3.0
+// @version      0.3.1
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 영문으로 번역하거나 *지문*을 한국 현대문학풍으로 윤문합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -20,13 +20,15 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
   const MAX_TARGETS = 24;
   const CONTEXT_TURNS = 5;
   const CONTEXT_MESSAGES = CONTEXT_TURNS * 2;
+  const HISTORY_CHAR_BUDGET = 20000;
+  const CURRENT_DRAFT_CHAR_BUDGET = 24000;
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen';
   const KEY = 'shipidle:dialogue-translator:v1';
   const CLOUD_API_KEY = '__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__';
@@ -103,13 +105,13 @@
     <div class="cdt-card">
       <label class="cdt-label" for="cdt-guidance">방별 캐릭터 설정·작업 노트</label>
       <textarea class="cdt-textarea" id="cdt-guidance" maxlength="3000" placeholder="예: Felix는 펠릭스. Till은 틸. 펠릭스가 틸을 돌보고 요리해주는 관계. 틸은 짧고 무뚝뚝하게 말함."></textarea>
-      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 참고함. 최근 5턴은 대사 번역이 포함될 때만 읽음.</div>
+      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 참고함. 대사 번역 시 현재 작성 중인 답장 전체 + 최근 5턴을 읽고, 최신 대화를 우선 보존함.</div>
     </div>
 
     <div class="cdt-card">
       <label class="cdt-label" for="cdt-api-key">Gemini API Key</label>
       <input class="cdt-input" id="cdt-api-key" type="password" autocomplete="off" placeholder="AIza...">
-      <div class="cdt-meta">모델: Gemini 3.5 Flash-Lite · 입력 $0.30/1M · 출력 $2.50/1M</div>
+      <div class="cdt-meta">모델: Gemini 3.5 Flash-Lite · 추론 Low · 입력 $0.30/1M · 출력 $2.50/1M</div>
     </div>
 
     <div class="cdt-actions">
@@ -465,6 +467,25 @@
     return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
   }
 
+  function normalizeContextText(text) {
+    return String(text || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{4,}/g, '\n\n\n')
+      .trim();
+  }
+
+  function clipTextEdges(text, limit) {
+    const normalized = normalizeContextText(text);
+    if (!limit || normalized.length <= limit) return normalized;
+    if (limit < 220) return `${normalized.slice(0, Math.max(0, limit - 1))}…`;
+    const marker = '\n…[중간 생략]…\n';
+    const usable = Math.max(0, limit - marker.length);
+    const head = Math.ceil(usable * 0.55);
+    const tail = Math.max(0, usable - head);
+    return `${normalized.slice(0, head)}${marker}${normalized.slice(-tail)}`;
+  }
+
   function describeFinishReason(reason) {
     const descriptions = {
       MAX_TOKENS: '출력 토큰 한도에 걸려 응답이 중간에 잘림.',
@@ -542,45 +563,74 @@
 
   async function fetchRecentContext() {
     const chatId = getChatId();
-    if (!chatId) return '(최근 맥락 없음)';
+    if (!chatId) return { text: '(최근 맥락 없음)', chars: 0, messageCount: 0, fetchedCount: 0 };
     try {
       const response = await fetch(`${API_BASE}/v3/chats/${chatId}/messages?limit=${CONTEXT_MESSAGES}`, {
         headers: buildHeaders(), credentials: 'include',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = await response.json();
-      const messages = (json.data || json).messages || [];
-      const chronological = messages.slice(0, CONTEXT_MESSAGES).reverse();
+      const messages = ((json.data || json).messages || []).slice(0, CONTEXT_MESSAGES);
+      const keptNewestFirst = [];
+      let remaining = HISTORY_CHAR_BUDGET;
+
+      for (const message of messages) {
+        if (remaining <= 120) break;
+        const role = message.role === 'assistant' ? '상대' : '나';
+        const rawContent = typeof message.content === 'string'
+          ? message.content
+          : JSON.stringify(message.content || '');
+        const content = normalizeContextText(rawContent);
+        if (!content) continue;
+        const prefix = `${role}: `;
+        const available = Math.max(0, remaining - prefix.length - 2);
+        if (available < 80) break;
+        const clipped = clipTextEdges(content, available);
+        const line = `${prefix}${clipped}`;
+        keptNewestFirst.push({ role, line });
+        remaining -= line.length + 2;
+        if (clipped.length < content.length) break;
+      }
+
+      const chronological = keptNewestFirst.reverse();
       const turns = [];
       let currentTurn = [];
-      chronological.forEach(message => {
-        const role = message.role === 'assistant' ? '상대' : '나';
-        if (role === '나' && currentTurn.length) {
+      chronological.forEach(item => {
+        if (item.role === '나' && currentTurn.length) {
           turns.push(currentTurn);
           currentTurn = [];
         }
-        const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content || '');
-        currentTurn.push(`${role}: ${compactText(content, 360)}`);
-        if (role === '상대' && currentTurn.some(line => line.startsWith('나: '))) {
+        currentTurn.push(item.line);
+        if (item.role === '상대' && currentTurn.some(line => line.startsWith('나: '))) {
           turns.push(currentTurn);
           currentTurn = [];
         }
       });
       if (currentTurn.length) turns.push(currentTurn);
-      return turns.slice(-CONTEXT_TURNS).map((turn, index) => (
-        `[Turn ${index + 1}]\n${turn.join('\n')}`
-      )).join('\n') || '(최근 맥락 없음)';
-    } catch (_) {
-      return '(최근 맥락을 불러오지 못함)';
+
+      const text = turns.slice(-CONTEXT_TURNS).map((turn, index) => (
+        `[Turn ${index + 1}]\n${turn.join('\n\n')}`
+      )).join('\n\n') || '(최근 맥락 없음)';
+
+      return {
+        text,
+        chars: text === '(최근 맥락 없음)' ? 0 : text.length,
+        messageCount: chronological.length,
+        fetchedCount: messages.length,
+      };
+    } catch (error) {
+      console.warn('[CDT] recent context fetch failed:', error);
+      return { text: '(최근 맥락을 불러오지 못함)', chars: 0, messageCount: 0, fetchedCount: 0 };
     }
   }
 
-  function buildPrompt(targets, context, guidance) {
+  function buildPrompt(targets, contextInfo, guidance, source) {
     const hasDialogue = targets.some(target => target.type === 'dialogue');
     const hasNarration = targets.some(target => target.type === 'narration');
     const lines = targets.map((target, index) => (
       `${index + 1}. [${target.type === 'narration' ? 'NARRATION' : 'DIALOGUE'}] ${target.original}`
     )).join('\n');
+    const currentDraft = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET) || '(empty)';
     const instructions = [
       'This is a constrained transformation task using fictional roleplay text between consenting adult characters.',
       'Transform only the explicitly numbered items. Every unnumbered passage is reference material only.',
@@ -591,17 +641,20 @@
     if (hasDialogue) instructions.push(
       'For each [DIALOGUE] item, translate the Korean dialogue into natural English.',
       'Preserve explicit adult anatomical and sexual vocabulary accurately and literally when it appears in the numbered source dialogue.',
-      'Use the room guidance and recent context only to choose tone, register, pronouns, idioms, names, titles, nicknames, and forms of address.',
-      'Treat each [Turn] block as one user-and-character exchange. Prefer established address terms over inventing a new variant.',
       'The Korean dialogue being translated is spoken by 나 (the user character) to 상대 (the AI character).',
-      'Resolve every omitted Korean subject, object, beneficiary, and action owner from the full sentence and recent relationship context. Never default an omitted action owner to the current speaker.',
-      'Example: for "결혼하고, 요리해 주고. 그게 네가 원하는 거야?", if context establishes 상대 as the devoted caregiver, preserve the meaning that 상대 wants to marry 나 and cook for 나; do not reverse it into 나 cooking for 상대.',
+      'Before translating each item, silently resolve: speaker, listener, omitted subject, omitted object or beneficiary, action owner, possessor, and the referent of pronouns or demonstratives.',
+      'Use evidence in this priority order: (1) the full Current draft and its adjacent narration/dialogue, (2) the most recent 상대 message in Recent conversation, (3) earlier Recent conversation, (4) Room guidance.',
+      'Do not assume an omitted Korean subject or action owner is the current speaker. Never reverse actor/recipient, giver/receiver, caregiver/beneficiary, possessor/possessed, or speaker/listener relationships.',
+      'Use adjacent narration in the Current draft to resolve deictic expressions, implied actions, sarcasm, teasing, flirting, refusal, hesitation, and other subtext.',
+      'If the context still does not establish one interpretation, choose the least assumptive natural English wording rather than inventing a relationship, intention, emotion, or action owner.',
+      'Use context to preserve established tone, register, pronouns, idioms, names, titles, nicknames, and forms of address. Prefer established address terms over inventing a new variant.',
       'Preserve meaning. Do not add actions, narration, explanations, quotation marks, parentheses, or Korean to a [DIALOGUE] result.',
     );
 
     if (hasNarration) instructions.push(
       'For each [NARRATION] item, rewrite only that Korean prose in polished Korean contemporary literary-fiction prose.',
       'Keep every fact, subject, action owner, event order, point of view, tense, intensity, and boundary unchanged.',
+      'Use the full Current draft to understand who is acting on whom and how adjacent sentences connect, but never transform or continue unnumbered text.',
       'Never invent or confirm new touch, action, dialogue, thought, psychology, emotion, reaction, relationship, consent, or bodily state for either 나 or 상대.',
       'Use restrained lyricism and precise sensory texture. Prefer air, humidity, light, fabric, body heat, scent, and fingertips only when the original meaning naturally supports them.',
       'Avoid expository explanation and direct emotion labels. Use metaphor, personification, or synesthesia sparingly and organically rather than forcing them into every sentence.',
@@ -613,11 +666,16 @@
     instructions.push(
       'Return one transformed string per numbered item in exactly the same order as a JSON array.',
       '',
-      `[Room guidance]\n${guidance || '(not provided)'}`,
+      `[Current draft — highest-priority reference only; do not transform unnumbered text]\n${currentDraft}`,
     );
-    if (hasDialogue) instructions.push(`[Last ${CONTEXT_TURNS} conversation turns]\n${context}`);
-    instructions.push(`[Items to transform]\n${lines}`);
-    return instructions.join('\n');
+    if (hasDialogue) instructions.push(
+      `[Recent conversation — newest messages were preserved first]\n${contextInfo?.text || '(최근 맥락 없음)'}`,
+    );
+    instructions.push(
+      `[Room guidance — lowest-priority reference]\n${guidance || '(not provided)'}`,
+      `[Items to transform]\n${lines}`,
+    );
+    return instructions.join('\n\n');
   }
 
   function billableOutputTokens(usage) {
@@ -782,16 +840,21 @@
     saveSettings(false);
     try {
       const needsContext = targets.some(target => target.type === 'dialogue');
-      let context = '';
+      let contextInfo = { text: '', chars: 0, messageCount: 0, fetchedCount: 0 };
       if (needsContext) {
         $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
-        context = await fetchRecentContext();
+        contextInfo = await fetchRecentContext();
       }
-      $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중…`;
+      const draftChars = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET).length;
+      const contextStatus = needsContext
+        ? ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`
+        : '';
+      $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중… · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
       const result = await callGemini(buildPrompt(
         targets,
-        context,
+        contextInfo,
         compactText($('#cdt-guidance').value, 3000),
+        source,
       ));
       const replaced = applyTransformations(source, targets, result.translations);
       setInputText(input, replaced);
@@ -803,8 +866,8 @@
         GM_setValue(`${KEY}:totalCostKrw`, (Number(GM_getValue(`${KEY}:totalCostKrw`, 0)) || 0) + cost);
         updateCost(cost);
       }
-      $('#cdt-status').textContent = `완료. ${targetSummary(targets)}만 교체함. 이제 전송 누르면 됨.`;
-      setTimeout(() => { panel.style.display = 'none'; }, 550);
+      $('#cdt-status').textContent = `완료. ${targetSummary(targets)}만 교체함. · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
+      setTimeout(() => { panel.style.display = 'none'; }, 900);
     } catch (error) {
       $('#cdt-status').textContent = `오류: ${error?.message || error}`;
     } finally {
