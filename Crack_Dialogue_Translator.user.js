@@ -109,7 +109,7 @@
     <div class="cdt-card">
       <label class="cdt-label" for="cdt-api-key">Gemini API Key</label>
       <input class="cdt-input" id="cdt-api-key" type="password" autocomplete="off" placeholder="AIza...">
-      <div class="cdt-meta">모델: Gemini 3.1 Flash-Lite · 입력 $0.25/1M · 출력 $1.50/1M</div>
+      <div class="cdt-meta">모델: Gemini 3.5 Flash-Lite · 입력 $0.30/1M · 출력 $2.50/1M</div>
     </div>
 
     <div class="cdt-actions">
