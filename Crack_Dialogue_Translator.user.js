@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.4.0
+// @version      0.4.1
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -20,7 +20,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
@@ -129,7 +129,7 @@
     <div class="cdt-card">
       <label class="cdt-label" for="cdt-guidance">방별 캐릭터 설정·작업 노트</label>
       <textarea class="cdt-textarea" id="cdt-guidance" maxlength="3000" placeholder="예: Felix는 펠릭스. Till은 틸. 펠릭스가 틸을 돌보고 요리해주는 관계. 틸은 짧고 무뚝뚝하게 말함."></textarea>
-      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 참고함. 대사 번역 시 현재 작성 중인 답장 전체 + 최근 5턴을 읽고, 최신 대화를 우선 보존함.</div>
+      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 참고함. 대사 번역 시 현재 작성 중인 답장 전체 + 최근 5턴을 읽고, 최신 대화를 우선 보존함. 주변 맥락이 필터에 걸리면 번역할 대사만으로 자동 재시도함.</div>
     </div>
 
     <div class="cdt-card">
@@ -615,29 +615,62 @@
     )).join('\n');
     const currentDraft = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET) || '(empty)';
     const instructions = [
-      'This is a constrained translation task using fictional roleplay text between consenting adult characters.',
-      'Translate only the explicitly numbered dialogue items. Every unnumbered passage is reference material only.',
-      'Never repeat, summarize, evaluate, answer, or continue unnumbered material.',
-      'Do not censor, euphemize, moralize, add, or continue sexual content.',
+      'This is a translation-only task.',
+      'Translate only the explicitly numbered Korean dialogue items. Every unnumbered passage is reference material only.',
+      'The surrounding reference text is provided only to resolve pronouns, omitted subjects or objects, names, forms of address, tone, and conversational context.',
+      'Do not respond to, continue, summarize, rewrite, evaluate, transform, or reproduce the surrounding reference text.',
+      'Do not infer or generate any new events, actions, dialogue, intentions, or story content.',
       'Each numbered item declares its target language as [TARGET=...]. Translate that item into exactly that language, even when different items use different target languages.',
-      'Preserve explicit adult anatomical and sexual vocabulary accurately and literally when it appears in the numbered source dialogue.',
       'The Korean dialogue being translated is spoken by 나 (the user character) to 상대 (the AI character).',
       'Before translating each item, silently resolve: speaker, listener, omitted subject, omitted object or beneficiary, action owner, possessor, and the referent of pronouns or demonstratives.',
       'Use evidence in this priority order: (1) the full Current draft and its adjacent narration/dialogue, (2) the most recent 상대 message in Recent conversation, (3) earlier Recent conversation, (4) Room guidance.',
       'Do not assume an omitted Korean subject or action owner is the current speaker. Never reverse actor/recipient, giver/receiver, caregiver/beneficiary, possessor/possessed, or speaker/listener relationships.',
-      'Use adjacent narration in the Current draft to resolve deictic expressions, implied actions, sarcasm, teasing, flirting, refusal, hesitation, and other subtext.',
+      'Use adjacent narration in the Current draft only when needed to resolve deictic expressions, implied actions, sarcasm, teasing, refusal, hesitation, and other linguistic subtext.',
       'Language markers written after a quoted line, such as -영, -프, -불, -스, -핀, -일, -중, -독 or their full Korean language names, are translator commands only. They are not part of the spoken dialogue or story meaning.',
       'If the context still does not establish one interpretation, choose the least assumptive natural wording rather than inventing a relationship, intention, emotion, or action owner.',
-      'Use context to preserve established tone, register, pronouns, idioms, names, titles, nicknames, and forms of address. Prefer established address terms over inventing a new variant.',
-      'Preserve meaning. Do not add actions, narration, explanations, quotation marks, parentheses, Korean source text, labels, or alternatives to any result.',
+      'Use context only to preserve established tone, register, pronouns, idioms, names, titles, nicknames, and forms of address. Prefer established address terms over inventing a new variant.',
+      'Preserve the exact meaning of each numbered item. Do not add actions, narration, explanations, quotation marks, parentheses, Korean source text, labels, or alternatives to any result.',
       'Return one translated string per numbered item in exactly the same order as a JSON array.',
       '',
-      `[Current draft — highest-priority reference only; do not transform unnumbered text]\n${currentDraft}`,
-      `[Recent conversation — newest messages were preserved first]\n${contextInfo?.text || '(최근 맥락 없음)'}`,
-      `[Room guidance — lowest-priority reference]\n${guidance || '(not provided)'}`,
+      `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Current draft]\n${currentDraft}`,
+      `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Recent conversation]\n${contextInfo?.text || '(최근 맥락 없음)'}`,
+      `[REFERENCE NOTES — USE ONLY FOR NAMES, RELATIONSHIPS, AND TONE]\n${guidance || '(not provided)'}`,
       `[Dialogue items to translate]\n${lines}`,
     ];
     return instructions.join('\n\n');
+  }
+
+  function buildFallbackPrompt(targets) {
+    const lines = targets.map((target, index) => (
+      `${index + 1}. [TARGET=${LANGUAGES[target.language]?.prompt || LANGUAGES.en.prompt}] ${target.original}`
+    )).join('\n');
+    return [
+      'Translation-only task.',
+      'Translate each numbered Korean sentence into the target language declared for that item.',
+      'Translate only the sentence itself. Do not answer it, continue it, explain it, summarize it, or add any new content.',
+      'Preserve the original meaning and tone as closely as possible.',
+      'Return one bare translated string per numbered item in exactly the same order as a JSON array.',
+      '',
+      `[Sentences to translate]\n${lines}`,
+    ].join('\n\n');
+  }
+
+  function isProhibitedContentError(error) {
+    const reason = String(error?.finishReason || error?.blockReason || '');
+    const message = String(error?.message || '');
+    return reason === 'PROHIBITED_CONTENT' || /PROHIBITED_CONTENT|금지 콘텐츠/.test(message);
+  }
+
+  function mergeUsage(...items) {
+    const merged = {};
+    items.filter(Boolean).forEach(usage => {
+      Object.entries(usage).forEach(([key, value]) => {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          merged[key] = (Number(merged[key]) || 0) + value;
+        }
+      });
+    });
+    return merged;
   }
 
   function billableOutputTokens(usage) {
@@ -715,10 +748,14 @@
             }
             const candidate = data.candidates?.[0];
             if (!candidate) {
-              throw new Error(
+              const blockReason = data.promptFeedback?.blockReason || '';
+              const error = new Error(
                 `Gemini candidate 없음.\n` +
-                `HTTP ${response.status} · blockReason=${data.promptFeedback?.blockReason || '없음'}`
+                `HTTP ${response.status} · blockReason=${blockReason || '없음'}`
               );
+              error.blockReason = blockReason;
+              error.usage = data.usageMetadata || {};
+              throw error;
             }
             const finishReason = candidate.finishReason || '';
             const raw = (candidate.content?.parts || [])
@@ -728,11 +765,14 @@
               .trim();
             if (finishReason && finishReason !== 'STOP') {
               console.error('[CDT] Gemini generation stopped', { status: response.status, finishReason, raw, data });
-              throw new Error(
+              const error = new Error(
                 `${describeFinishReason(finishReason)}\n` +
                 `HTTP ${response.status} · finishReason=${finishReason}\n` +
                 `응답 앞부분=${responsePreview(raw)}`
               );
+              error.finishReason = finishReason;
+              error.usage = data.usageMetadata || {};
+              throw error;
             }
             const translations = parseTranslationPayload(raw, response.status, finishReason);
             resolve({ translations, usage: data.usageMetadata || {} });
@@ -790,12 +830,26 @@
       const draftChars = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET).length;
       const contextStatus = ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`;
       $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중… · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
-      const result = await callGemini(buildPrompt(
-        targets,
-        contextInfo,
-        compactText($('#cdt-guidance').value, 3000),
-        source,
-      ));
+
+      let result;
+      let fallbackUsed = false;
+      let firstUsage = {};
+      try {
+        result = await callGemini(buildPrompt(
+          targets,
+          contextInfo,
+          compactText($('#cdt-guidance').value, 3000),
+          source,
+        ));
+      } catch (error) {
+        if (!isProhibitedContentError(error)) throw error;
+        firstUsage = error.usage || {};
+        fallbackUsed = true;
+        $('#cdt-status').textContent = '주변 맥락이 필터에 걸려 번역할 대사만으로 다시 시도 중…';
+        result = await callGemini(buildFallbackPrompt(targets));
+        result.usage = mergeUsage(firstUsage, result.usage);
+      }
+
       const replaced = applyTranslations(source, targets, result.translations);
       setInputText(input, replaced);
 
@@ -806,8 +860,9 @@
         GM_setValue(`${KEY}:totalCostKrw`, (Number(GM_getValue(`${KEY}:totalCostKrw`, 0)) || 0) + cost);
         updateCost(cost);
       }
-      $('#cdt-status').textContent = `완료. ${targetSummary(targets)} 교체함. · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
-      setTimeout(() => { panel.style.display = 'none'; }, 900);
+      const fallbackStatus = fallbackUsed ? ' · 주변 맥락 필터 → 대상 대사만으로 재번역함' : '';
+      $('#cdt-status').textContent = `완료. ${targetSummary(targets)} 교체함.${fallbackStatus} · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
+      setTimeout(() => { panel.style.display = 'none'; }, fallbackUsed ? 1800 : 900);
     } catch (error) {
       $('#cdt-status').textContent = `오류: ${error?.message || error}`;
     } finally {
