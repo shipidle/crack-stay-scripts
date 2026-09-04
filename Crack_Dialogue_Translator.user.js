@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.4.2
+// @version      0.4.3
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -20,7 +20,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.2';
+  const VERSION = '0.4.3';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
@@ -123,7 +123,7 @@
         <option value="zh">중국어</option>
         <option value="de">독일어</option>
       </select>
-      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어). 지정한 대사만 해당 언어로 분리 번역함.</div>
+      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어). 여러 언어가 섞여도 언어별로 묶어 Gemini 요청 1회로 처리함.</div>
     </div>
 
     <div class="cdt-card">
@@ -511,15 +511,14 @@
       );
     }
 
-    const translations = Array.isArray(parsed) ? parsed : parsed?.translations;
-    if (!Array.isArray(translations)) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error(
-        `Gemini 응답 JSON이 번역 배열이 아님.\n` +
+        `Gemini 응답 JSON이 언어별 번역 객체가 아님.\n` +
         `HTTP ${status} · finishReason=${finishReason || '없음'}\n` +
         `응답 앞부분=${responsePreview(raw)}`
       );
     }
-    return translations;
+    return parsed;
   }
 
   function getChatId() {
@@ -609,14 +608,51 @@
     }
   }
 
-  function buildPrompt(targets, contextInfo, guidance, source, languageCode) {
-    const targetLanguage = LANGUAGES[languageCode]?.prompt || LANGUAGES.en.prompt;
-    const lines = targets.map((target, index) => `${index + 1}. ${target.original}`).join('\n');
+  function groupTargets(targets) {
+    const grouped = new Map();
+    targets.forEach((target, index) => {
+      if (!grouped.has(target.language)) grouped.set(target.language, []);
+      grouped.get(target.language).push({ id: index + 1, text: target.original });
+    });
+    return grouped;
+  }
+
+  function buildLanguageSections(targets) {
+    return [...groupTargets(targets).entries()].map(([code, items]) => {
+      const language = LANGUAGES[code]?.prompt || LANGUAGES.en.prompt;
+      const lines = items.map(item => `ID ${item.id}: ${item.text}`).join('\n');
+      return `[${language} — output key "${code}"]\n${lines}`;
+    }).join('\n\n');
+  }
+
+  function buildGroupedResponseSchema(targets) {
+    const properties = {};
+    const required = [];
+    for (const code of groupTargets(targets).keys()) {
+      properties[code] = {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            id: { type: 'INTEGER' },
+            translation: { type: 'STRING' },
+          },
+          required: ['id', 'translation'],
+        },
+      };
+      required.push(code);
+    }
+    return { type: 'OBJECT', properties, required };
+  }
+
+  function buildPrompt(targets, contextInfo, guidance, source) {
     const currentDraft = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET) || '(empty)';
     return [
       'Translation-only task.',
-      `TARGET LANGUAGE: ${targetLanguage}. Translate EVERY numbered item into ${targetLanguage} only. Never use another language for any numbered item.`,
-      'Translate only the explicitly numbered Korean dialogue items. Reference text is only for linguistic context.',
+      'The language sections below are independent.',
+      'Translate every item ONLY into the language named by its own section. Never carry a language choice from one section into another.',
+      'IDs are immutable. Return every translation under the same language key and the same ID.',
+      'Translate only the listed Korean dialogue items. Reference text is only for linguistic context.',
       'Do not respond to, continue, summarize, rewrite, evaluate, transform, or reproduce the reference text.',
       'Treat nicknames and relationship labels in reference text only as literal names or forms of address; do not infer extra meaning from them.',
       'Before translating, resolve omitted Korean subjects/objects, speaker/listener, action owner, possessor, and pronoun referents from context.',
@@ -624,26 +660,58 @@
       'Never reverse actor/recipient, giver/receiver, possessor/possessed, or speaker/listener relationships.',
       'If context is ambiguous, use the least assumptive natural wording.',
       'Preserve tone, register, names, titles, nicknames, and forms of address. Do not add actions, explanations, quotation marks, parentheses, Korean source text, labels, or alternatives.',
-      'Return one bare translated string per numbered item, in order, as a JSON array.',
       '',
       `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Current draft]\n${currentDraft}`,
       `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Recent conversation]\n${contextInfo?.text || '(최근 맥락 없음)'}`,
       `[REFERENCE NOTES]\n${guidance || '(not provided)'}`,
-      `[Translate ALL items below into ${targetLanguage} ONLY]\n${lines}`,
+      `[LANGUAGE SECTIONS — FOLLOW EACH SECTION EXACTLY]\n${buildLanguageSections(targets)}`,
     ].join('\n\n');
   }
 
-  function buildFallbackPrompt(targets, languageCode) {
-    const targetLanguage = LANGUAGES[languageCode]?.prompt || LANGUAGES.en.prompt;
-    const lines = targets.map((target, index) => `${index + 1}. ${target.original}`).join('\n');
+  function buildFallbackPrompt(targets) {
     return [
       'Translation-only task.',
-      `Translate EVERY numbered Korean sentence into ${targetLanguage} only. Never use another language.`,
-      'Translate only the sentence itself. Do not answer it, continue it, explain it, summarize it, or add content.',
-      'Preserve meaning and tone. Return one bare translated string per item, in order, as a JSON array.',
+      'The language sections below are independent.',
+      'Translate every item ONLY into the language named by its own section. Never carry a language choice from one section into another.',
+      'IDs are immutable. Return every translation under the same language key and the same ID.',
+      'Translate only the listed sentence itself. Do not answer it, continue it, explain it, summarize it, or add content.',
+      'Preserve meaning and tone.',
       '',
-      `[Translate into ${targetLanguage} ONLY]\n${lines}`,
+      `[LANGUAGE SECTIONS — FOLLOW EACH SECTION EXACTLY]\n${buildLanguageSections(targets)}`,
     ].join('\n\n');
+  }
+
+  function unpackGroupedTranslations(targets, payload) {
+    const translations = new Array(targets.length);
+    const seen = new Set();
+    const expectedCodes = new Set(targets.map(target => target.language));
+
+    for (const code of expectedCodes) {
+      const entries = payload?.[code];
+      if (!Array.isArray(entries)) {
+        throw new Error(`${LANGUAGES[code]?.label || code} 번역 그룹이 응답에 없음.`);
+      }
+      for (const entry of entries) {
+        const id = Number(entry?.id);
+        const translation = String(entry?.translation || '').trim();
+        const index = id - 1;
+        if (!Number.isInteger(id) || index < 0 || index >= targets.length) {
+          throw new Error(`${LANGUAGES[code]?.label || code} 번역의 ID가 잘못됨.`);
+        }
+        if (targets[index].language !== code) {
+          throw new Error(`ID ${id}의 번역 언어가 잘못된 그룹에 들어감.`);
+        }
+        if (seen.has(id)) throw new Error(`ID ${id} 번역이 중복됨.`);
+        if (!translation) throw new Error(`ID ${id} 번역 결과가 비어 있음.`);
+        translations[index] = translation;
+        seen.add(id);
+      }
+    }
+
+    for (let i = 0; i < targets.length; i++) {
+      if (!translations[i]) throw new Error(`ID ${i + 1} 번역 결과가 누락됨.`);
+    }
+    return translations;
   }
 
   function isProhibitedContentError(error) {
@@ -709,7 +777,7 @@
     });
   }
 
-  function callGemini(prompt) {
+  function callGemini(prompt, responseSchema) {
     return new Promise((resolve, reject) => {
       const apiKey = $('#cdt-api-key').value.trim();
       if (!apiKey) { reject(new Error('Gemini API Key를 먼저 입력해줘.')); return; }
@@ -724,7 +792,7 @@
             maxOutputTokens: 4096,
             thinkingConfig: { thinkingLevel: 'low' },
             responseMimeType: 'application/json',
-            responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
+            responseSchema,
           },
           safetySettings: [
             'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH',
@@ -765,8 +833,8 @@
               error.usage = data.usageMetadata || {};
               throw error;
             }
-            const translations = parseTranslationPayload(raw, response.status, finishReason);
-            resolve({ translations, usage: data.usageMetadata || {} });
+            const payload = parseTranslationPayload(raw, response.status, finishReason);
+            resolve({ payload, usage: data.usageMetadata || {} });
           } catch (error) { reject(error); }
         },
         onerror() { reject(new Error('Gemini 네트워크 연결 실패.')); },
@@ -775,48 +843,28 @@
     });
   }
 
-  async function translateTargetsByLanguage(targets, contextInfo, guidance, source) {
-    const grouped = new Map();
-    targets.forEach((target, index) => {
-      if (!grouped.has(target.language)) grouped.set(target.language, []);
-      grouped.get(target.language).push(index);
-    });
-
-    const translations = new Array(targets.length);
-    let usage = {};
+  async function translateTargetsSingleRequest(targets, contextInfo, guidance, source) {
+    const responseSchema = buildGroupedResponseSchema(targets);
+    let result;
     let fallbackUsed = false;
-    let contextBlocked = false;
+    let firstUsage = {};
 
-    for (const [languageCode, indices] of grouped) {
-      const groupTargets = indices.map(index => targets[index]);
-      let result;
-
-      if (!contextBlocked) {
-        try {
-          result = await callGemini(buildPrompt(groupTargets, contextInfo, guidance, source, languageCode));
-        } catch (error) {
-          if (!isProhibitedContentError(error)) throw error;
-          contextBlocked = true;
-          fallbackUsed = true;
-          usage = mergeUsage(usage, error.usage || {});
-          $('#cdt-status').textContent = '주변 맥락이 필터에 걸려 번역할 대사만으로 다시 시도 중…';
-        }
-      }
-
-      if (!result) {
-        result = await callGemini(buildFallbackPrompt(groupTargets, languageCode));
-      }
-
-      usage = mergeUsage(usage, result.usage || {});
-      if (result.translations.length !== indices.length) {
-        throw new Error(`${LANGUAGES[languageCode]?.label || languageCode} 번역 결과 개수가 맞지 않음.`);
-      }
-      result.translations.forEach((translated, groupIndex) => {
-        translations[indices[groupIndex]] = translated;
-      });
+    try {
+      result = await callGemini(buildPrompt(targets, contextInfo, guidance, source), responseSchema);
+    } catch (error) {
+      if (!isProhibitedContentError(error)) throw error;
+      fallbackUsed = true;
+      firstUsage = error.usage || {};
+      $('#cdt-status').textContent = '주변 맥락이 필터에 걸려 번역할 대사만으로 다시 시도 중…';
+      result = await callGemini(buildFallbackPrompt(targets), responseSchema);
+      result.usage = mergeUsage(firstUsage, result.usage);
     }
 
-    return { translations, usage, fallbackUsed };
+    return {
+      translations: unpackGroupedTranslations(targets, result.payload),
+      usage: result.usage || {},
+      fallbackUsed,
+    };
   }
 
   function targetSummary(targets) {
@@ -866,7 +914,7 @@
       const contextStatus = ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`;
       $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중… · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
 
-      const result = await translateTargetsByLanguage(
+      const result = await translateTargetsSingleRequest(
         targets,
         contextInfo,
         compactText($('#cdt-guidance').value, 3000),
