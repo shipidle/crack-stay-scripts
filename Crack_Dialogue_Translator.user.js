@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.4.1
+// @version      0.4.2
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -20,7 +20,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
@@ -123,7 +123,7 @@
         <option value="zh">중국어</option>
         <option value="de">독일어</option>
       </select>
-      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어). 전체 언어명도 인식함.</div>
+      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어). 지정한 대사만 해당 언어로 분리 번역함.</div>
     </div>
 
     <div class="cdt-card">
@@ -286,7 +286,7 @@
   function isChatRoomPage() {
     return /\/stories\/[^/]+\/episodes\/[^/]+/.test(location.pathname)
       || /\/characters\/[^/]+\/chats\/[^/]+/.test(location.pathname)
-      || /\/u\/[^/]+\/c\/[^/]+/.test(location.pathname);
+      || /\/u\/[^/]+\/c\/([^/?#]+)/.test(location.pathname);
   }
 
   function isVisible(el) {
@@ -609,49 +609,40 @@
     }
   }
 
-  function buildPrompt(targets, contextInfo, guidance, source) {
-    const lines = targets.map((target, index) => (
-      `${index + 1}. [TARGET=${LANGUAGES[target.language]?.prompt || LANGUAGES.en.prompt}] ${target.original}`
-    )).join('\n');
+  function buildPrompt(targets, contextInfo, guidance, source, languageCode) {
+    const targetLanguage = LANGUAGES[languageCode]?.prompt || LANGUAGES.en.prompt;
+    const lines = targets.map((target, index) => `${index + 1}. ${target.original}`).join('\n');
     const currentDraft = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET) || '(empty)';
-    const instructions = [
-      'This is a translation-only task.',
-      'Translate only the explicitly numbered Korean dialogue items. Every unnumbered passage is reference material only.',
-      'The surrounding reference text is provided only to resolve pronouns, omitted subjects or objects, names, forms of address, tone, and conversational context.',
-      'Do not respond to, continue, summarize, rewrite, evaluate, transform, or reproduce the surrounding reference text.',
-      'Do not infer or generate any new events, actions, dialogue, intentions, or story content.',
-      'Each numbered item declares its target language as [TARGET=...]. Translate that item into exactly that language, even when different items use different target languages.',
-      'The Korean dialogue being translated is spoken by 나 (the user character) to 상대 (the AI character).',
-      'Before translating each item, silently resolve: speaker, listener, omitted subject, omitted object or beneficiary, action owner, possessor, and the referent of pronouns or demonstratives.',
-      'Use evidence in this priority order: (1) the full Current draft and its adjacent narration/dialogue, (2) the most recent 상대 message in Recent conversation, (3) earlier Recent conversation, (4) Room guidance.',
-      'Do not assume an omitted Korean subject or action owner is the current speaker. Never reverse actor/recipient, giver/receiver, caregiver/beneficiary, possessor/possessed, or speaker/listener relationships.',
-      'Use adjacent narration in the Current draft only when needed to resolve deictic expressions, implied actions, sarcasm, teasing, refusal, hesitation, and other linguistic subtext.',
-      'Language markers written after a quoted line, such as -영, -프, -불, -스, -핀, -일, -중, -독 or their full Korean language names, are translator commands only. They are not part of the spoken dialogue or story meaning.',
-      'If the context still does not establish one interpretation, choose the least assumptive natural wording rather than inventing a relationship, intention, emotion, or action owner.',
-      'Use context only to preserve established tone, register, pronouns, idioms, names, titles, nicknames, and forms of address. Prefer established address terms over inventing a new variant.',
-      'Preserve the exact meaning of each numbered item. Do not add actions, narration, explanations, quotation marks, parentheses, Korean source text, labels, or alternatives to any result.',
-      'Return one translated string per numbered item in exactly the same order as a JSON array.',
+    return [
+      'Translation-only task.',
+      `TARGET LANGUAGE: ${targetLanguage}. Translate EVERY numbered item into ${targetLanguage} only. Never use another language for any numbered item.`,
+      'Translate only the explicitly numbered Korean dialogue items. Reference text is only for linguistic context.',
+      'Do not respond to, continue, summarize, rewrite, evaluate, transform, or reproduce the reference text.',
+      'Treat nicknames and relationship labels in reference text only as literal names or forms of address; do not infer extra meaning from them.',
+      'Before translating, resolve omitted Korean subjects/objects, speaker/listener, action owner, possessor, and pronoun referents from context.',
+      'Context priority: current draft → most recent 상대 message → earlier recent conversation → room guidance.',
+      'Never reverse actor/recipient, giver/receiver, possessor/possessed, or speaker/listener relationships.',
+      'If context is ambiguous, use the least assumptive natural wording.',
+      'Preserve tone, register, names, titles, nicknames, and forms of address. Do not add actions, explanations, quotation marks, parentheses, Korean source text, labels, or alternatives.',
+      'Return one bare translated string per numbered item, in order, as a JSON array.',
       '',
       `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Current draft]\n${currentDraft}`,
       `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Recent conversation]\n${contextInfo?.text || '(최근 맥락 없음)'}`,
-      `[REFERENCE NOTES — USE ONLY FOR NAMES, RELATIONSHIPS, AND TONE]\n${guidance || '(not provided)'}`,
-      `[Dialogue items to translate]\n${lines}`,
-    ];
-    return instructions.join('\n\n');
+      `[REFERENCE NOTES]\n${guidance || '(not provided)'}`,
+      `[Translate ALL items below into ${targetLanguage} ONLY]\n${lines}`,
+    ].join('\n\n');
   }
 
-  function buildFallbackPrompt(targets) {
-    const lines = targets.map((target, index) => (
-      `${index + 1}. [TARGET=${LANGUAGES[target.language]?.prompt || LANGUAGES.en.prompt}] ${target.original}`
-    )).join('\n');
+  function buildFallbackPrompt(targets, languageCode) {
+    const targetLanguage = LANGUAGES[languageCode]?.prompt || LANGUAGES.en.prompt;
+    const lines = targets.map((target, index) => `${index + 1}. ${target.original}`).join('\n');
     return [
       'Translation-only task.',
-      'Translate each numbered Korean sentence into the target language declared for that item.',
-      'Translate only the sentence itself. Do not answer it, continue it, explain it, summarize it, or add any new content.',
-      'Preserve the original meaning and tone as closely as possible.',
-      'Return one bare translated string per numbered item in exactly the same order as a JSON array.',
+      `Translate EVERY numbered Korean sentence into ${targetLanguage} only. Never use another language.`,
+      'Translate only the sentence itself. Do not answer it, continue it, explain it, summarize it, or add content.',
+      'Preserve meaning and tone. Return one bare translated string per item, in order, as a JSON array.',
       '',
-      `[Sentences to translate]\n${lines}`,
+      `[Translate into ${targetLanguage} ONLY]\n${lines}`,
     ].join('\n\n');
   }
 
@@ -784,6 +775,50 @@
     });
   }
 
+  async function translateTargetsByLanguage(targets, contextInfo, guidance, source) {
+    const grouped = new Map();
+    targets.forEach((target, index) => {
+      if (!grouped.has(target.language)) grouped.set(target.language, []);
+      grouped.get(target.language).push(index);
+    });
+
+    const translations = new Array(targets.length);
+    let usage = {};
+    let fallbackUsed = false;
+    let contextBlocked = false;
+
+    for (const [languageCode, indices] of grouped) {
+      const groupTargets = indices.map(index => targets[index]);
+      let result;
+
+      if (!contextBlocked) {
+        try {
+          result = await callGemini(buildPrompt(groupTargets, contextInfo, guidance, source, languageCode));
+        } catch (error) {
+          if (!isProhibitedContentError(error)) throw error;
+          contextBlocked = true;
+          fallbackUsed = true;
+          usage = mergeUsage(usage, error.usage || {});
+          $('#cdt-status').textContent = '주변 맥락이 필터에 걸려 번역할 대사만으로 다시 시도 중…';
+        }
+      }
+
+      if (!result) {
+        result = await callGemini(buildFallbackPrompt(groupTargets, languageCode));
+      }
+
+      usage = mergeUsage(usage, result.usage || {});
+      if (result.translations.length !== indices.length) {
+        throw new Error(`${LANGUAGES[languageCode]?.label || languageCode} 번역 결과 개수가 맞지 않음.`);
+      }
+      result.translations.forEach((translated, groupIndex) => {
+        translations[indices[groupIndex]] = translated;
+      });
+    }
+
+    return { translations, usage, fallbackUsed };
+  }
+
   function targetSummary(targets) {
     if (!targets.length) return '대사 0개';
     const counts = {};
@@ -831,25 +866,12 @@
       const contextStatus = ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`;
       $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중… · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
 
-      let result;
-      let fallbackUsed = false;
-      let firstUsage = {};
-      try {
-        result = await callGemini(buildPrompt(
-          targets,
-          contextInfo,
-          compactText($('#cdt-guidance').value, 3000),
-          source,
-        ));
-      } catch (error) {
-        if (!isProhibitedContentError(error)) throw error;
-        firstUsage = error.usage || {};
-        fallbackUsed = true;
-        $('#cdt-status').textContent = '주변 맥락이 필터에 걸려 번역할 대사만으로 다시 시도 중…';
-        result = await callGemini(buildFallbackPrompt(targets));
-        result.usage = mergeUsage(firstUsage, result.usage);
-      }
-
+      const result = await translateTargetsByLanguage(
+        targets,
+        contextInfo,
+        compactText($('#cdt-guidance').value, 3000),
+        source,
+      );
       const replaced = applyTranslations(source, targets, result.translations);
       setInputText(input, replaced);
 
@@ -860,9 +882,9 @@
         GM_setValue(`${KEY}:totalCostKrw`, (Number(GM_getValue(`${KEY}:totalCostKrw`, 0)) || 0) + cost);
         updateCost(cost);
       }
-      const fallbackStatus = fallbackUsed ? ' · 주변 맥락 필터 → 대상 대사만으로 재번역함' : '';
+      const fallbackStatus = result.fallbackUsed ? ' · 주변 맥락 필터 → 대상 대사만으로 재번역함' : '';
       $('#cdt-status').textContent = `완료. ${targetSummary(targets)} 교체함.${fallbackStatus} · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
-      setTimeout(() => { panel.style.display = 'none'; }, fallbackUsed ? 1800 : 900);
+      setTimeout(() => { panel.style.display = 'none'; }, result.fallbackUsed ? 1800 : 900);
     } catch (error) {
       $('#cdt-status').textContent = `오류: ${error?.message || error}`;
     } finally {
