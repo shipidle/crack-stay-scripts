@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🙈 Crack Logo Hider2
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-logo-hider2
-// @version      1.5.2
+// @version      1.6.0
 // @description  Hide the Crack header logo and prevent horizontal page drift without hiding drawers or popups.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -17,15 +17,10 @@
   'use strict';
 
   const STYLE_ID = 'crack-logo-hider2-style';
-  const LOGO_PATH_PREFIX = 'M20.4586 15.2656H0V19.3415';
-  const LOGO_SELECTOR = [
-    'svg[width="42"][height="20"][viewBox="0 0 42 20"]',
-    `svg:has(path[d^="${LOGO_PATH_PREFIX}"])`,
-    `header a:has(svg[width="42"][height="20"][viewBox="0 0 42 20"])`,
-    `nav a:has(svg[width="42"][height="20"][viewBox="0 0 42 20"])`,
-    `header a:has(svg path[d^="${LOGO_PATH_PREFIX}"])`,
-    `nav a:has(svg path[d^="${LOGO_PATH_PREFIX}"])`
-  ].join(',');
+  const TARGET_ATTR = 'data-crack-logo-hider-target';
+  const LEGACY_LOGO_PATH_PREFIX = 'M20.4586 15.2656H0V19.3415';
+  const LOGO_NAME_RE = /(?:^|\\b)(?:crack|크랙)(?:\\b|$)/i;
+  let scanQueued = false;
 
   function injectStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -133,7 +128,7 @@
         }
       }
 
-      ${LOGO_SELECTOR} {
+      [${TARGET_ATTR}="true"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
@@ -143,47 +138,108 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
-  function isLogoSvg(svg) {
-    if (!svg || svg.tagName?.toLowerCase() !== 'svg') return false;
-    if (
-      svg.getAttribute('width') === '42' &&
-      svg.getAttribute('height') === '20' &&
-      svg.getAttribute('viewBox') === '0 0 42 20'
-    ) {
-      return true;
+  function isRootUrl(value) {
+    if (!value) return false;
+    try {
+      const url = new URL(value, location.href);
+      return url.origin === location.origin && url.pathname === '/' && !url.search && !url.hash;
+    } catch {
+      return false;
     }
-
-    return Boolean(svg.querySelector(`path[d^="${LOGO_PATH_PREFIX}"]`));
   }
 
-  function hide(el) {
-    el.style.setProperty('display', 'none', 'important');
-    el.style.setProperty('visibility', 'hidden', 'important');
-    el.style.setProperty('opacity', '0', 'important');
-    el.style.setProperty('pointer-events', 'none', 'important');
+  function isInTopBar(el) {
+    const rect = el.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    return rect.top < 140 && rect.bottom > -1 && rect.width <= 240 && rect.height <= 100;
+  }
+
+  function hasLogoSignature(el) {
+    const name = [
+      el.getAttribute('aria-label'),
+      el.getAttribute('title'),
+      el.getAttribute('data-testid'),
+      el.getAttribute('data-cy'),
+      el.textContent
+    ].filter(Boolean).join(' ').trim();
+
+    if (LOGO_NAME_RE.test(name)) return true;
+
+    const media = el.matches('svg, img, picture')
+      ? el
+      : el.querySelector('svg, img, picture');
+    if (!media) return false;
+
+    const mediaName = [
+      media.getAttribute?.('aria-label'),
+      media.getAttribute?.('alt'),
+      media.getAttribute?.('title'),
+      media.getAttribute?.('src')
+    ].filter(Boolean).join(' ');
+
+    if (LOGO_NAME_RE.test(mediaName)) return true;
+
+    if (media.tagName?.toLowerCase() === 'svg') {
+      if (
+        media.getAttribute('width') === '42' &&
+        media.getAttribute('height') === '20' &&
+        media.getAttribute('viewBox') === '0 0 42 20'
+      ) return true;
+
+      if (media.querySelector(`path[d^="${LEGACY_LOGO_PATH_PREFIX}"]`)) return true;
+    }
+
+    // The root link in the top bar is the site logo even when its SVG path,
+    // dimensions, or asset URL changes.
+    return el.matches('a[href], [role="link"]') && isRootUrl(el.getAttribute('href'));
+  }
+
+  function markHidden(el) {
+    if (!el || el.getAttribute(TARGET_ATTR) === 'true') return;
+    el.setAttribute(TARGET_ATTR, 'true');
   }
 
   function hideLogo() {
-    document.querySelectorAll('header svg, nav svg, svg[viewBox="0 0 42 20"]').forEach((svg) => {
-      if (!isLogoSvg(svg)) return;
-      hide(svg);
+    const candidates = document.querySelectorAll([
+      'header a[href]',
+      'nav a[href]',
+      '[role="banner"] a[href]',
+      'a[href="/"]',
+      'a[href="https://crack.wrtn.ai/"]',
+      '[aria-label*="Crack" i]',
+      '[aria-label*="크랙"]',
+      '[title*="Crack" i]',
+      '[title*="크랙"]',
+      'img[alt*="Crack" i]',
+      'img[alt*="크랙"]',
+      'img[src*="logo" i]'
+    ].join(','));
 
-      const owner = svg.closest('a, button, [role="link"], [role="button"]');
-      if (owner) hide(owner);
+    candidates.forEach((candidate) => {
+      const owner = candidate.closest('a[href], button, [role="link"], [role="button"]') || candidate;
+      if (!isInTopBar(owner) || !hasLogoSignature(owner)) return;
+      markHidden(owner);
+    });
+  }
+
+  function queueLogoScan() {
+    if (scanQueued) return;
+    scanQueued = true;
+    requestAnimationFrame(() => {
+      scanQueued = false;
+      injectStyle();
+      hideLogo();
     });
   }
 
   injectStyle();
   hideLogo();
 
-  new MutationObserver(() => {
-    injectStyle();
-    hideLogo();
-  }).observe(document.documentElement, {
+  new MutationObserver(queueLogoScan).observe(document.documentElement, {
     childList: true,
     subtree: true
   });
 
-  document.addEventListener('DOMContentLoaded', hideLogo, { once: true });
-  window.addEventListener('load', hideLogo, { once: true });
+  document.addEventListener('DOMContentLoaded', queueLogoScan, { once: true });
+  window.addEventListener('load', queueLogoScan, { once: true });
 })();
