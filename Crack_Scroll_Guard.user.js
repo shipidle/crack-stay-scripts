@@ -2,14 +2,14 @@
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
 // @version      1.0.0
-// @description  이전 대화를 읽는 동안 크랙이 화면을 강제로 아래로 내리는 동작만 차단합니다.
+// @description  🧪 BETA · 이전 대화를 읽는 동안 크랙이 화면을 강제로 아래로 내리는 동작만 차단합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
 // @match        https://crack.wrtn.ai/characters/*/chats/*
 // @match        https://crack.wrtn.ai/u/*/c/*
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Scroll_Guard.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Scroll_Guard.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Scroll_Guard.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Scroll_Guard.user.js
 // @grant        GM_addStyle
 // @run-at       document-start
 // ==/UserScript==

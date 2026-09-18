@@ -2,7 +2,7 @@
 // @name         🤖 캐챗 어시스턴트
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
 // @version      2.41.0-local
-// @description  crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
+// @description  🧪 BETA · crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       extensionCode
 // @match        https://crack.wrtn.ai/*
@@ -15,8 +15,8 @@
 // @connect      googleapis.com
 // @connect      open.er-api.com
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Assistant.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Assistant.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js
 // ==/UserScript==
 
 (function () {

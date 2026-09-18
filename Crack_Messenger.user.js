@@ -2,7 +2,7 @@
 // @name         💌 크랙 메신저
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-messenger
 // @version      0.4.1
-// @description  현재 채팅방의 캐릭터와 짧은 메시지를 주고받는 방별 메신저입니다.
+// @description  🧪 BETA · 현재 채팅방의 캐릭터와 짧은 메시지를 주고받는 방별 메신저입니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%92%8C%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -15,8 +15,8 @@
 // @grant        unsafeWindow
 // @connect      generativelanguage.googleapis.com
 // @connect      open.er-api.com
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Messenger.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Messenger.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js
 // ==/UserScript==
 
 (() => {

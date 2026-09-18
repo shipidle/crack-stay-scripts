@@ -2,7 +2,7 @@
 // @name         🧩 NAI 프롬프트 셀렉터
 // @namespace    https://github.com/shipidle/crack-stay-scripts
 // @version      0.1.7
-// @description  NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
+// @description  🧪 BETA · NovelAI Prompt Chunks를 슬롯·칩·가상 캐릭터로 관리하고 반복 생성을 돕습니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://novelai.net/image*
@@ -11,8 +11,8 @@
 // @grant        GM_setValue
 // @sandbox      DOM
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/NAI_Prompt_Selector.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/NAI_Prompt_Selector.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/NAI_Prompt_Selector.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/NAI_Prompt_Selector.user.js
 // ==/UserScript==
 
 (function naiPromptSelector(global) {

@@ -2,7 +2,7 @@
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
 // @version      0.5.0
-// @description  크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
+// @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -14,8 +14,8 @@
 // @connect      ai-gateway.vercel.sh
 // @connect      generativelanguage.googleapis.com
 // @connect      open.er-api.com
-// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Dialogue_Translator.user.js
-// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Dialogue_Translator.user.js
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Dialogue_Translator.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Dialogue_Translator.user.js
 // ==/UserScript==
 
 (() => {
