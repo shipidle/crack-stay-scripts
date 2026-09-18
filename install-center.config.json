@@ -44,6 +44,7 @@
     }
   ],
   "order": [
+    "NAI_Prompt_Selector.user.js",
     "Crack_Assistant.user.js",
     "Crack_Chat_Background.user.js",
     "Crack_Scroll_Guard.user.js",
