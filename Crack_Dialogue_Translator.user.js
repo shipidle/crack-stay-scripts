@@ -1,0 +1,1104 @@
+// ==UserScript==
+// @name         🌐 대사 번역기
+// @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
+// @version      0.5.0
+// @description  크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
+// @author       shipidle
+// @match        https://crack.wrtn.ai/*
+// @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
+// @connect      ai-gateway.vercel.sh
+// @connect      generativelanguage.googleapis.com
+// @connect      open.er-api.com
+// @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Dialogue_Translator.user.js
+// @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/main/Crack_Dialogue_Translator.user.js
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  // BEGIN AI GATEWAY ADAPTER (kept identical in the three standalone userscripts)
+  const GATEWAY_URL = 'https://ai-gateway.vercel.sh/v1/chat/completions';
+  const GATEWAY_DEFAULT_MODEL = 'google/gemini-3.8-flash';
+
+  function gatewaySchema(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    if (Array.isArray(schema)) return schema.map(gatewaySchema);
+    const result = {};
+    for (const [key, value] of Object.entries(schema)) {
+      result[key] = key === 'type' && typeof value === 'string' ? value.toLowerCase() : gatewaySchema(value);
+    }
+    if (result.type === 'object') result.additionalProperties = false;
+    return result;
+  }
+
+  function buildGatewayRequest(model, messages, schema, maxTokens, effort = 'low') {
+    model = String(model || '').trim() || GATEWAY_DEFAULT_MODEL;
+    if (!/^[a-z0-9._-]+\/[a-z0-9._:/-]+$/i.test(model)) {
+      throw new Error('Vercel 모델 ID를 입력해줘. 예: google/gemini-3.8-flash');
+    }
+    const body = { model, messages: messages.map(message => ({ ...message })), stream: false, max_tokens: maxTokens };
+    // Unknown/custom models use provider defaults; do not send Gemini-only options to other providers.
+    if (/^google\/gemini-3/.test(model)) body.reasoning_effort = effort;
+    if (schema) {
+      const converted = gatewaySchema(schema);
+      const wrapped = converted.type === 'array';
+      body.response_format = { type: 'json_schema', json_schema: {
+        name: 'result', strict: true,
+        schema: wrapped ? { type: 'object', properties: { items: converted }, required: ['items'], additionalProperties: false } : converted,
+      } };
+      if (wrapped) body.messages.push({ role: 'user', content: 'Return the requested JSON array inside a JSON object with the single key "items".' });
+    }
+    return body;
+  }
+
+  function parseGatewayResponse(status, raw, schema) {
+    let data;
+    try { data = JSON.parse(raw); } catch (_) { throw new Error(`Vercel 응답 파싱 실패 (HTTP ${status})`); }
+    if (status < 200 || status >= 300 || data.error) {
+      const error = new Error(`Vercel HTTP ${status}: ${data.error?.message || '요청 실패'}`);
+      error.status = status;
+      error.source = 'Vercel AI Gateway';
+      throw error;
+    }
+    const choice = data.choices?.[0];
+    if (choice?.message?.refusal || choice?.finish_reason === 'content_filter') throw new Error('Vercel 모델이 요청을 거절함.');
+    if (choice?.finish_reason !== 'stop') throw new Error(`Vercel 응답 미완료 (${choice?.finish_reason || '결과 없음'}). 모델과 출력 한도를 확인해줘.`);
+    let text = typeof choice.message?.content === 'string' ? choice.message.content.trim() : '';
+    if (!text) throw new Error('Vercel 모델이 빈 응답을 반환함.');
+    if (String(schema?.type).toLowerCase() === 'array') {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed.items)) throw new Error('Vercel JSON 응답의 items 배열이 없음.');
+      text = JSON.stringify(parsed.items);
+    }
+    const usage = data.usage ? {
+      promptTokenCount: Number(data.usage.prompt_tokens || 0),
+      // completion_tokens already includes reasoning tokens. Never count them twice.
+      candidatesTokenCount: Number(data.usage.completion_tokens || 0),
+      thoughtsTokenCount: 0,
+      totalTokenCount: Number(data.usage.total_tokens || 0),
+      gateway: true,
+    } : { gateway: true };
+    return { text, usage };
+  }
+  // END AI GATEWAY ADAPTER
+
+
+  const VERSION = '0.5.0';
+  const MODEL = 'gemini-3.5-flash-lite';
+  const INPUT_USD_PER_M = 0.30;
+  const OUTPUT_USD_PER_M = 2.50;
+  const MAX_TARGETS = 24;
+  const CONTEXT_TURNS = 5;
+  const CONTEXT_MESSAGES = CONTEXT_TURNS * 2;
+  const HISTORY_CHAR_BUDGET = 20000;
+  const CURRENT_DRAFT_CHAR_BUDGET = 24000;
+  const API_BASE = 'https://crack-api.wrtn.ai/crack-gen';
+  const KEY = 'shipidle:dialogue-translator:v1';
+  const CLOUD_API_KEY = '__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__';
+  const BRIDGE = unsafeWindow || window;
+
+  const LANGUAGES = {
+    en: { label: '영어', prompt: 'English' },
+    fr: { label: '프랑스어', prompt: 'French' },
+    es: { label: '스페인어', prompt: 'Spanish' },
+    fi: { label: '핀란드어', prompt: 'Finnish' },
+    ja: { label: '일본어', prompt: 'Japanese' },
+    zh: { label: '중국어', prompt: 'Chinese' },
+    de: { label: '독일어', prompt: 'German' },
+  };
+  const LANGUAGE_OVERRIDE_MAP = {
+    영: 'en', 영어: 'en',
+    프: 'fr', 불: 'fr', 프랑스어: 'fr',
+    스: 'es', 스페인어: 'es',
+    핀: 'fi', 핀란드어: 'fi',
+    일: 'ja', 일본어: 'ja',
+    중: 'zh', 중국어: 'zh',
+    독: 'de', 독일어: 'de',
+  };
+  const LANGUAGE_OVERRIDE_RE = /^[ \t]*-[ \t]*(프랑스어|스페인어|핀란드어|일본어|중국어|독일어|영어|영|프|불|스|핀|일|중|독)(?=$|[^가-힣ㄱ-ㅎㅏ-ㅣ])/;
+
+  let busy = false;
+  let cloudBusy = false;
+  let exchangeRate = null;
+  let loadedRoomPath = '';
+  let roomSettings = { guidance: '', cloudRevision: 0 };
+
+  GM_addStyle(`
+    #cdt-toolbar-btn{pointer-events:auto}
+    #cdt-toolbar-btn .cdt-emoji{
+      font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;
+      font-size:15px;line-height:1;pointer-events:none;
+    }
+    #cdt-panel{
+      position:fixed;right:16px;bottom:146px;z-index:2147483602;width:360px;max-width:calc(100vw - 24px);
+      max-height:min(76vh,620px);overflow:auto;display:none;padding:16px;
+      color:#243447;background:#EEF6FB;border:1px solid #CEDEF2;border-radius:18px;
+      box-shadow:0 14px 42px rgba(53,86,113,.22);
+      font-family:"Pretendard","Apple SD Gothic Neo",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    #cdt-panel *{box-sizing:border-box}
+    .cdt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:5px}
+    .cdt-title{font-size:16px;font-weight:800;letter-spacing:-.02em}
+    .cdt-close{border:0;background:transparent;color:#62778A;font-size:18px;cursor:pointer;padding:4px}
+    .cdt-desc{font-size:12px;line-height:1.55;color:#62778A;margin-bottom:13px}
+    .cdt-card{padding:12px;background:rgba(255,255,255,.82);border:1px solid #D9E7F1;border-radius:13px;margin-top:10px}
+    .cdt-label{display:block;margin:0 0 6px;font-size:12px;font-weight:750;color:#425B70}
+    .cdt-input,.cdt-textarea,.cdt-select{
+      width:100%;border:1px solid #CEDEF2;border-radius:10px;background:#fff;color:#172B3A;
+      padding:10px 11px;font:inherit;font-size:13px;outline:none;
+    }
+    .cdt-input:focus,.cdt-textarea:focus,.cdt-select:focus{border-color:#8FB9D9;box-shadow:0 0 0 3px rgba(143,185,217,.18)}
+    .cdt-select{appearance:auto;cursor:pointer}
+    .cdt-textarea{min-height:86px;resize:vertical;line-height:1.5}
+    .cdt-meta{font-size:11px;line-height:1.45;color:#74899A;margin-top:6px}
+    .cdt-actions{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
+    .cdt-cloud-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+    .cdt-btn{
+      border:0;border-radius:12px;padding:12px 14px;background:#CEDEF2;color:#29445B;
+      font-weight:800;font-size:13px;cursor:pointer;
+    }
+    .cdt-btn.primary{background:#9FC7E3;color:#173247}
+    .cdt-btn:disabled{opacity:.55;cursor:not-allowed}
+    #cdt-status{min-height:20px;margin-top:10px;font-size:12px;line-height:1.5;color:#526C80;text-align:center;word-break:break-word;white-space:pre-wrap}
+    #cdt-cost{margin-top:4px;font-size:11px;color:#74899A;text-align:center}
+    @media(max-width:640px){
+      #cdt-panel{left:12px;right:12px;bottom:118px;width:auto;max-width:none;padding:14px;border-radius:16px}
+    }
+  `);
+
+  const panel = document.createElement('section');
+  panel.id = 'cdt-panel';
+  panel.innerHTML = `
+    <div class="cdt-head">
+      <div class="cdt-title"><span class="cdt-emoji">🌐</span> 대사 번역</div>
+      <button class="cdt-close" id="cdt-close" type="button" aria-label="닫기">×</button>
+    </div>
+    <div class="cdt-desc">따옴표 안 한국어 대사를 <b>"번역문" (한국어 원문)</b> 형식으로 바꿈. 대사 뒤에 <b>-프 / -일</b>처럼 적으면 그 대사만 언어를 바꿀 수 있음.</div>
+
+    <div class="cdt-card">
+      <label class="cdt-label" for="cdt-language">기본 번역 언어</label>
+      <select class="cdt-select" id="cdt-language">
+        <option value="en">영어</option>
+        <option value="fr">프랑스어</option>
+        <option value="es">스페인어</option>
+        <option value="fi">핀란드어</option>
+        <option value="ja">일본어</option>
+        <option value="zh">중국어</option>
+        <option value="de">독일어</option>
+      </select>
+      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어). 여러 언어가 섞여도 언어별로 묶어 Gemini 요청 1회로 처리함.</div>
+    </div>
+
+    <div class="cdt-card">
+      <label class="cdt-label" for="cdt-guidance">방별 캐릭터 설정·작업 노트</label>
+      <textarea class="cdt-textarea" id="cdt-guidance" maxlength="3000" placeholder="예: Felix는 펠릭스. Till은 틸. 펠릭스가 틸을 돌보고 요리해주는 관계. 틸은 짧고 무뚝뚝하게 말함."></textarea>
+      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 참고함. 대사 번역 시 현재 작성 중인 답장 전체 + 최근 5턴을 읽고, 최신 대화를 우선 보존함. 주변 맥락이 필터에 걸리면 번역할 대사만으로 자동 재시도함.</div>
+    </div>
+
+    <div class="cdt-card">
+      <label class="cdt-label" for="cdt-provider">API 제공자</label>
+      <select class="cdt-select" id="cdt-provider"><option value="vercel">Vercel AI Gateway</option><option value="google">Google Gemini API</option></select>
+      <label class="cdt-label" for="cdt-gateway-model">Vercel 모델 ID</label>
+      <input class="cdt-input" id="cdt-gateway-model" placeholder="google/gemini-3.8-flash">
+      <label class="cdt-label" for="cdt-gateway-key">Vercel AI Gateway 키</label>
+      <input class="cdt-input" id="cdt-gateway-key" type="password" autocomplete="off">
+      <div class="cdt-meta"><a href="https://vercel.com/ai-gateway/models" target="_blank" rel="noopener noreferrer">Vercel 모델 목록</a>에서 ID 복사. 실제 비용은 Vercel 대시보드에서 확인.</div>
+      <label class="cdt-label" for="cdt-google-model">Google 모델 ID</label>
+      <input class="cdt-input" id="cdt-google-model" placeholder="gemini-3.5-flash-lite">
+      <label class="cdt-label" for="cdt-api-key">Gemini API Key (Google 선택 시)</label>
+      <input class="cdt-input" id="cdt-api-key" type="password" autocomplete="off" placeholder="AIza...">
+      <div class="cdt-meta">Google 기본 모델: Gemini 3.5 Flash-Lite. 다른 모델은 단가 미확인으로 표시함.</div>
+    </div>
+
+    <div class="cdt-actions">
+      <button class="cdt-btn primary" id="cdt-run" type="button">대사 번역</button>
+      <button class="cdt-btn" id="cdt-save" type="button">설정 저장</button>
+    </div>
+    <div class="cdt-card">
+      <label class="cdt-label">☁️ Lore Sync 계정으로 방 설정 보관</label>
+      <div class="cdt-meta" id="cdt-cloud-status">Lore Sync 연결 상태 확인 전</div>
+      <div class="cdt-cloud-actions">
+        <button class="cdt-btn primary" id="cdt-cloud-upload" type="button">클라우드에 올리기</button>
+        <button class="cdt-btn" id="cdt-cloud-download" type="button">클라우드에서 받기</button>
+      </div>
+      <div class="cdt-meta">자동 동기화 없음 · Gemini API 키는 업로드하지 않음</div>
+    </div>
+    <div id="cdt-status">v${VERSION} · 입력창을 읽을 준비됨</div>
+    <div id="cdt-cost">이번 요청 - · 누적 0.00원</div>
+  `;
+  document.body.appendChild(panel);
+
+  const toolbarButton = document.createElement('button');
+  toolbarButton.id = 'cdt-toolbar-btn';
+
+  const $ = selector => panel.querySelector(selector);
+
+  function roomStorageKey(path = location.pathname) {
+    return `${KEY}:room:${encodeURIComponent(path)}`;
+  }
+
+  function normalizeRoomSettings(value) {
+    let saved = value;
+    if (typeof saved === 'string') {
+      try { saved = JSON.parse(saved); } catch { saved = null; }
+    }
+    const legacyGuidance = [saved?.voice, saved?.notes].map(item => String(item || '').trim()).filter(Boolean).join('\n');
+    return {
+      guidance: String(saved?.guidance || legacyGuidance).slice(0, 3000),
+      cloudRevision: Math.max(0, Number(saved?.cloudRevision) || 0),
+    };
+  }
+
+  function loadRoomSettings(force = false) {
+    if (!isChatRoomPage()) return;
+    if (!force && loadedRoomPath === location.pathname) return;
+    loadedRoomPath = location.pathname;
+    const stored = GM_getValue(roomStorageKey(), null);
+    roomSettings = normalizeRoomSettings(stored);
+    if (!stored && !GM_getValue(`${KEY}:voiceMigrated`, false)) {
+      roomSettings.guidance = String(GM_getValue(`${KEY}:voice`, '') || '').slice(0, 3000);
+      GM_setValue(`${KEY}:voiceMigrated`, true);
+      if (roomSettings.guidance) GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+    }
+    $('#cdt-guidance').value = roomSettings.guidance;
+  }
+
+  function saveRoomSettings(showStatus = true) {
+    roomSettings.guidance = $('#cdt-guidance').value.trim().slice(0, 3000);
+    GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+    if (showStatus) $('#cdt-status').textContent = '이 방의 설정을 저장했음.';
+  }
+
+  function sharedCloudApi() {
+    return BRIDGE[CLOUD_API_KEY] || null;
+  }
+
+  function sharedCloudStatus() {
+    const api = sharedCloudApi();
+    if (!api) return { ready: false, reason: 'Lore Sync 확장프로그램을 최신 beta로 업데이트해주셈.' };
+    try { return api.getStatus(); } catch (error) { return { ready: false, reason: error?.message || 'Lore Sync 상태 확인 실패.' }; }
+  }
+
+  function refreshCloudStatus() {
+    const status = sharedCloudStatus();
+    $('#cdt-cloud-status').textContent = status.ready
+      ? `🟢 ${status.email || '저장된 계정'} 로그인됨`
+      : status.reason;
+    $('#cdt-cloud-upload').disabled = cloudBusy || !status.ready;
+    $('#cdt-cloud-download').disabled = cloudBusy || !status.ready;
+  }
+
+  function cloudErrorMessage(error, fallback) {
+    const raw = String(error?.message || error || '');
+    if (/dialogue_translator_sync|PGRST205|schema cache/i.test(raw)) return 'Supabase에서 supabase/dialogue_translator_sync.sql을 먼저 Run해주셈.';
+    return raw || fallback;
+  }
+
+  async function uploadRoomSettings() {
+    if (cloudBusy) return;
+    cloudBusy = true;
+    refreshCloudStatus();
+    $('#cdt-status').textContent = '클라우드 저장본 확인 중…';
+    try {
+      saveRoomSettings(false);
+      const api = sharedCloudApi();
+      const status = sharedCloudStatus();
+      if (!api || !status.ready) throw new Error(status.reason);
+      const remote = await api.getSettings(location.pathname);
+      if (remote && Number(remote.revision) > roomSettings.cloudRevision
+        && !confirm(`다른 기기의 더 최신 번역 설정(rev ${remote.revision})이 있음. 현재 설정으로 덮어쓸까요?`)) return;
+      const revision = Math.max(roomSettings.cloudRevision, Number(remote?.revision) || 0) + 1;
+      const saved = await api.saveSettings({
+        roomKey: location.pathname,
+        settings: { guidance: roomSettings.guidance },
+        revision,
+        deviceLabel: status.deviceLabel || '내 기기',
+      });
+      roomSettings.cloudRevision = Number(saved?.revision) || revision;
+      GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+      $('#cdt-status').textContent = `클라우드 저장 완료 · rev ${roomSettings.cloudRevision}`;
+    } catch (error) {
+      console.warn('[CDT] cloud upload failed:', error);
+      $('#cdt-status').textContent = `오류: ${cloudErrorMessage(error, '클라우드 저장 실패')}`;
+    } finally {
+      cloudBusy = false;
+      refreshCloudStatus();
+    }
+  }
+
+  async function downloadRoomSettings() {
+    if (cloudBusy) return;
+    cloudBusy = true;
+    refreshCloudStatus();
+    $('#cdt-status').textContent = '클라우드 번역 설정 확인 중…';
+    try {
+      const api = sharedCloudApi();
+      const status = sharedCloudStatus();
+      if (!api || !status.ready) throw new Error(status.reason);
+      const remote = await api.getSettings(location.pathname);
+      if (!remote) throw new Error('이 채팅방의 클라우드 저장본이 없음.');
+      const next = normalizeRoomSettings({ ...remote.settings, cloudRevision: remote.revision });
+      const localHasContent = $('#cdt-guidance').value.trim();
+      const differs = next.guidance !== localHasContent;
+      if (localHasContent && differs
+        && !confirm(`${remote.device_label || '다른 기기'}의 rev ${remote.revision} 설정으로 현재 입력을 바꿀까요?`)) return;
+      roomSettings = next;
+      $('#cdt-guidance').value = next.guidance;
+      GM_setValue(roomStorageKey(), JSON.stringify(roomSettings));
+      $('#cdt-status').textContent = `클라우드 설정 받기 완료 · rev ${roomSettings.cloudRevision}`;
+    } catch (error) {
+      console.warn('[CDT] cloud download failed:', error);
+      $('#cdt-status').textContent = `오류: ${cloudErrorMessage(error, '클라우드 받기 실패')}`;
+    } finally {
+      cloudBusy = false;
+      refreshCloudStatus();
+    }
+  }
+
+  function isChatRoomPage() {
+    return /\/stories\/[^/]+\/episodes\/[^/]+/.test(location.pathname)
+      || /\/characters\/[^/]+\/chats\/[^/]+/.test(location.pathname)
+      || /\/u\/[^/]+\/c\/([^/?#]+)/.test(location.pathname);
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight;
+  }
+
+  function findChatInput() {
+    const nodes = [...document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"], div[role="textbox"]')]
+      .filter(el => {
+        if (!isVisible(el) || panel.contains(el)) return false;
+        const r = el.getBoundingClientRect();
+        const label = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('placeholder') || ''}`;
+        return r.bottom > innerHeight * .45 || /메시지|입력/.test(label);
+      });
+    nodes.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+    return nodes[0] || null;
+  }
+
+  function getInputText(el) {
+    if (!el) return '';
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return el.value || '';
+    return el.innerText || el.textContent || '';
+  }
+
+  function setInputText(el, text) {
+    if (!el) return false;
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(el, text); else el.value = text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.focus();
+      return true;
+    }
+    el.focus();
+    el.innerText = text;
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  function findToolbarNearInput(input) {
+    if (!input) return null;
+    const inputRect = input.getBoundingClientRect();
+    let root = input;
+    for (let depth = 0; depth < 8 && root.parentElement; depth++) {
+      root = root.parentElement;
+      const exact = root.querySelector('.flex.items-center.space-x-2');
+      if (isVisible(exact)) return exact;
+      const rows = [...root.querySelectorAll('div,section,footer')].filter(el => {
+        if (!isVisible(el)) return false;
+        const r = el.getBoundingClientRect();
+        if (r.height > 80 || r.width < 40 || Math.abs(r.bottom - inputRect.bottom) > 160) return false;
+        const buttons = [...el.querySelectorAll('button')].filter(isVisible);
+        return buttons.length && (/flex|items-center|gap|space-x/.test(String(el.className)) || buttons.length > 1);
+      });
+      if (rows.length) {
+        rows.sort((a, b) => Math.abs(a.getBoundingClientRect().bottom - inputRect.bottom)
+          - Math.abs(b.getBoundingClientRect().bottom - inputRect.bottom));
+        return rows[0];
+      }
+    }
+    return null;
+  }
+
+  function injectToolbarButton() {
+    if (!isChatRoomPage()) {
+      toolbarButton.remove();
+      panel.style.display = 'none';
+      return;
+    }
+    if (toolbarButton.isConnected && isVisible(toolbarButton.parentElement)) return;
+    toolbarButton.remove();
+
+    let container = null;
+    let reference = null;
+    const rpTools = document.getElementById('custom-rp-tools');
+    if (rpTools && isVisible(rpTools.parentElement)) {
+      container = rpTools.parentElement;
+      reference = rpTools;
+    } else {
+      const recommend = [...document.querySelectorAll('button')]
+        .filter(isVisible).find(el => (el.textContent || '').includes('추천답변'));
+      if (recommend) { container = recommend.parentElement; reference = recommend; }
+    }
+    if (!container) {
+      container = findToolbarNearInput(findChatInput());
+      if (container) {
+        const buttons = [...container.querySelectorAll('button')].filter(isVisible);
+        reference = buttons.find(el => ['*', '/', '／'].includes((el.textContent || '').trim())) || buttons[0] || null;
+      }
+    }
+    if (!container) return;
+
+    toolbarButton.className = 'relative inline-flex items-center gap-1 rounded-full text-sm font-medium transition-colors border border-border bg-card text-line-gray-1 hover:bg-secondary p-0 size-7 justify-center';
+    toolbarButton.type = 'button';
+    toolbarButton.title = '대사 번역';
+    toolbarButton.setAttribute('aria-label', '대사 번역');
+    toolbarButton.style.cssText = 'pointer-events:auto;width:28px;height:28px;min-width:28px;border-radius:9999px';
+    toolbarButton.innerHTML = '<span class="cdt-emoji">🌐</span>';
+    if (reference?.parentElement === container && reference.nextSibling) container.insertBefore(toolbarButton, reference.nextSibling);
+    else if (reference?.parentElement === container) container.appendChild(toolbarButton);
+    else container.insertBefore(toolbarButton, container.firstChild);
+  }
+
+  function selectedLanguage() {
+    const value = $('#cdt-language').value;
+    return LANGUAGES[value] ? value : 'en';
+  }
+
+  function findDialogueSpans(source, defaultLanguage) {
+    const spans = [];
+    const re = /"((?:\\.|[^"\\\r\n])*)"|([“”])([^“”\r\n]*)([“”])/g;
+    let match;
+    while ((match = re.exec(source))) {
+      const original = match[1] !== undefined ? match[1] : match[3];
+      if (!/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(original)) continue;
+
+      const suffixSource = source.slice(re.lastIndex);
+      const override = suffixSource.match(LANGUAGE_OVERRIDE_RE);
+      const language = override ? LANGUAGE_OVERRIDE_MAP[override[1]] : defaultLanguage;
+      const suffixLength = override ? override[0].length : 0;
+
+      spans.push({
+        type: 'dialogue',
+        start: match.index,
+        end: re.lastIndex + suffixLength,
+        open: match[1] !== undefined ? '"' : match[2],
+        close: match[1] !== undefined ? '"' : match[4],
+        original,
+        language,
+      });
+    }
+    return spans;
+  }
+
+  function cleanTranslation(text) {
+    return String(text || '').trim()
+      .replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+      .replace(/^["“](.*)["”]$/s, '$1').trim();
+  }
+
+  function applyTranslations(source, targets, translations) {
+    if (targets.length !== translations.length) {
+      throw new Error(`번역 개수 불일치: 원문 ${targets.length}개 / Gemini ${translations.length}개.`);
+    }
+    let output = source;
+    for (let i = targets.length - 1; i >= 0; i--) {
+      const target = targets[i];
+      const translated = cleanTranslation(translations[i]);
+      if (!translated) throw new Error(`${i + 1}번째 대사 번역 결과가 비어 있음.`);
+      const replacement = `${target.open}${translated}${target.close} (${target.original})`;
+      output = output.slice(0, target.start) + replacement + output.slice(target.end);
+    }
+    return output;
+  }
+
+  function compactText(text, limit) {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
+  }
+
+  function normalizeContextText(text) {
+    return String(text || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{4,}/g, '\n\n\n')
+      .trim();
+  }
+
+  function clipTextEdges(text, limit) {
+    const normalized = normalizeContextText(text);
+    if (!limit || normalized.length <= limit) return normalized;
+    if (limit < 220) return `${normalized.slice(0, Math.max(0, limit - 1))}…`;
+    const marker = '\n…[중간 생략]…\n';
+    const usable = Math.max(0, limit - marker.length);
+    const head = Math.ceil(usable * 0.55);
+    const tail = Math.max(0, usable - head);
+    return `${normalized.slice(0, head)}${marker}${normalized.slice(-tail)}`;
+  }
+
+  function describeFinishReason(reason) {
+    const descriptions = {
+      MAX_TOKENS: '출력 토큰 한도에 걸려 응답이 중간에 잘림.',
+      SAFETY: 'Gemini 안전 필터가 응답 생성을 중단함.',
+      RECITATION: '인용·재현 감지로 응답 생성이 중단됨.',
+      BLOCKLIST: '차단 목록 감지로 응답 생성이 중단됨.',
+      PROHIBITED_CONTENT: '금지 콘텐츠 감지로 응답 생성이 중단됨.',
+      SPII: '민감한 개인정보 감지로 응답 생성이 중단됨.',
+      MALFORMED_FUNCTION_CALL: 'Gemini가 잘못된 함수 호출 형식을 생성함.',
+      OTHER: 'Gemini가 분류되지 않은 이유로 응답 생성을 중단함.',
+    };
+    return descriptions[reason] || 'Gemini가 정상 종료(STOP)하지 않음.';
+  }
+
+  function responsePreview(raw) {
+    return compactText(raw || '(빈 응답)', 320);
+  }
+
+  function parseTranslationPayload(raw, status, finishReason) {
+    const cleaned = String(raw || '').trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
+    if (!cleaned) {
+      throw new Error(`Gemini 최종 응답이 비어 있음.\nHTTP ${status} · finishReason=${finishReason || '없음'}`);
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (error) {
+      console.error('[CDT] Gemini JSON parse failed', { status, finishReason, raw, error });
+      throw new Error(
+        `Gemini 응답 JSON 파싱 실패.\n` +
+        `HTTP ${status} · finishReason=${finishReason || '없음'}\n` +
+        `JSON 오류=${error.message}\n` +
+        `응답 앞부분=${responsePreview(raw)}`
+      );
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(
+        `Gemini 응답 JSON이 언어별 번역 객체가 아님.\n` +
+        `HTTP ${status} · finishReason=${finishReason || '없음'}\n` +
+        `응답 앞부분=${responsePreview(raw)}`
+      );
+    }
+    return parsed;
+  }
+
+  function getChatId() {
+    const patterns = [
+      /\/stories\/[^/]+\/episodes\/([^/?#]+)/,
+      /\/characters\/[^/]+\/chats\/([^/?#]+)/,
+      /\/u\/[^/]+\/c\/([^/?#]+)/,
+    ];
+    for (const pattern of patterns) {
+      const match = location.pathname.match(pattern);
+      if (match) return match[1];
+    }
+    return null;
+  }
+
+  function buildHeaders() {
+    const headers = { 'Content-Type': 'application/json', platform: 'web', 'wrtn-locale': 'ko-KR' };
+    const cookies = Object.fromEntries(document.cookie.split(';').map(item => {
+      const index = item.indexOf('=');
+      return index < 0 ? [item.trim(), ''] : [item.slice(0, index).trim(), item.slice(index + 1)];
+    }));
+    if (cookies.access_token) headers.Authorization = `Bearer ${cookies.access_token}`;
+    if (cookies.__w_id) headers['x-wrtn-id'] = cookies.__w_id;
+    return headers;
+  }
+
+  async function fetchRecentContext() {
+    const chatId = getChatId();
+    if (!chatId) return { text: '(최근 맥락 없음)', chars: 0, messageCount: 0, fetchedCount: 0 };
+    try {
+      const response = await fetch(`${API_BASE}/v3/chats/${chatId}/messages?limit=${CONTEXT_MESSAGES}`, {
+        headers: buildHeaders(), credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const json = await response.json();
+      const messages = ((json.data || json).messages || []).slice(0, CONTEXT_MESSAGES);
+      const keptNewestFirst = [];
+      let remaining = HISTORY_CHAR_BUDGET;
+
+      for (const message of messages) {
+        if (remaining <= 120) break;
+        const role = message.role === 'assistant' ? '상대' : '나';
+        const rawContent = typeof message.content === 'string'
+          ? message.content
+          : JSON.stringify(message.content || '');
+        const content = normalizeContextText(rawContent);
+        if (!content) continue;
+        const prefix = `${role}: `;
+        const available = Math.max(0, remaining - prefix.length - 2);
+        if (available < 80) break;
+        const clipped = clipTextEdges(content, available);
+        const line = `${prefix}${clipped}`;
+        keptNewestFirst.push({ role, line });
+        remaining -= line.length + 2;
+        if (clipped.length < content.length) break;
+      }
+
+      const chronological = keptNewestFirst.reverse();
+      const turns = [];
+      let currentTurn = [];
+      chronological.forEach(item => {
+        if (item.role === '나' && currentTurn.length) {
+          turns.push(currentTurn);
+          currentTurn = [];
+        }
+        currentTurn.push(item.line);
+        if (item.role === '상대' && currentTurn.some(line => line.startsWith('나: '))) {
+          turns.push(currentTurn);
+          currentTurn = [];
+        }
+      });
+      if (currentTurn.length) turns.push(currentTurn);
+
+      const text = turns.slice(-CONTEXT_TURNS).map((turn, index) => (
+        `[Turn ${index + 1}]\n${turn.join('\n\n')}`
+      )).join('\n\n') || '(최근 맥락 없음)';
+
+      return {
+        text,
+        chars: text === '(최근 맥락 없음)' ? 0 : text.length,
+        messageCount: chronological.length,
+        fetchedCount: messages.length,
+      };
+    } catch (error) {
+      console.warn('[CDT] recent context fetch failed:', error);
+      return { text: '(최근 맥락을 불러오지 못함)', chars: 0, messageCount: 0, fetchedCount: 0 };
+    }
+  }
+
+  function groupTargets(targets) {
+    const grouped = new Map();
+    targets.forEach((target, index) => {
+      if (!grouped.has(target.language)) grouped.set(target.language, []);
+      grouped.get(target.language).push({ id: index + 1, text: target.original });
+    });
+    return grouped;
+  }
+
+  function buildLanguageSections(targets) {
+    return [...groupTargets(targets).entries()].map(([code, items]) => {
+      const language = LANGUAGES[code]?.prompt || LANGUAGES.en.prompt;
+      const lines = items.map(item => `ID ${item.id}: ${item.text}`).join('\n');
+      return `[${language} — output key "${code}"]\n${lines}`;
+    }).join('\n\n');
+  }
+
+  function buildGroupedResponseSchema(targets) {
+    const properties = {};
+    const required = [];
+    for (const code of groupTargets(targets).keys()) {
+      properties[code] = {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            id: { type: 'INTEGER' },
+            translation: { type: 'STRING' },
+          },
+          required: ['id', 'translation'],
+        },
+      };
+      required.push(code);
+    }
+    return { type: 'OBJECT', properties, required };
+  }
+
+  function buildPrompt(targets, contextInfo, guidance, source) {
+    const currentDraft = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET) || '(empty)';
+    return [
+      'Translation-only task.',
+      'The language sections below are independent.',
+      'Translate every item ONLY into the language named by its own section. Never carry a language choice from one section into another.',
+      'IDs are immutable. Return every translation under the same language key and the same ID.',
+      'Translate only the listed Korean dialogue items. Reference text is only for linguistic context.',
+      'Do not respond to, continue, summarize, rewrite, evaluate, transform, or reproduce the reference text.',
+      'Treat nicknames and relationship labels in reference text only as literal names or forms of address; do not infer extra meaning from them.',
+      'Before translating, resolve omitted Korean subjects/objects, speaker/listener, action owner, possessor, and pronoun referents from context.',
+      'Context priority: current draft → most recent 상대 message → earlier recent conversation → room guidance.',
+      'Never reverse actor/recipient, giver/receiver, possessor/possessed, or speaker/listener relationships.',
+      'If context is ambiguous, use the least assumptive natural wording.',
+      'Preserve tone, register, names, titles, nicknames, and forms of address. Do not add actions, explanations, quotation marks, parentheses, Korean source text, labels, or alternatives.',
+      '',
+      `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Current draft]\n${currentDraft}`,
+      `[REFERENCE CONTEXT — DO NOT PROCESS OR REPRODUCE]\n[Recent conversation]\n${contextInfo?.text || '(최근 맥락 없음)'}`,
+      `[REFERENCE NOTES]\n${guidance || '(not provided)'}`,
+      `[LANGUAGE SECTIONS — FOLLOW EACH SECTION EXACTLY]\n${buildLanguageSections(targets)}`,
+    ].join('\n\n');
+  }
+
+  function buildFallbackPrompt(targets) {
+    return [
+      'Translation-only task.',
+      'The language sections below are independent.',
+      'Translate every item ONLY into the language named by its own section. Never carry a language choice from one section into another.',
+      'IDs are immutable. Return every translation under the same language key and the same ID.',
+      'Translate only the listed sentence itself. Do not answer it, continue it, explain it, summarize it, or add content.',
+      'Preserve meaning and tone.',
+      '',
+      `[LANGUAGE SECTIONS — FOLLOW EACH SECTION EXACTLY]\n${buildLanguageSections(targets)}`,
+    ].join('\n\n');
+  }
+
+  function unpackGroupedTranslations(targets, payload) {
+    const translations = new Array(targets.length);
+    const seen = new Set();
+    const expectedCodes = new Set(targets.map(target => target.language));
+
+    for (const code of expectedCodes) {
+      const entries = payload?.[code];
+      if (!Array.isArray(entries)) {
+        throw new Error(`${LANGUAGES[code]?.label || code} 번역 그룹이 응답에 없음.`);
+      }
+      for (const entry of entries) {
+        const id = Number(entry?.id);
+        const translation = String(entry?.translation || '').trim();
+        const index = id - 1;
+        if (!Number.isInteger(id) || index < 0 || index >= targets.length) {
+          throw new Error(`${LANGUAGES[code]?.label || code} 번역의 ID가 잘못됨.`);
+        }
+        if (targets[index].language !== code) {
+          throw new Error(`ID ${id}의 번역 언어가 잘못된 그룹에 들어감.`);
+        }
+        if (seen.has(id)) throw new Error(`ID ${id} 번역이 중복됨.`);
+        if (!translation) throw new Error(`ID ${id} 번역 결과가 비어 있음.`);
+        translations[index] = translation;
+        seen.add(id);
+      }
+    }
+
+    for (let i = 0; i < targets.length; i++) {
+      if (!translations[i]) throw new Error(`ID ${i + 1} 번역 결과가 누락됨.`);
+    }
+    return translations;
+  }
+
+  function isProhibitedContentError(error) {
+    const reason = String(error?.finishReason || error?.blockReason || '');
+    const message = String(error?.message || '');
+    return reason === 'PROHIBITED_CONTENT' || /PROHIBITED_CONTENT|금지 콘텐츠/.test(message);
+  }
+
+  function mergeUsage(...items) {
+    const merged = {};
+    items.filter(Boolean).forEach(usage => {
+      if (usage.model) merged.model = usage.model;
+      if (usage.gateway) merged.gateway = true;
+      Object.entries(usage).forEach(([key, value]) => {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          merged[key] = (Number(merged[key]) || 0) + value;
+        }
+      });
+    });
+    return merged;
+  }
+
+  function billableOutputTokens(usage) {
+    const prompt = Number(usage.promptTokenCount || 0);
+    const total = Number(usage.totalTokenCount || 0);
+    return Math.max(Number(usage.candidatesTokenCount || 0) + Number(usage.thoughtsTokenCount || 0), total - prompt, 0);
+  }
+
+  function calculateCostKrw(usage) {
+    if (!exchangeRate || usage.gateway || (usage.model && usage.model !== MODEL)) return null;
+    const usd = Number(usage.promptTokenCount || 0) / 1e6 * INPUT_USD_PER_M
+      + billableOutputTokens(usage) / 1e6 * OUTPUT_USD_PER_M;
+    return usd * exchangeRate;
+  }
+
+  function formatKrw(value) {
+    return `${Number(value || 0).toFixed(2)}원`;
+  }
+
+  function updateCost(lastCost = null) {
+    const total = Number(GM_getValue(`${KEY}:totalCostKrw`, 0)) || 0;
+    $('#cdt-cost').textContent = lastCost == null
+      ? `이번 요청 - · 누적 ${formatKrw(total)}`
+      : `이번 요청 ${formatKrw(lastCost)} · 누적 ${formatKrw(total)}`;
+  }
+
+  function fetchExchangeRate() {
+    const cached = GM_getValue(`${KEY}:exchangeRate`, null);
+    if (cached?.rate > 0 && Date.now() - Number(cached.time || 0) < 60 * 60 * 1000) {
+      exchangeRate = cached.rate;
+      return;
+    }
+    GM_xmlhttpRequest({
+      method: 'GET', url: 'https://open.er-api.com/v6/latest/USD', timeout: 15000,
+      onload(response) {
+        try {
+          const rate = JSON.parse(response.responseText)?.rates?.KRW;
+          if (rate > 0) {
+            exchangeRate = rate;
+            GM_setValue(`${KEY}:exchangeRate`, { rate, time: Date.now() });
+          }
+        } catch (_) {}
+      },
+      onerror() {}, ontimeout() {},
+    });
+  }
+
+  function callGateway(prompt, schema) {
+    return new Promise((resolve, reject) => {
+      const key = $('#cdt-gateway-key').value.trim();
+      if (!key) { reject(new Error('Vercel AI Gateway 키를 입력해줘.')); return; }
+      const body = buildGatewayRequest($('#cdt-gateway-model').value, [{ role: 'user', content: prompt }], schema, 4096);
+      GM_xmlhttpRequest({ method: 'POST', url: GATEWAY_URL,
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, timeout: 60000,
+        data: JSON.stringify(body),
+        onload(response) {
+          try {
+            const result = parseGatewayResponse(response.status, response.responseText, schema);
+            resolve({ payload: parseTranslationPayload(result.text, response.status, 'STOP'), usage: result.usage });
+          } catch (error) { reject(error); }
+        },
+        onerror() { reject(new Error('Vercel 네트워크 연결 실패.')); },
+        ontimeout() { reject(new Error('Vercel 요청 시간이 초과됨.')); },
+      });
+    });
+  }
+
+  function callGemini(prompt, responseSchema) {
+    if ($('#cdt-provider').value === 'vercel') return callGateway(prompt, responseSchema);
+    return new Promise((resolve, reject) => {
+      const apiKey = $('#cdt-api-key').value.trim();
+      if (!apiKey) { reject(new Error('Gemini API Key를 먼저 입력해줘.')); return; }
+      const model = $('#cdt-google-model').value.trim() || MODEL;
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        headers: { 'Content-Type': 'application/json' }, timeout: 60000,
+        data: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 4096,
+            thinkingConfig: { thinkingLevel: 'low' },
+            responseMimeType: 'application/json',
+            responseSchema,
+          },
+          safetySettings: [
+            'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH',
+            'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT',
+          ].map(category => ({ category, threshold: 'BLOCK_NONE' })),
+        }),
+        onload(response) {
+          try {
+            const data = JSON.parse(response.responseText);
+            if (response.status < 200 || response.status >= 300 || data.error) {
+              throw new Error(data.error?.message || `Gemini HTTP ${response.status}`);
+            }
+            const candidate = data.candidates?.[0];
+            if (!candidate) {
+              const blockReason = data.promptFeedback?.blockReason || '';
+              const error = new Error(
+                `Gemini candidate 없음.\n` +
+                `HTTP ${response.status} · blockReason=${blockReason || '없음'}`
+              );
+              error.blockReason = blockReason;
+              error.usage = data.usageMetadata || {};
+              throw error;
+            }
+            const finishReason = candidate.finishReason || '';
+            const raw = (candidate.content?.parts || [])
+              .filter(part => !part.thought)
+              .map(part => part.text || '')
+              .join('')
+              .trim();
+            if (finishReason && finishReason !== 'STOP') {
+              console.error('[CDT] Gemini generation stopped', { status: response.status, finishReason, raw, data });
+              const error = new Error(
+                `${describeFinishReason(finishReason)}\n` +
+                `HTTP ${response.status} · finishReason=${finishReason}\n` +
+                `응답 앞부분=${responsePreview(raw)}`
+              );
+              error.finishReason = finishReason;
+              error.usage = data.usageMetadata || {};
+              throw error;
+            }
+            const payload = parseTranslationPayload(raw, response.status, finishReason);
+            resolve({ payload, usage: { ...data.usageMetadata, model } });
+          } catch (error) { reject(error); }
+        },
+        onerror() { reject(new Error('Gemini 네트워크 연결 실패.')); },
+        ontimeout() { reject(new Error('Gemini 요청 시간이 초과됨.')); },
+      });
+    });
+  }
+
+  async function translateTargetsSingleRequest(targets, contextInfo, guidance, source) {
+    const responseSchema = buildGroupedResponseSchema(targets);
+    let result;
+    let fallbackUsed = false;
+    let firstUsage = {};
+
+    try {
+      result = await callGemini(buildPrompt(targets, contextInfo, guidance, source), responseSchema);
+    } catch (error) {
+      if (!isProhibitedContentError(error)) throw error;
+      fallbackUsed = true;
+      firstUsage = error.usage || {};
+      $('#cdt-status').textContent = '주변 맥락이 필터에 걸려 번역할 대사만으로 다시 시도 중…';
+      result = await callGemini(buildFallbackPrompt(targets), responseSchema);
+      result.usage = mergeUsage(firstUsage, result.usage);
+    }
+
+    return {
+      translations: unpackGroupedTranslations(targets, result.payload),
+      usage: result.usage || {},
+      fallbackUsed,
+    };
+  }
+
+  function targetSummary(targets) {
+    if (!targets.length) return '대사 0개';
+    const counts = {};
+    targets.forEach(target => {
+      counts[target.language] = (counts[target.language] || 0) + 1;
+    });
+    const languageText = Object.entries(counts)
+      .map(([code, count]) => `${LANGUAGES[code]?.label || code} ${count}`)
+      .join(' · ');
+    return `대사 ${targets.length}개 (${languageText})`;
+  }
+
+  function saveSettings(showStatus = true) {
+    GM_setValue(KEY + ':provider', $('#cdt-provider').value);
+    GM_setValue(KEY + ':gatewayKey', $('#cdt-gateway-key').value.trim());
+    GM_setValue(KEY + ':gatewayModel', $('#cdt-gateway-model').value.trim() || GATEWAY_DEFAULT_MODEL);
+    GM_setValue(KEY + ':googleModel', $('#cdt-google-model').value.trim() || MODEL);
+    GM_setValue(`${KEY}:apiKey`, $('#cdt-api-key').value.trim());
+    GM_setValue(`${KEY}:language`, selectedLanguage());
+    saveRoomSettings(showStatus);
+  }
+
+  async function transformInput() {
+    if (busy) return;
+    const input = findChatInput();
+    if (!input) { $('#cdt-status').textContent = '입력창을 찾지 못함.'; return; }
+    const source = getInputText(input);
+    if (!source.trim()) { $('#cdt-status').textContent = '입력창이 비어 있음.'; return; }
+
+    const targets = findDialogueSpans(source, selectedLanguage());
+    if (!targets.length) {
+      $('#cdt-status').textContent = '따옴표 안 한국어 대사가 없음.';
+      return;
+    }
+    if (targets.length > MAX_TARGETS) {
+      $('#cdt-status').textContent = `한 번에 대사 ${MAX_TARGETS}개까지만 처리 가능함.`;
+      return;
+    }
+
+    busy = true;
+    const sourcePath = location.pathname;
+    const apiFields = ['#cdt-provider', '#cdt-gateway-key', '#cdt-gateway-model', '#cdt-google-model', '#cdt-api-key'];
+    apiFields.forEach(selector => { $(selector).disabled = true; });
+    $('#cdt-run').disabled = true;
+    $('#cdt-save').disabled = true;
+    $('#cdt-language').disabled = true;
+    saveSettings(false);
+    try {
+      $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
+      const contextInfo = await fetchRecentContext();
+      const draftChars = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET).length;
+      const contextStatus = ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`;
+      $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중… · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
+
+      const result = await translateTargetsSingleRequest(
+        targets,
+        contextInfo,
+        compactText($('#cdt-guidance').value, 3000),
+        source,
+      );
+      const replaced = applyTranslations(source, targets, result.translations);
+      if (location.pathname !== sourcePath || !input.isConnected || getInputText(input) !== source) {
+        throw new Error('번역 중 채팅방 또는 입력 내용이 바뀌어 덮어쓰지 않음.');
+      }
+      setInputText(input, replaced);
+
+      const cost = calculateCostKrw(result.usage);
+      if (cost == null) {
+        $('#cdt-cost').textContent = '단가 또는 환율 미확인 · Vercel 비용은 대시보드에서 확인';
+      } else {
+        GM_setValue(`${KEY}:totalCostKrw`, (Number(GM_getValue(`${KEY}:totalCostKrw`, 0)) || 0) + cost);
+        updateCost(cost);
+      }
+      const fallbackStatus = result.fallbackUsed ? ' · 주변 맥락 필터 → 대상 대사만으로 재번역함' : '';
+      $('#cdt-status').textContent = `완료. ${targetSummary(targets)} 교체함.${fallbackStatus} · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
+      setTimeout(() => { panel.style.display = 'none'; }, result.fallbackUsed ? 1800 : 900);
+    } catch (error) {
+      $('#cdt-status').textContent = `오류: ${error?.message || error}`;
+    } finally {
+      busy = false;
+      apiFields.forEach(selector => { $(selector).disabled = false; });
+      $('#cdt-run').disabled = false;
+      $('#cdt-save').disabled = false;
+      $('#cdt-language').disabled = false;
+    }
+  }
+
+  function togglePanel(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    if (panel.style.display === 'block') {
+      loadRoomSettings();
+      refreshCloudStatus();
+      const input = findChatInput();
+      const targets = findDialogueSpans(getInputText(input), selectedLanguage());
+      $('#cdt-status').textContent = targets.length
+        ? `${targetSummary(targets)} 감지됨.`
+        : '따옴표 안 한국어 대사를 입력해줘.';
+    }
+  }
+
+  $('#cdt-api-key').value = GM_getValue(KEY + ':apiKey', '');
+  $('#cdt-provider').value = GM_getValue(KEY + ':provider', $('#cdt-api-key').value ? 'google' : 'vercel');
+  $('#cdt-gateway-key').value = GM_getValue(KEY + ':gatewayKey', '');
+  $('#cdt-gateway-model').value = GM_getValue(KEY + ':gatewayModel', GATEWAY_DEFAULT_MODEL);
+  $('#cdt-google-model').value = GM_getValue(KEY + ':googleModel', MODEL);
+  const savedLanguage = GM_getValue(`${KEY}:language`, 'en');
+  $('#cdt-language').value = LANGUAGES[savedLanguage] ? savedLanguage : 'en';
+  loadRoomSettings(true);
+  updateCost();
+  fetchExchangeRate();
+
+  $('#cdt-close').addEventListener('click', () => { panel.style.display = 'none'; });
+  $('#cdt-save').addEventListener('click', () => saveSettings(true));
+  $('#cdt-cloud-upload').addEventListener('click', uploadRoomSettings);
+  $('#cdt-cloud-download').addEventListener('click', downloadRoomSettings);
+  $('#cdt-language').addEventListener('change', () => {
+    GM_setValue(`${KEY}:language`, selectedLanguage());
+  });
+  $('#cdt-run').addEventListener('click', transformInput);
+  toolbarButton.addEventListener('click', togglePanel, true);
+  toolbarButton.addEventListener('mousedown', event => event.stopPropagation(), true);
+  toolbarButton.addEventListener('touchstart', togglePanel, { passive: false, capture: true });
+
+  let injectTimer = null;
+  const observer = new MutationObserver(() => {
+    if (loadedRoomPath && loadedRoomPath !== location.pathname && isChatRoomPage()) loadRoomSettings(true);
+    clearTimeout(injectTimer);
+    injectTimer = setTimeout(injectToolbarButton, 150);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  injectToolbarButton();
+})();

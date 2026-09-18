@@ -1,7 +1,7 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name         🤖 캐챗 어시스턴트
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-polisher/assistant
-// @version      2.39.1-local
+// @version      2.41.0-local
 // @description  crack.wrtn.ai 캐릭터챗 어시스턴트 개인 수정판.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       extensionCode
@@ -11,6 +11,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @connect      ai-gateway.vercel.sh
 // @connect      googleapis.com
 // @connect      open.er-api.com
 // @noframes
@@ -21,7 +22,74 @@
 (function () {
   'use strict';
 
-  const CWA_VERSION = '2.39.1';
+  // BEGIN AI GATEWAY ADAPTER (kept identical in the three standalone userscripts)
+  const GATEWAY_URL = 'https://ai-gateway.vercel.sh/v1/chat/completions';
+  const GATEWAY_DEFAULT_MODEL = 'google/gemini-3.8-flash';
+
+  function gatewaySchema(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    if (Array.isArray(schema)) return schema.map(gatewaySchema);
+    const result = {};
+    for (const [key, value] of Object.entries(schema)) {
+      result[key] = key === 'type' && typeof value === 'string' ? value.toLowerCase() : gatewaySchema(value);
+    }
+    if (result.type === 'object') result.additionalProperties = false;
+    return result;
+  }
+
+  function buildGatewayRequest(model, messages, schema, maxTokens, effort = 'low') {
+    model = String(model || '').trim() || GATEWAY_DEFAULT_MODEL;
+    if (!/^[a-z0-9._-]+\/[a-z0-9._:/-]+$/i.test(model)) {
+      throw new Error('Vercel 모델 ID를 입력해줘. 예: google/gemini-3.8-flash');
+    }
+    const body = { model, messages: messages.map(message => ({ ...message })), stream: false, max_tokens: maxTokens };
+    // Unknown/custom models use provider defaults; do not send Gemini-only options to other providers.
+    if (/^google\/gemini-3/.test(model)) body.reasoning_effort = effort;
+    if (schema) {
+      const converted = gatewaySchema(schema);
+      const wrapped = converted.type === 'array';
+      body.response_format = { type: 'json_schema', json_schema: {
+        name: 'result', strict: true,
+        schema: wrapped ? { type: 'object', properties: { items: converted }, required: ['items'], additionalProperties: false } : converted,
+      } };
+      if (wrapped) body.messages.push({ role: 'user', content: 'Return the requested JSON array inside a JSON object with the single key "items".' });
+    }
+    return body;
+  }
+
+  function parseGatewayResponse(status, raw, schema) {
+    let data;
+    try { data = JSON.parse(raw); } catch (_) { throw new Error(`Vercel 응답 파싱 실패 (HTTP ${status})`); }
+    if (status < 200 || status >= 300 || data.error) {
+      const error = new Error(`Vercel HTTP ${status}: ${data.error?.message || '요청 실패'}`);
+      error.status = status;
+      error.source = 'Vercel AI Gateway';
+      throw error;
+    }
+    const choice = data.choices?.[0];
+    if (choice?.message?.refusal || choice?.finish_reason === 'content_filter') throw new Error('Vercel 모델이 요청을 거절함.');
+    if (choice?.finish_reason !== 'stop') throw new Error(`Vercel 응답 미완료 (${choice?.finish_reason || '결과 없음'}). 모델과 출력 한도를 확인해줘.`);
+    let text = typeof choice.message?.content === 'string' ? choice.message.content.trim() : '';
+    if (!text) throw new Error('Vercel 모델이 빈 응답을 반환함.');
+    if (String(schema?.type).toLowerCase() === 'array') {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed.items)) throw new Error('Vercel JSON 응답의 items 배열이 없음.');
+      text = JSON.stringify(parsed.items);
+    }
+    const usage = data.usage ? {
+      promptTokenCount: Number(data.usage.prompt_tokens || 0),
+      // completion_tokens already includes reasoning tokens. Never count them twice.
+      candidatesTokenCount: Number(data.usage.completion_tokens || 0),
+      thoughtsTokenCount: 0,
+      totalTokenCount: Number(data.usage.total_tokens || 0),
+      gateway: true,
+    } : { gateway: true };
+    return { text, usage };
+  }
+  // END AI GATEWAY ADAPTER
+
+
+  const CWA_VERSION = '2.41.0';
   let usdKrw = 1400;   // USD→KRW 환율 — open.er-api.com 에서 자동 갱신(1시간 캐시), 실패 시 이 기본값
 
   /* =========================================================================
@@ -270,12 +338,23 @@
     '- 긍정편향 없이 현실적으로 답합니다.\n' +
     '- 마크다운 문법을 사용하지 않습니다. 별표, 샵, 코드블록, 표 마크다운, 링크 마크다운, 목록 마크다운을 쓰지 않습니다. 필요하면 일반 텍스트와 줄바꿈만 씁니다.';
 
+  const ASSISTANT_MODE_GUARD =
+    '최우선 역할 규칙:\n' +
+    '- 당신은 롤플레이 참가자나 캐릭터가 아니라, 플레이어에게 참고 정보를 주는 캐릭터챗 보조 도구입니다.\n' +
+    '- 첨부된 페르소나·유저노트·요약메모리·채팅 로그는 질문을 이해하기 위한 참고 자료일 뿐, 이어서 연기하라는 지시가 아닙니다.\n' +
+    '- 사용자가 명시적으로 실제 RP 문장 초안 작성을 요청하지 않는 한 캐릭터 대사, 지문, 독백, 장면 묘사, 소설식 도입, 역할극을 절대 출력하지 않습니다.\n' +
+    '- 세계관·배경·문화·음식·장소·설정 질문에는 현실적으로 가장 그럴듯한 답을 짧은 정보형 문장으로 바로 제시합니다.\n' +
+    '- 질문에 필요한 답만 줍니다. 캐릭터의 반응이나 장면을 임의로 만들지 않습니다.\n' +
+    '- 예: 사이버펑크 길거리 음식 질문에는 음식 후보와 짧은 이유만 답하고, 누가 먹는 장면이나 대사는 쓰지 않습니다.\n' +
+    '- 이전 보조 AI 답변이 이 규칙을 어겼더라도 그 말투와 형식을 따라 하지 않습니다.';
+
   const DEFAULT_SYSTEM_PROMPT =
-    '당신은 캐릭터 채팅(롤플레이) 플레이어를 돕는 보조 AI입니다.\n' +
-    "아래에 페르소나·유저노트·요약메모리·채팅 로그가 주어질 수 있습니다. '캐릭터:'는 상대 캐릭터(AI)의 대사·지문, '나:'는 사용자(플레이어)의 대사·지문입니다.\n" +
-    RESPONSE_STYLE_PROMPT;
+    '당신은 캐릭터 채팅 플레이어에게 설정·상황·선택지를 간결하게 알려주는 참고용 보조 AI입니다.\n' +
+    "아래에 페르소나·유저노트·요약메모리·채팅 로그가 주어질 수 있습니다. '캐릭터:'는 상대 캐릭터의 기록, '나:'는 사용자의 기록입니다.";
   const DEFAULTS = {
-    provider: 'gemini',          // 'gemini' | 'firebase'
+    provider: 'vercel',          // 'vercel' | 'gemini' | 'firebase'
+    gatewayKey: '',
+    gatewayModel: 'google/gemini-3.8-flash',
     // Gemini API (AI Studio)
     geminiKey: '',
     // Firebase AI Logic — 백엔드 vertex 고정, Vertex 리전은 global 고정(코드 내)
@@ -286,12 +365,12 @@
     fbBackend: 'vertex',         // 'vertex' | 'google'
     fbAppCheck: '',
     // 공통 — 모델·생각깊이는 질문창에서 바꿈
-    model: 'gemini-3.1-flash-lite',
+    model: 'gemini-3.8-flash',
     thinking: '0',               // '0'=끔(빠름) | '-1'=자동 | 'high'=깊게
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     msgCount: 8,
     memoryCount: 3,              // 요약메모리 최근 N개만 전송. 0이면 안 보냄
-    temperature: 0.9,
+    temperature: 0.35,
     // 첨부 토글
     sendPersona: true,
     sendUserNote: true,
@@ -300,15 +379,6 @@
     iconLeft: null,
     iconTop: null,
   };
-
-  // 모델 목록 — 별칭(-latest) 없이 구체 버전만. 최신 우선. (2026-05 기준)
-  const MODELS = [
-    ['gemini-3.5-flash', 'Gemini 3.5 Flash (최신·권장)'],
-    ['gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite (최저가)'],
-    ['gemini-3.1-pro-preview', 'Gemini 3.1 Pro (최고 품질)'],
-    ['gemini-2.5-flash', 'Gemini 2.5 Flash (구버전·저렴)'],
-    ['gemini-2.5-pro', 'Gemini 2.5 Pro (구버전)'],
-  ];
 
   // 스크립트를 재설치하면 Tampermonkey GM 저장소가 초기화될 수 있으므로,
   // 사이트 localStorage 에도 백업해 두고 GM 저장소가 비면 거기서 복구한다.
@@ -336,10 +406,25 @@
     return Object.assign({}, DEFAULTS, saved || {});
   }
   let settings = loadSettings();
+  const promptPolicyVersion = Number(GM_getValue('cwa_prompt_policy_version', 0)) || 0;
+  if (promptPolicyVersion < 2) {
+    settings.temperature = 0.35;
+    GM_setValue('cwa_prompt_policy_version', 2);
+  }
   if (!String(settings.systemPrompt || '').includes('마크다운 문법을 사용하지 않습니다.')) {
     settings.systemPrompt = ((settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim() + '\n\n' + RESPONSE_STYLE_PROMPT).trim();
   }
   saveSettings(settings);   // 로드 즉시 localStorage 백업을 만들어 둠 (재설치 대비)
+
+  function buildEffectiveSystemPrompt() {
+    const basePrompt = (settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim()
+      .replace(RESPONSE_STYLE_PROMPT, '').trim();
+    return [
+      basePrompt,
+      ASSISTANT_MODE_GUARD,
+      RESPONSE_STYLE_PROMPT,
+    ].filter(Boolean).join('\n\n');
+  }
 
   // USD→KRW 환율 — 무료 API 에서 가져와 1시간 캐시
   function fetchRate() {
@@ -632,14 +717,24 @@
     return /pro/i.test(settings.model || '') ? -1 : 0;
   }
 
+  function generationThinkingConfig() {
+    if (/^gemini-3/i.test(settings.model || '')) {
+      if (settings.thinking === 'high') return { thinkingLevel: 'high' };
+      if (settings.thinking === '-1') return { thinkingLevel: 'medium' };
+      return { thinkingLevel: 'minimal' };
+    }
+    return { thinkingBudget: thinkingBudget() };
+  }
+
   // contents: [{role:'user'|'model', parts:[{text}]}, ...] 대화 전체
   function buildBody(systemText, contents) {
     return {
       systemInstruction: { parts: [{ text: systemText }] },
       contents: contents,
       generationConfig: {
-        temperature: Number(settings.temperature) || 0.9,
-        thinkingConfig: { thinkingBudget: thinkingBudget() },
+        temperature: Math.min(0.45, Math.max(0, Number(settings.temperature) || 0.35)),
+        maxOutputTokens: 900,
+        thinkingConfig: generationThinkingConfig(),
       },
       safetySettings: SAFETY_SETTINGS,
     };
@@ -673,6 +768,8 @@
   // 모델별 100만 토큰당 단가(USD). Google Gemini API 공식 Standard/Paid Tier 기준, 2026-06 확인.
   // 출력 단가에는 Gemini 문서 기준 thinking tokens 가 포함된다.
   const MODEL_PRICES = {
+    'gemini-3.7-flash':       { in: 0.75, out: 3.75, label: '공식 Standard' },
+    'gemini-3.5-flash-lite':  { in: 0.30, out: 2.50, label: '공식 Standard' },
     'gemini-3.5-flash':       { in: 1.50, out: 9.00, label: '공식 Standard' },
     'gemini-3.1-flash-lite':  { in: 0.25, out: 1.50, label: '공식 Standard' },
     'gemini-3.1-pro-preview': { in: 2.00, out: 12.00, inHigh: 4.00, outHigh: 18.00, threshold: 200000, label: '공식 Standard' },
@@ -688,12 +785,7 @@
     if (!p) {
       for (const k in MODEL_PRICES) { if (m.indexOf(k) === 0) { p = MODEL_PRICES[k]; break; } }
     }
-    if (!p) {
-      const g3 = m.indexOf('gemini-3') >= 0;
-      if (/flash-?lite/.test(m)) p = g3 ? { in: 0.25, out: 1.50, label: '모델명 추정' } : { in: 0.10, out: 0.40, label: '모델명 추정' };
-      else if (/pro/.test(m)) p = g3 ? { in: 2.00, out: 12.00, inHigh: 4.00, outHigh: 18.00, threshold: 200000, label: '모델명 추정' } : { in: 1.25, out: 10.00, inHigh: 2.50, outHigh: 15.00, threshold: 200000, label: '모델명 추정' };
-      else p = g3 ? { in: 1.50, out: 9.00, label: '모델명 추정' } : { in: 0.30, out: 2.50, label: '모델명 추정' };
-    }
+    if (!p) return null;
     if (p.threshold && promptTokens > p.threshold) {
       return { in: p.inHigh, out: p.outHigh, label: p.label + ' · 200k 초과 단가' };
     }
@@ -701,6 +793,7 @@
   }
   function estimateCostInfo(promptTokens, outputTokens, model) {
     const p = modelPricing(model || settings.model, promptTokens);
+    if (!p) return { usd: null, label: '단가 미확인' };
     const inputUsd = promptTokens / 1e6 * p.in;
     const outputUsd = outputTokens / 1e6 * p.out;
     const usd = inputUsd + outputUsd;
@@ -762,7 +855,25 @@
     return parseGenResponse(r);
   }
 
+  async function callGateway(sys, contents) {
+    const key = settings.gatewayKey.trim();
+    if (!key) throw new Error('설정에서 Vercel AI Gateway 키를 입력해줘.');
+    const messages = [{ role: 'system', content: sys }, ...contents.map(item => ({
+      role: item.role === 'model' ? 'assistant' : item.role,
+      content: item.parts.map(part => part.text || '').join(''),
+    }))];
+    const body = buildGatewayRequest(settings.gatewayModel, messages, null, 4096,
+      settings.thinking === 'high' ? 'high' : settings.thinking === '-1' ? 'medium' : 'minimal');
+    const response = await gmRequest({ method: 'POST', url: GATEWAY_URL,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, data: JSON.stringify(body) });
+    const result = parseGatewayResponse(response.status, response.responseText);
+    return { text: result.text, promptTokens: result.usage.promptTokenCount || 0,
+      outputTokens: result.usage.candidatesTokenCount || 0, thoughtTokens: 0,
+      totalTokens: result.usage.totalTokenCount || 0, gateway: true };
+  }
+
   function ask(sys, contents) {
+    if (settings.provider === 'vercel') return callGateway(sys, contents);
     return settings.provider === 'firebase'
       ? callFirebase(sys, contents)
       : callGemini(sys, contents);
@@ -884,7 +995,7 @@
       '      </div>',
       '      <div class="cwa-row">',
       '        <span class="cwa-muted">모델</span>',
-      '        <select id="cwa-model" style="flex:1;min-width:80px;"></select>',
+      '        <input type="text" id="cwa-model" placeholder="google/gemini-3.8-flash" style="flex:1;min-width:80px;">',
       '      </div>',
       '      <div class="cwa-row">',
       '        <span class="cwa-muted" title="모델이 답하기 전 추론(thinking)하는 양. 끄면 빨라짐">생각</span>',
@@ -894,7 +1005,7 @@
       '          <option value="high">깊게</option>',
       '        </select>',
       '      </div>',
-      '      <input type="text" id="cwa-model-custom" placeholder="모델명 직접 입력 (예: gemini-2.5-pro)" style="display:none;">',
+      '      <div class="cwa-tip">Vercel 모델 목록에서 ID를 복사해 입력. 예: google/gemini-3.8-flash</div>',
       '      <div class="cwa-row" style="justify-content:space-between;">',
       '        <span class="cwa-lbl" style="margin:0;">💬 이 채팅방 대화</span>',
       '        <button class="cwa-btn sec" id="cwa-clear" style="padding:3px 8px;font-size:11px;">비우기</button>',
@@ -910,11 +1021,17 @@
       '      <div>',
       '        <label class="cwa-lbl">API 제공자</label>',
       '        <select id="cwa-provider">',
+      '          <option value="vercel">Vercel AI Gateway</option>',
       '          <option value="gemini">Gemini API (AI Studio · API 키)</option>',
       '          <option value="firebase">Firebase AI Logic (firebaseConfig)</option>',
       '        </select>',
       '      </div>',
 
+      '      <div class="cwa-fieldset" id="cwa-fs-vercel">',
+      '        <label class="cwa-lbl">Vercel AI Gateway 키</label><input type="password" id="cwa-gateway-key" autocomplete="off">',
+      '        <a href="https://vercel.com/ai-gateway/models" target="_blank" rel="noopener noreferrer">모델 목록 열기</a>',
+      '        <div class="cwa-muted">모델 ID는 질문창에서 직접 입력. 실제 비용은 Vercel 대시보드에서 확인.</div>',
+      '      </div>',
       '      <div class="cwa-fieldset" id="cwa-fs-gemini">',
       '        <div><label class="cwa-lbl">Gemini API 키</label>',
       '          <input type="password" id="cwa-gemini-key" placeholder="AIza..."></div>',
@@ -931,6 +1048,7 @@
       '      <div>',
       '        <label class="cwa-lbl">시스템 프롬프트</label>',
       '        <textarea id="cwa-sysprompt" style="min-height:110px;"></textarea>',
+      '        <div class="cwa-muted">정보형 답변·RP 금지 규칙은 항상 자동 적용됩니다. 여기에는 개인 취향만 추가하면 됩니다.</div>',
       '      </div>',
       '      <div style="display:flex;gap:8px;">',
       '        <button class="cwa-btn" id="cwa-save" style="flex:1;">저장</button>',
@@ -980,21 +1098,83 @@
     }
 
     /* ---- 패널 위치 ---- */
+    function isChatRoomPage() {
+      return /\/stories\/[^/]+\/episodes\/[^/]+/.test(location.pathname)
+        || /\/characters\/[^/]+\/chats\/[^/]+/.test(location.pathname)
+        || /\/u\/[^/]+\/c\/[^/]+/.test(location.pathname);
+    }
+    function isVisibleEl(el) {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight;
+    }
+    function findBottomInput() {
+      const nodes = Array.prototype.slice.call(document.querySelectorAll(
+        'textarea, input[type="text"], [contenteditable="true"], div[role="textbox"]'
+      )).filter(function (el) {
+        if (!isVisibleEl(el)) return false;
+        const r = el.getBoundingClientRect();
+        const label = (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('placeholder') || '');
+        return r.bottom > innerHeight * 0.45 || /메시지|입력/.test(label);
+      });
+      nodes.sort(function (a, b) {
+        return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom;
+      });
+      return nodes[0] || null;
+    }
+    function findToolbarNearInput(input) {
+      if (!input) return null;
+      const inputRect = input.getBoundingClientRect();
+      let area = input;
+      for (let depth = 0; depth < 8 && area.parentElement; depth++) {
+        area = area.parentElement;
+        const exact = area.querySelector('.flex.items-center.space-x-2');
+        if (isVisibleEl(exact)) return exact;
+        const rows = Array.prototype.slice.call(area.querySelectorAll('div,section,footer')).filter(function (el) {
+          if (!isVisibleEl(el)) return false;
+          const r = el.getBoundingClientRect();
+          if (r.height > 80 || r.width < 40 || Math.abs(r.bottom - inputRect.bottom) > 160) return false;
+          const buttons = Array.prototype.slice.call(el.querySelectorAll('button')).filter(isVisibleEl);
+          return buttons.length && (/flex|items-center|gap|space-x/.test(String(el.className)) || buttons.length > 1);
+        });
+        if (rows.length) {
+          rows.sort(function (a, b) {
+            return Math.abs(a.getBoundingClientRect().bottom - inputRect.bottom)
+              - Math.abs(b.getBoundingClientRect().bottom - inputRect.bottom);
+          });
+          return rows[0];
+        }
+      }
+      return null;
+    }
     function injectToolbarButton() {
       let existing = document.getElementById('cwa-toolbar-btn');
-      if (existing) { iconEl = existing; return existing; }
+      if (!isChatRoomPage()) {
+        if (existing) existing.remove();
+        iconEl = null;
+        return null;
+      }
+      if (existing && existing.isConnected && isVisibleEl(existing.parentElement)) {
+        iconEl = existing;
+        return existing;
+      }
+      if (existing) existing.remove();
 
       let btnContainer = null;
       let referenceNode = null;
 
+      const shortcutBtn = document.querySelector('button[aria-label="단축어 패널 열기"]');
       const customRpTools = document.getElementById('custom-rp-tools');
-      if (customRpTools) {
+      if (shortcutBtn && isVisibleEl(shortcutBtn)) {
+        btnContainer = shortcutBtn.parentElement;
+        referenceNode = shortcutBtn;
+      } else if (customRpTools && isVisibleEl(customRpTools.parentElement)) {
         btnContainer = customRpTools.parentElement;
         referenceNode = customRpTools;
       } else {
         const buttons = Array.prototype.slice.call(document.querySelectorAll('button'));
         const recommendBtn = buttons.find(function (b) {
-          return b.textContent && b.textContent.indexOf('추천답변') >= 0;
+          return isVisibleEl(b) && b.textContent && b.textContent.indexOf('추천답변') >= 0;
         });
         if (recommendBtn) {
           btnContainer = recommendBtn.parentElement;
@@ -1003,16 +1183,15 @@
       }
 
       if (!btnContainer) {
-        const textarea = document.querySelector('textarea');
-        if (textarea) {
-          const inputArea = textarea.closest('.flex-col') || (textarea.parentElement && textarea.parentElement.parentElement);
-          if (inputArea) btnContainer = inputArea.querySelector('.flex.items-center.space-x-2');
-        }
+        btnContainer = findToolbarNearInput(findBottomInput());
       }
       if (!btnContainer) return null;
 
       const btn = document.createElement('button');
       btn.id = 'cwa-toolbar-btn';
+      btn.type = 'button';
+      btn.title = '캐릭터챗 어시스턴트';
+      btn.setAttribute('aria-label', '캐릭터챗 어시스턴트');
       btn.className = 'relative inline-flex items-center gap-1 rounded-full text-sm font-medium transition-colors border border-border bg-card text-line-gray-1 hover:bg-secondary p-0 size-7 justify-center';
       btn.style.pointerEvents = 'auto';
       btn.innerHTML = '<span style="font-size:14px;display:inline-block;transform:translate(-1px,1.5px);filter:grayscale(100%);pointer-events:none;">🔍</span>';
@@ -1066,45 +1245,18 @@
       if (panelEl.classList.contains('open')) closePanel(); else openPanel();
     }
 
-    /* ---- 모델 선택 ---- */
-    function populateModelSelect() {
-      // 더 이상 -latest 별칭을 쓰지 않음 → 저장된 별칭은 최신 구체 버전으로 보정
-      if (/-latest$/.test(settings.model || '')) {
-        settings.model = /pro/.test(settings.model) ? 'gemini-3.1-pro-preview' : 'gemini-3.5-flash';
-        saveSettings(settings);
-      }
-      const sel = $('cwa-model');
-      sel.textContent = '';
-      MODELS.forEach(function (m) {
-        const o = document.createElement('option');
-        o.value = m[0]; o.textContent = m[1];
-        sel.appendChild(o);
-      });
-      const oc = document.createElement('option');
-      oc.value = '__custom__'; oc.textContent = '직접 입력…';
-      sel.appendChild(oc);
-      syncModelSelect();
-    }
-    // settings.model 값을 드롭다운(또는 직접입력칸)에 반영
+    /* ---- 모델 ID 직접 입력 ---- */
+    function populateModelSelect() { syncModelSelect(); }
     function syncModelSelect() {
-      const known = MODELS.some(function (m) { return m[0] === settings.model; });
-      if (known) {
-        $('cwa-model').value = settings.model;
-        $('cwa-model-custom').style.display = 'none';
-      } else {
-        $('cwa-model').value = '__custom__';
-        $('cwa-model-custom').style.display = '';
-        if (root.activeElement !== $('cwa-model-custom')) {
-          $('cwa-model-custom').value = settings.model || '';
-        }
-      }
+      if (root.activeElement !== $('cwa-model')) $('cwa-model').value =
+        settings.provider === 'vercel' ? settings.gatewayModel : settings.model;
     }
 
     /* ---- 메인 갱신 ---- */
     function refreshMain() {
       $('cwa-ver').textContent = CWA_VERSION;
       const chat = scrapeChat();
-      $('cwa-prov').textContent = settings.provider === 'firebase' ? 'Firebase AI Logic' : 'Gemini API';
+      $('cwa-prov').textContent = settings.provider === 'vercel' ? 'Vercel AI Gateway' : settings.provider === 'firebase' ? 'Firebase AI Logic' : 'Gemini API';
       $('cwa-rate').textContent = Math.round(usdKrw).toLocaleString();
       if (root.activeElement !== $('cwa-model')) syncModelSelect();
       if (root.activeElement !== $('cwa-think')) $('cwa-think').value = settings.thinking || '0';
@@ -1153,7 +1305,7 @@
     /* ---- 채팅방별 대화(Q&A) 스레드 ---- */
     let thread = [];
     let threadChatId = null;
-    const HISTORY_TURNS = 6;   // LLM 에 함께 보낼 직전 질문/답변 수 (토큰 절약)
+    const HISTORY_TURNS = 3;   // LLM 에 함께 보낼 직전 질문/답변 수 (토큰 절약)
 
     // 현재 채팅방 기준으로 스레드 로드 (채팅방이 바뀐 경우에만 다시 그림)
     function syncThread() {
@@ -1245,6 +1397,7 @@
       return '$' + v.toFixed(3);
     }
     function fmtCostInfo(info) {
+      if (info && info.usd === null) return info.label || '단가 미확인 · 비용 계산 안 함';
       const usd = info && info.usd ? info.usd : 0;
       if (!usd) return '추정 $0 / 0원';
       const baseWon = usd * usdKrw;
@@ -1294,7 +1447,7 @@
       settings.sendMemory = $('cwa-c-memory').checked;
       saveSettings(settings);
 
-      const sysText = (settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
+      const sysText = buildEffectiveSystemPrompt();
       const ctxText = buildUserText(scrapeChat(), turn.q, count);
       // 직전 대화는 가볍게(질문/답변 텍스트만), 최신 턴에만 무거운 컨텍스트 첨부
       const contents = [];
@@ -1306,7 +1459,7 @@
       contents.push({ role: 'user', parts: [{ text: ctxText }] });
 
       turn.a = ''; turn.pending = true; turn.error = false;
-      turn.tokens = null; turn.cost = 0; turn.costInfo = null; turn.model = settings.model;
+      turn.tokens = null; turn.cost = 0; turn.costInfo = null; turn.model = settings.provider === 'vercel' ? settings.gatewayModel : settings.model;
       renderThread();
       busy = true; $('cwa-send').disabled = true;
       try {
@@ -1314,7 +1467,7 @@
         turn.a = res.text;
         turn.tokens = { p: res.promptTokens, o: res.outputTokens, t: res.thoughtTokens || 0, total: res.totalTokens || 0 };
         // 추론 토큰도 출력 요금으로 과금
-        turn.costInfo = estimateCostInfo(res.promptTokens, res.outputTokens + (res.thoughtTokens || 0), turn.model);
+        turn.costInfo = res.gateway ? { usd: null, label: '비용: Vercel 대시보드에서 확인' } : estimateCostInfo(res.promptTokens, res.outputTokens + (res.thoughtTokens || 0), turn.model);
         turn.cost = turn.costInfo.usd;
         turn.pending = false;
       } catch (e) {
@@ -1355,6 +1508,7 @@
     function fillSettingsForm() {
       $('cwa-provider').value = settings.provider;
       $('cwa-gemini-key').value = settings.geminiKey;
+      $('cwa-gateway-key').value = settings.gatewayKey;
       // 유저가 붙여넣은 원본 그대로 표시 (없으면 옛 저장분은 재구성으로 폴백)
       $('cwa-fb-paste').value = settings.fbRaw || fbConfigText();
       $('cwa-sysprompt').value = settings.systemPrompt;
@@ -1363,6 +1517,7 @@
     }
     function updateProviderFields() {
       const p = $('cwa-provider').value;
+      $('cwa-fs-vercel').classList.toggle('cwa-hide', p !== 'vercel');
       $('cwa-fs-gemini').classList.toggle('cwa-hide', p !== 'gemini');
       $('cwa-fs-firebase').classList.toggle('cwa-hide', p !== 'firebase');
     }
@@ -1417,6 +1572,7 @@
       applyFbConfig();   // 입력칸의 firebaseConfig 를 settings 에 반영 (빈칸이면 해제)
       settings.provider = $('cwa-provider').value;
       settings.geminiKey = $('cwa-gemini-key').value.trim();
+      settings.gatewayKey = $('cwa-gateway-key').value.trim();
       settings.systemPrompt = $('cwa-sysprompt').value.trim() || DEFAULT_SYSTEM_PROMPT;
       saveSettings(settings);
     }
@@ -1428,7 +1584,7 @@
       const chat = scrapeChat();
       const L = [];
       const think = settings.thinking === '0' ? '끔' : (settings.thinking === 'high' ? '깊게' : '자동');
-      L.push('● 모델 ' + (settings.model || '') + '  / 생각 ' + think);
+      L.push('● 모델 ' + (settings.provider === 'vercel' ? settings.gatewayModel : settings.model) + '  / 생각 ' + think);
       L.push('');
       L.push('[ 항목별 글자수 ]');
       const sec = function (label, on, content) {
@@ -1473,19 +1629,8 @@
     });
     // 모델·생각은 질문창에서 바로 변경 (변경 즉시 저장)
     $('cwa-model').addEventListener('change', function () {
-      const v = $('cwa-model').value;
-      if (v === '__custom__') {
-        $('cwa-model-custom').style.display = '';
-        $('cwa-model-custom').focus();
-        return;
-      }
-      $('cwa-model-custom').style.display = 'none';
-      settings.model = v;
-      saveSettings(settings);
-      refreshMain();   // 비용 추정 표시 갱신
-    });
-    $('cwa-model-custom').addEventListener('change', function () {
-      settings.model = $('cwa-model-custom').value.trim() || DEFAULTS.model;
+      const gateway = settings.provider === 'vercel';
+      settings[gateway ? 'gatewayModel' : 'model'] = $('cwa-model').value.trim() || (gateway ? GATEWAY_DEFAULT_MODEL : DEFAULTS.model);
       saveSettings(settings);
       refreshMain();
     });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💾 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.1.5
+// @version      2.2.0
 // @description  전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -15,7 +15,74 @@
 (() => {
   'use strict';
 
-  const VERSION = '2.1.5';
+  // BEGIN AI GATEWAY ADAPTER (kept identical in the three standalone userscripts)
+  const GATEWAY_URL = 'https://ai-gateway.vercel.sh/v1/chat/completions';
+  const GATEWAY_DEFAULT_MODEL = 'google/gemini-3.8-flash';
+
+  function gatewaySchema(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    if (Array.isArray(schema)) return schema.map(gatewaySchema);
+    const result = {};
+    for (const [key, value] of Object.entries(schema)) {
+      result[key] = key === 'type' && typeof value === 'string' ? value.toLowerCase() : gatewaySchema(value);
+    }
+    if (result.type === 'object') result.additionalProperties = false;
+    return result;
+  }
+
+  function buildGatewayRequest(model, messages, schema, maxTokens, effort = 'low') {
+    model = String(model || '').trim() || GATEWAY_DEFAULT_MODEL;
+    if (!/^[a-z0-9._-]+\/[a-z0-9._:/-]+$/i.test(model)) {
+      throw new Error('Vercel 모델 ID를 입력해줘. 예: google/gemini-3.8-flash');
+    }
+    const body = { model, messages: messages.map(message => ({ ...message })), stream: false, max_tokens: maxTokens };
+    // Unknown/custom models use provider defaults; do not send Gemini-only options to other providers.
+    if (/^google\/gemini-3/.test(model)) body.reasoning_effort = effort;
+    if (schema) {
+      const converted = gatewaySchema(schema);
+      const wrapped = converted.type === 'array';
+      body.response_format = { type: 'json_schema', json_schema: {
+        name: 'result', strict: true,
+        schema: wrapped ? { type: 'object', properties: { items: converted }, required: ['items'], additionalProperties: false } : converted,
+      } };
+      if (wrapped) body.messages.push({ role: 'user', content: 'Return the requested JSON array inside a JSON object with the single key "items".' });
+    }
+    return body;
+  }
+
+  function parseGatewayResponse(status, raw, schema) {
+    let data;
+    try { data = JSON.parse(raw); } catch (_) { throw new Error(`Vercel 응답 파싱 실패 (HTTP ${status})`); }
+    if (status < 200 || status >= 300 || data.error) {
+      const error = new Error(`Vercel HTTP ${status}: ${data.error?.message || '요청 실패'}`);
+      error.status = status;
+      error.source = 'Vercel AI Gateway';
+      throw error;
+    }
+    const choice = data.choices?.[0];
+    if (choice?.message?.refusal || choice?.finish_reason === 'content_filter') throw new Error('Vercel 모델이 요청을 거절함.');
+    if (choice?.finish_reason !== 'stop') throw new Error(`Vercel 응답 미완료 (${choice?.finish_reason || '결과 없음'}). 모델과 출력 한도를 확인해줘.`);
+    let text = typeof choice.message?.content === 'string' ? choice.message.content.trim() : '';
+    if (!text) throw new Error('Vercel 모델이 빈 응답을 반환함.');
+    if (String(schema?.type).toLowerCase() === 'array') {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed.items)) throw new Error('Vercel JSON 응답의 items 배열이 없음.');
+      text = JSON.stringify(parsed.items);
+    }
+    const usage = data.usage ? {
+      promptTokenCount: Number(data.usage.prompt_tokens || 0),
+      // completion_tokens already includes reasoning tokens. Never count them twice.
+      candidatesTokenCount: Number(data.usage.completion_tokens || 0),
+      thoughtsTokenCount: 0,
+      totalTokenCount: Number(data.usage.total_tokens || 0),
+      gateway: true,
+    } : { gateway: true };
+    return { text, usage };
+  }
+  // END AI GATEWAY ADAPTER
+
+
+  const VERSION = '2.2.0';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -31,15 +98,9 @@
   const MAX_BACKUPS_PER_CHAT = 5;
   const KRW_PER_USD = 1500;
 
-  const MODEL_OPTIONS = [
-    ['gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite'],
-    ['gemini-3-flash-preview', 'Gemini 3 Flash Preview'],
-    ['gemini-3.1-pro-preview', 'Gemini 3.1 Pro Preview'],
-    ['gemini-2.5-flash', 'Gemini 2.5 Flash'],
-    ['gemini-2.5-pro', 'Gemini 2.5 Pro'],
-  ];
-
   const MODEL_PRICES = {
+    'gemini-3.7-flash': { input: 0.75, output: 3.75 },
+    'gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
     'gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
     'gemini-3-flash-preview': { input: 0.5, output: 3 },
     'gemini-3.1-pro-preview': { input: 2, output: 12 },
@@ -107,7 +168,11 @@
 
   const defaultConfig = {
     autoEnabled: true,
-    provider: 'google',
+    provider: 'vercel',
+    gatewayKey: '',
+    gatewayModel: 'google/gemini-3.8-flash',
+    gatewayCompactModel: '',
+    compactModel: '',
     model: 'gemini-3.1-flash-lite',
     apiKey: '',
     firebaseScript: '',
@@ -164,10 +229,10 @@
 
   function migrateLegacyConfig() {
     const oldModel = localStorage.getItem('shipidle_crack_summary_gemini_model') || '';
-    const validModel = MODEL_OPTIONS.some(([id]) => id === oldModel) ? oldModel : 'gemini-3.1-flash-lite';
+    const validModel = oldModel || defaultConfig.model;
     const next = {
       ...defaultConfig,
-      provider: localStorage.getItem('shipidle_crack_summary_api_provider') || 'google',
+      provider: localStorage.getItem('shipidle_crack_summary_api_provider') || (oldModel || localStorage.getItem('shipidle_crack_summary_gemini_key') || localStorage.getItem('shipidle_crack_summary_firebase_script') ? 'google' : defaultConfig.provider),
       model: validModel,
       apiKey: localStorage.getItem('shipidle_crack_summary_gemini_key') || '',
       firebaseScript: localStorage.getItem('shipidle_crack_summary_firebase_script') || '',
@@ -571,25 +636,26 @@
   }
 
   function calculateCost(usage, model) {
-    const price = MODEL_PRICES[model] || MODEL_PRICES['gemini-3.1-flash-lite'];
+    const price = MODEL_PRICES[model];
+    if (!price || usage?.gateway) return null;
     const inputTokens = Number(usage?.promptTokenCount || 0);
     const outputTokens = Number(usage?.candidatesTokenCount || 0) + Number(usage?.thoughtsTokenCount || 0);
     return ((inputTokens * price.input + outputTokens * price.output) / 1_000_000) * KRW_PER_USD;
   }
 
-  function recordCost(chatId, usage, promptText, outputText) {
+  function recordCost(chatId, usage, promptText, outputText, model = config.model) {
     const state = stateFor(chatId);
-    const normalizedUsage = usage?.totalTokenCount ? usage : estimateUsage(promptText, outputText);
-    const cost = calculateCost(normalizedUsage, config.model);
+    const normalizedUsage = usage?.gateway || usage?.totalTokenCount ? usage : estimateUsage(promptText, outputText);
+    const cost = calculateCost(normalizedUsage, model);
     state.lastCostKrw = cost;
     state.totalCostKrw = Number(state.totalCostKrw || 0) + cost;
     persistStates();
     return cost;
   }
 
-  async function callGoogle(systemPrompt, userPrompt, schema) {
+  async function callGoogle(systemPrompt, userPrompt, schema, model = config.model) {
     if (!config.apiKey) throw new Error('Google API Key를 설정해줘.');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
     const payload = {
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
@@ -624,7 +690,7 @@
     return { text, usage: data.usageMetadata || null };
   }
 
-  async function callFirebase(systemPrompt, userPrompt, schema) {
+  async function callFirebase(systemPrompt, userPrompt, schema, modelId = config.model) {
     if (!config.firebaseScript) throw new Error('Firebase Vertex AI 스크립트를 설정해줘.');
     const firebaseConfig = parseFirebaseConfig(config.firebaseScript);
     const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js');
@@ -633,7 +699,7 @@
     const app = getApps().find(item => item.name === appName) || initializeApp(firebaseConfig, appName);
     const ai = getAI(app, { backend: new VertexAIBackend('global') });
     const model = getGenerativeModel(ai, {
-      model: config.model,
+      model: modelId,
       systemInstruction: systemPrompt,
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.OFF },
@@ -656,12 +722,33 @@
     return { text, usage: response.usageMetadata || null };
   }
 
+  async function callGateway(systemPrompt, userPrompt, schema, model = config.gatewayModel) {
+    if (!config.gatewayKey.trim()) throw new Error('Vercel AI Gateway 키를 설정해줘.');
+    const body = buildGatewayRequest(model, [
+      { role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt },
+    ], schema, 4096);
+    const response = await fetch(GATEWAY_URL, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.gatewayKey.trim() },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
+    return parseGatewayResponse(response.status, await response.text(), schema);
+  }
+
+  function summaryModel(mode = 'normal') {
+    const gateway = config.provider === 'vercel';
+    const normal = gateway ? config.gatewayModel : config.model;
+    const compact = gateway ? config.gatewayCompactModel : config.compactModel;
+    return String(mode === 'compact' ? compact || normal : normal).trim();
+  }
+
   async function callModel(chatId, systemPrompt, userPrompt, schema) {
+    const model = summaryModel(schema === COMPACT_SCHEMA ? 'compact' : 'normal');
     const combinedSystem = `${systemPrompt}${config.extraPrompt ? `\n\n[사용자 추가 지침]\n${config.extraPrompt}` : ''}`;
-    const result = config.provider === 'firebase'
-      ? await callFirebase(combinedSystem, userPrompt, schema)
-      : await callGoogle(combinedSystem, userPrompt, schema);
-    recordCost(chatId, result.usage, `${combinedSystem}\n${userPrompt}`, result.text);
+    const result = config.provider === 'vercel'
+      ? await callGateway(combinedSystem, userPrompt, schema, model)
+      : config.provider === 'firebase'
+      ? await callFirebase(combinedSystem, userPrompt, schema, model)
+      : await callGoogle(combinedSystem, userPrompt, schema, model);
+    recordCost(chatId, result.usage, `${combinedSystem}\n${userPrompt}`, result.text, model);
     return result.text;
   }
 
@@ -1192,7 +1279,7 @@
         throw new Error('공유 잠금의 마지막 턴이 현재 계산과 달라 자동 요약을 중단함.');
       }
       claimedBatch = { api: windowState.api, syncBatch };
-      setStatus(`완료된 왕복 20턴을 ${config.model}로 요약 중...`);
+      setStatus(`완료된 왕복 20턴을 ${summaryModel()}로 요약 중...`);
       const recovered = pendingBatchFromClaim(claim, syncBatch);
       if (recovered) {
         state.pendingBatch = recovered;
@@ -1430,8 +1517,8 @@
         <div class="cmm-card"><div class="cmm-label">다음 요약</div><div class="cmm-value">${dashboard.progress} / ${AUTO_TURN_COUNT}턴</div><div class="cmm-sub">공유 완료 기준 ${dashboard.syncedThrough}턴 · 프롤로그·리롤 제외</div></div>
         <div class="cmm-card"><div class="cmm-label">사용자 장기기억</div><div class="cmm-value">${dashboard.userCount} / 51개</div><div class="cmm-sub">직접 추가 + 이 스크립트 생성분</div></div>
         <div class="cmm-card"><div class="cmm-label">자동 메모리</div><div class="cmm-value">장기 ${dashboard.autoCount} · 단기 ${dashboard.shortCount}</div><div class="cmm-sub">자동 장기만 승인 후 삭제 · 단기는 제외</div></div>
-        <div class="cmm-card"><div class="cmm-label">모델</div><div class="cmm-value" style="font-size:13px">${escapeHtml(MODEL_OPTIONS.find(([id]) => id === config.model)?.[1] || config.model)}</div><div class="cmm-sub">${config.provider === 'firebase' ? 'Firebase Vertex AI' : 'Google Gemini API'}</div></div>
-        <div class="cmm-card accent"><div class="cmm-label">예상 비용</div><div class="cmm-value">이번 ${formatWon(state.lastCostKrw)}원</div><div class="cmm-sub">누적 ${formatWon(state.totalCostKrw)}원 · 환율 1,500원</div></div>
+        <div class="cmm-card"><div class="cmm-label">모델</div><div class="cmm-value" style="font-size:13px">${escapeHtml(config.provider === 'vercel' ? config.gatewayModel : config.model)}</div><div class="cmm-sub">${config.provider === 'vercel' ? 'Vercel AI Gateway' : config.provider === 'firebase' ? 'Firebase Vertex AI' : 'Google Gemini API'}</div></div>
+        <div class="cmm-card accent"><div class="cmm-label">예상 비용</div><div class="cmm-value">${state.lastCostKrw === null ? '단가 미확인' : `이번 ${formatWon(state.lastCostKrw)}원`}</div><div class="cmm-sub">계산된 누적 ${formatWon(state.totalCostKrw)}원 · Vercel 비용은 대시보드 확인</div></div>
       </div>
       <div class="cmm-section"><h3>작업</h3><div class="cmm-row">
         <button class="cmm-btn" data-action="summarize-now">도달한 20턴 지금 처리</button>
@@ -1463,8 +1550,13 @@
     return `<div class="cmm-section"><h3>AI 설정</h3>
       <label class="cmm-check"><input id="cmm-auto" type="checkbox" ${config.autoEnabled ? 'checked' : ''}> 자동 20턴 요약 켜기</label>
       <p class="cmm-sub">전체 대화의 20·40·60턴 구간을 기준으로 셈. 기기 간 중복 방지는 Lore Sync Bridge와 Supabase 공유 잠금을 사용함.</p>
-      <label class="cmm-field">API 방식<select id="cmm-provider"><option value="google" ${config.provider === 'google' ? 'selected' : ''}>Google Gemini API</option><option value="firebase" ${config.provider === 'firebase' ? 'selected' : ''}>Firebase Vertex AI</option></select></label>
-      <label class="cmm-field">모델<select id="cmm-model">${MODEL_OPTIONS.map(([id, label]) => `<option value="${id}" ${config.model === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="cmm-field">API 방식<select id="cmm-provider"><option value="vercel" ${config.provider === 'vercel' ? 'selected' : ''}>Vercel AI Gateway</option><option value="google" ${config.provider === 'google' ? 'selected' : ''}>Google Gemini API</option><option value="firebase" ${config.provider === 'firebase' ? 'selected' : ''}>Firebase Vertex AI</option></select></label>
+      <label class="cmm-field">20턴 요약 · Vercel 모델 ID<input id="cmm-gateway-model" value="${escapeHtml(config.gatewayModel)}" placeholder="google/gemini-3.8-flash"></label>
+      <label class="cmm-field">51→10 재요약 · Vercel 모델 ID<input id="cmm-gateway-compact-model" value="${escapeHtml(config.gatewayCompactModel)}" placeholder="비우면 20턴 요약 모델 사용"></label>
+      <label class="cmm-field">Vercel AI Gateway 키<input id="cmm-gateway-key" type="password" value="${escapeHtml(config.gatewayKey)}" autocomplete="off"></label>
+      <p class="cmm-sub"><a href="https://vercel.com/ai-gateway/models" target="_blank" rel="noopener noreferrer">Vercel 모델 목록</a>에서 모델 ID 복사. 실제 비용은 Vercel 대시보드에서 확인.</p>
+      <label class="cmm-field">20턴 요약 · Google/Firebase 모델 ID<input id="cmm-model" value="${escapeHtml(config.model)}" placeholder="gemini-3.8-flash"></label>
+      <label class="cmm-field">51→10 재요약 · Google/Firebase 모델 ID<input id="cmm-compact-model" value="${escapeHtml(config.compactModel)}" placeholder="비우면 20턴 요약 모델 사용"></label>
       <label class="cmm-field">Google API Key<input id="cmm-api-key" type="password" value="${escapeHtml(config.apiKey)}" autocomplete="off"></label>
       <label class="cmm-field">Firebase 스크립트<textarea id="cmm-firebase" rows="4" placeholder="firebaseConfig = { ... };">${escapeHtml(config.firebaseScript)}</textarea></label>
       <label class="cmm-field">추가 지침<textarea id="cmm-extra" rows="5" placeholder="기본 300자·사실성 규칙 뒤에 추가할 개인 지침">${escapeHtml(config.extraPrompt)}</textarea></label>
@@ -1534,8 +1626,12 @@
     if (action === 'save-editor') return saveEditor();
     if (action === 'save-settings') {
       config.autoEnabled = !!panel.querySelector('#cmm-auto')?.checked;
-      config.provider = panel.querySelector('#cmm-provider')?.value || 'google';
-      config.model = panel.querySelector('#cmm-model')?.value || 'gemini-3.1-flash-lite';
+      config.provider = panel.querySelector('#cmm-provider')?.value || 'vercel';
+      config.gatewayKey = panel.querySelector('#cmm-gateway-key')?.value.trim() || '';
+      config.gatewayModel = panel.querySelector('#cmm-gateway-model')?.value.trim() || GATEWAY_DEFAULT_MODEL;
+      config.gatewayCompactModel = panel.querySelector('#cmm-gateway-compact-model')?.value.trim() || '';
+      config.compactModel = panel.querySelector('#cmm-compact-model')?.value.trim() || '';
+      config.model = panel.querySelector('#cmm-model')?.value.trim() || 'gemini-3.1-flash-lite';
       config.apiKey = panel.querySelector('#cmm-api-key')?.value.trim() || '';
       config.firebaseScript = panel.querySelector('#cmm-firebase')?.value.trim() || '';
       config.extraPrompt = panel.querySelector('#cmm-extra')?.value.trim() || '';
