@@ -2,6 +2,8 @@
 
 [📦 고정 설치센터 열기](./INSTALL.md)
 
+[🧍 캐릭터 상태 삽입기 사용법](./docs/CHARACTER_STATE.md)
+
 - `beta`: 최신 수정본을 먼저 사용하는 실사용 테스트 채널
 - `main`: 테스트 완료 후 Merge된 안정 채널
 

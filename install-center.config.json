@@ -46,6 +46,7 @@
   "order": [
     "NAI_Prompt_Selector.user.js",
     "Crack_Assistant.user.js",
+    "Crack_Character_State.user.js",
     "Crack_Chat_Background.user.js",
     "Crack_Scroll_Guard.user.js",
     "Crack_Draft_Keeper.user.js",
