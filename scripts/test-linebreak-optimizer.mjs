@@ -99,10 +99,14 @@ function createHarness({ appleTouch = false } = {}) {
 }
 
 assert.match(source, /@run-at\s+document-start/);
-assert.match(source, /@version\s+1\.5\.0/);
+assert.match(source, /@version\s+1\.6\.0/);
 assert.match(source, /crackEnterGuardPage/);
 assert.match(source, /new KeyboardEvent\('keydown'/);
 assert.match(source, /shiftKey:\s*true/);
+assert.match(source, /data-lbo-japanese="true"/);
+assert.match(source, /word-break:\s*normal !important/);
+assert.match(source, /line-break:\s*strict !important/);
+assert.match(source, /const JAPANESE_RE/);
 
 {
   const injected = createHarness().pageGuardSource();

@@ -144,6 +144,8 @@ const nowSeconds = Math.floor(Date.now() / 1000);
   assert.match(shortError(new Error('[Google Gemini HTTP 403] forbidden')), /모델 사용 권한/);
   assert.match(summarySource, /lastSuccessfulProbeSignatures\.get\(chatId\) === activitySignature/);
   assert.match(summarySource, /response\.status === 401 && method === 'GET'/);
+  assert.match(summarySource, /data-action="repair-summary"/);
+  assert.match(summarySource, /async function repairAndSummarize/);
 }
 
 console.log('memory auth tests: PASS');
