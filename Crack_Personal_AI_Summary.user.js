@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💾 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.2.0
+// @version      2.3.0
 // @description  🧪 BETA · 전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -1319,6 +1319,28 @@
     }
   }
 
+  async function repairAndSummarize(chatId) {
+    if (!chatId) throw new Error('현재 채팅 ID를 찾지 못함.');
+    const state = stateFor(chatId);
+    const localCreatedIds = Array.isArray(state.pendingBatch?.createdIds)
+      ? state.pendingBatch.createdIds.filter(Boolean)
+      : [];
+    if (localCreatedIds.length > 0) {
+      throw new Error('중단된 작업에서 이미 장기기억이 일부 생성됨. 장기기억 편집에서 해당 항목을 확인한 뒤 복구해줘.');
+    }
+    if (!window.confirm(
+      '현재 채팅의 실패한 20턴 작업과 로컬 초안을 버리고, 실제 대화 기준으로 다시 계산함.\n\n' +
+      '완료된 이전 요약과 사용자 장기기억은 건드리지 않음. 계속할까?'
+    )) return;
+
+    state.pendingBatch = null;
+    state.progress = 0;
+    persistStates();
+    lastSuccessfulProbeSignatures.delete(chatId);
+    setStatus('현재 대화 기준으로 꼬인 20턴 구간을 복구 중...', 'warn');
+    await runAutoCheck('manual-repair', true);
+  }
+
   function parseEditorText(text) {
     return String(text || '').split(/\n\s*\n/).map(block => block.trim()).filter(Boolean).map(block => {
       const lines = block.split('\n');
@@ -1522,6 +1544,7 @@
       </div>
       <div class="cmm-section"><h3>작업</h3><div class="cmm-row">
         <button class="cmm-btn" data-action="summarize-now">도달한 20턴 지금 처리</button>
+        <button class="cmm-btn gray" data-action="repair-summary">꼬인 20턴 복구 후 다시 요약</button>
         <button class="cmm-btn gray" data-action="refresh">새로고침</button>
       </div></div>`;
     if (pending) {
@@ -1622,6 +1645,7 @@
     const chatId = getChatId();
     if (action === 'refresh') return refreshDashboard();
     if (action === 'summarize-now') return runAutoCheck('manual', true);
+    if (action === 'repair-summary') return repairAndSummarize(chatId);
     if (action === 'load-editor' || action === 'reload-editor') return loadEditor();
     if (action === 'save-editor') return saveEditor();
     if (action === 'save-settings') {
