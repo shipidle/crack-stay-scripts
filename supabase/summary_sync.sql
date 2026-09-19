@@ -126,10 +126,24 @@ begin
     or v_row.status = 'failed'
     or v_row.locked_at is null
     or v_row.locked_at < now() - make_interval(secs => greatest(p_lock_ttl_seconds, 60)) then
+    if (v_row.batch_start_turn_id is distinct from p_batch_start_turn_id
+        or v_row.batch_end_turn_id is distinct from p_batch_end_turn_id)
+       and jsonb_array_length(coalesce(v_row.created_summary_ids, '[]'::jsonb)) > 0 then
+      raise exception 'stale summary batch already created memories; clean them up before repairing';
+    end if;
+
     update public.summary_sync_state set
+      batch_start_turn_id = p_batch_start_turn_id,
+      batch_end_turn_id = p_batch_end_turn_id,
       status = 'processing',
       lock_owner = p_lock_owner,
       locked_at = now(),
+      payload_ciphertext = case
+        when batch_start_turn_id is distinct from p_batch_start_turn_id
+          or batch_end_turn_id is distinct from p_batch_end_turn_id
+        then null
+        else payload_ciphertext
+      end,
       last_error = null,
       updated_at = now()
     where owner_id = v_owner and chat_id = p_chat_id and batch_end_count = p_batch_end_count
