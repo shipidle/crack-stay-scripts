@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.5.0
+// @version      0.5.1
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -88,13 +88,13 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.5.1';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
   const MAX_TARGETS = 24;
   const CONTEXT_TURNS = 5;
-  const CONTEXT_MESSAGES = CONTEXT_TURNS * 2;
+  const MAX_CONTEXT_TURNS = 100;
   const HISTORY_CHAR_BUDGET = 20000;
   const CURRENT_DRAFT_CHAR_BUDGET = 24000;
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen';
@@ -197,7 +197,13 @@
     <div class="cdt-card">
       <label class="cdt-label" for="cdt-guidance">방별 캐릭터 설정·작업 노트</label>
       <textarea class="cdt-textarea" id="cdt-guidance" maxlength="3000" placeholder="예: Felix는 펠릭스. Till은 틸. 펠릭스가 틸을 돌보고 요리해주는 관계. 틸은 짧고 무뚝뚝하게 말함."></textarea>
-      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 참고함. 대사 번역 시 현재 작성 중인 답장 전체 + 최근 5턴을 읽고, 최신 대화를 우선 보존함. 주변 맥락이 필터에 걸리면 번역할 대사만으로 자동 재시도함.</div>
+      <div class="cdt-meta">성격·관계·말투·고유명사·호칭을 참고함. 대사 번역 시 현재 작성 중인 답장과 아래에서 지정한 최근 대화를 읽음. 주변 맥락이 필터에 걸리면 번역할 대사만으로 자동 재시도함.</div>
+    </div>
+
+    <div class="cdt-card">
+      <label class="cdt-label" for="cdt-context-turns">최근 대화 참조 턴 수</label>
+      <input class="cdt-input" id="cdt-context-turns" type="number" inputmode="numeric" min="0" max="100" step="1" value="${CONTEXT_TURNS}">
+      <div class="cdt-meta">기본 5턴 · 0~100턴. 1턴은 내 메시지와 상대 답변 한 쌍 기준이며, 최대 지정 턴 수만큼 참고함. 0은 이전 대화 참조 끄기. 최근 대화는 약 2만 자까지 최신순으로 우선 보존하므로 긴 대화는 실제 참조 턴 수가 줄어들 수 있음. 이 브라우저의 모든 방에 공통 적용되며 변경 시 자동 저장됨.</div>
     </div>
 
     <div class="cdt-card">
@@ -622,16 +628,46 @@
     return headers;
   }
 
-  async function fetchRecentContext() {
+  function normalizeContextTurns(value) {
+    if (value == null || String(value).trim() === '') return CONTEXT_TURNS;
+    const count = Number(value);
+    return Number.isFinite(count) ? Math.max(0, Math.min(MAX_CONTEXT_TURNS, Math.floor(count))) : CONTEXT_TURNS;
+  }
+
+  function saveContextTurns() {
+    const count = normalizeContextTurns($('#cdt-context-turns').value);
+    $('#cdt-context-turns').value = String(count);
+    GM_setValue(`${KEY}:contextTurns`, count);
+    return count;
+  }
+
+  async function fetchRecentContext(requestedTurns = CONTEXT_TURNS) {
+    const contextTurns = normalizeContextTurns(requestedTurns);
+    if (!contextTurns) return { text: '(이전 대화 참조 꺼짐)', chars: 0, messageCount: 0, fetchedCount: 0, turnCount: 0 };
     const chatId = getChatId();
-    if (!chatId) return { text: '(최근 맥락 없음)', chars: 0, messageCount: 0, fetchedCount: 0 };
+    if (!chatId) return { text: '(최근 맥락 없음)', chars: 0, messageCount: 0, fetchedCount: 0, turnCount: 0 };
     try {
-      const response = await fetch(`${API_BASE}/v3/chats/${chatId}/messages?limit=${CONTEXT_MESSAGES}`, {
-        headers: buildHeaders(), credentials: 'include',
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const json = await response.json();
-      const messages = ((json.data || json).messages || []).slice(0, CONTEXT_MESSAGES);
+      const messageLimit = contextTurns * 2;
+      const messages = [];
+      const seenCursors = new Set();
+      let cursor = '';
+      while (messages.length < messageLimit) {
+        const limit = Math.min(50, messageLimit - messages.length);
+        const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+        const response = await fetch(`${API_BASE}/v3/chats/${chatId}/messages?limit=${limit}${cursorQuery}`, {
+          headers: buildHeaders(), credentials: 'include',
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = await response.json();
+        const data = json.data || json;
+        const page = data.messages || [];
+        if (!Array.isArray(page) || !page.length) break;
+        messages.push(...page.slice(0, messageLimit - messages.length));
+        const nextCursor = String(data.nextCursor || json.nextCursor || '');
+        if (!nextCursor || seenCursors.has(nextCursor)) break;
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      }
       const keptNewestFirst = [];
       let remaining = HISTORY_CHAR_BUDGET;
 
@@ -669,7 +705,8 @@
       });
       if (currentTurn.length) turns.push(currentTurn);
 
-      const text = turns.slice(-CONTEXT_TURNS).map((turn, index) => (
+      const selectedTurns = turns.slice(-contextTurns);
+      const text = selectedTurns.map((turn, index) => (
         `[Turn ${index + 1}]\n${turn.join('\n\n')}`
       )).join('\n\n') || '(최근 맥락 없음)';
 
@@ -678,10 +715,11 @@
         chars: text === '(최근 맥락 없음)' ? 0 : text.length,
         messageCount: chronological.length,
         fetchedCount: messages.length,
+        turnCount: selectedTurns.length,
       };
     } catch (error) {
       console.warn('[CDT] recent context fetch failed:', error);
-      return { text: '(최근 맥락을 불러오지 못함)', chars: 0, messageCount: 0, fetchedCount: 0 };
+      return { text: '(최근 맥락을 불러오지 못함)', chars: 0, messageCount: 0, fetchedCount: 0, turnCount: 0 };
     }
   }
 
@@ -987,6 +1025,7 @@
     GM_setValue(KEY + ':googleModel', $('#cdt-google-model').value.trim() || MODEL);
     GM_setValue(`${KEY}:apiKey`, $('#cdt-api-key').value.trim());
     GM_setValue(`${KEY}:language`, selectedLanguage());
+    saveContextTurns();
     saveRoomSettings(showStatus);
   }
 
@@ -1014,12 +1053,14 @@
     $('#cdt-run').disabled = true;
     $('#cdt-save').disabled = true;
     $('#cdt-language').disabled = true;
+    $('#cdt-context-turns').disabled = true;
     saveSettings(false);
     try {
-      $('#cdt-status').textContent = `최근 대화 ${CONTEXT_TURNS}턴 읽는 중…`;
-      const contextInfo = await fetchRecentContext();
+      const contextTurns = normalizeContextTurns($('#cdt-context-turns').value);
+      $('#cdt-status').textContent = contextTurns ? `최근 대화 ${contextTurns}턴 읽는 중…` : '이전 대화 없이 번역 준비 중…';
+      const contextInfo = await fetchRecentContext(contextTurns);
       const draftChars = clipTextEdges(source, CURRENT_DRAFT_CHAR_BUDGET).length;
-      const contextStatus = ` · 최근맥락 ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`;
+      const contextStatus = ` · 최근맥락 ${contextInfo.turnCount}/${contextTurns}턴 · ${contextInfo.chars.toLocaleString()}자/${contextInfo.messageCount}메시지`;
       $('#cdt-status').textContent = `${targetSummary(targets)} 처리 중… · 현재초안 ${draftChars.toLocaleString()}자${contextStatus}`;
 
       const result = await translateTargetsSingleRequest(
@@ -1052,6 +1093,7 @@
       $('#cdt-run').disabled = false;
       $('#cdt-save').disabled = false;
       $('#cdt-language').disabled = false;
+      $('#cdt-context-turns').disabled = false;
     }
   }
 
@@ -1077,12 +1119,14 @@
   $('#cdt-google-model').value = GM_getValue(KEY + ':googleModel', MODEL);
   const savedLanguage = GM_getValue(`${KEY}:language`, 'en');
   $('#cdt-language').value = LANGUAGES[savedLanguage] ? savedLanguage : 'en';
+  $('#cdt-context-turns').value = String(normalizeContextTurns(GM_getValue(`${KEY}:contextTurns`, CONTEXT_TURNS)));
   loadRoomSettings(true);
   updateCost();
   fetchExchangeRate();
 
   $('#cdt-close').addEventListener('click', () => { panel.style.display = 'none'; });
   $('#cdt-save').addEventListener('click', () => saveSettings(true));
+  $('#cdt-context-turns').addEventListener('change', saveContextTurns);
   $('#cdt-cloud-upload').addEventListener('click', uploadRoomSettings);
   $('#cdt-cloud-download').addEventListener('click', downloadRoomSettings);
   $('#cdt-language').addEventListener('change', () => {

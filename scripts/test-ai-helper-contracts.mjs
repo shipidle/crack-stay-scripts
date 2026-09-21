@@ -51,3 +51,54 @@ assert.match(assistant, /역할극을 절대 출력하지 않습니다/);
 assert.match(assistant, /const HISTORY_TURNS = 3/);
 assert.match(assistant, /const sysText = buildEffectiveSystemPrompt\(\)/);
 console.log('AI helper contracts: dialogue-only, language routing, parsing, cloud isolation and assistant role PASS');
+
+const contextCode = between(translator, '  function normalizeContextTurns(', '  function groupTargets(');
+const contextHarness = (history = [], pageSize = 50) => {
+  const requests = [], storage = new Map(), field = { value:'5' };
+  const fetch = async url => {
+    requests.push(url);
+    const params = new URL(url).searchParams;
+    const offset = Number(params.get('cursor') || 0);
+    const limit = Math.min(pageSize, Number(params.get('limit')));
+    const messages = history.slice(offset, offset + limit);
+    const end = offset + messages.length;
+    return { ok:true, json:async()=>({ data:{ messages, nextCursor:end < history.length ? String(end) : '' } }) };
+  };
+  const api = Function('fetch','getChatId','buildHeaders','$','GM_setValue', `
+    const CONTEXT_TURNS=5, MAX_CONTEXT_TURNS=100, HISTORY_CHAR_BUDGET=20000;
+    const API_BASE='https://example.test', KEY='test';
+    ${code}
+    ${contextCode}
+    return { normalizeContextTurns, saveContextTurns, fetchRecentContext };
+  `)(fetch,()=> 'chat',()=>({}),()=>field,(key,value)=>storage.set(key,value));
+  return { ...api, requests, storage, field };
+};
+const history = Array.from({ length:100 }, (_,i)=>[
+  { role:'user',content:`question-${i}` }, { role:'assistant',content:`answer-${i}` },
+]).flat().reverse();
+const context = contextHarness(history);
+for (const [input,expected] of [[undefined,5],['',5],['invalid',5],[0,0],[-2,0],[8.9,8],[500,100]]) {
+  assert.equal(context.normalizeContextTurns(input),expected);
+}
+context.field.value='8'; context.saveContextTurns();
+assert.equal(context.storage.get('test:contextTurns'),8);
+context.field.value=''; context.saveContextTurns(); assert.equal(context.field.value,'5');
+const off=await context.fetchRecentContext(0);
+assert.equal(off.turnCount,0); assert.equal(context.requests.length,0);
+const defaults=await context.fetchRecentContext();
+assert.equal(defaults.turnCount,5); assert.equal(defaults.messageCount,10);
+assert.match(defaults.text,/question-95/); assert.doesNotMatch(defaults.text,/question-94\b/);
+const eight=await context.fetchRecentContext(8);
+assert.equal(eight.turnCount,8); assert.match(eight.text,/question-92/);
+assert.doesNotMatch(eight.text,/question-91\b/);
+const paginated=contextHarness(history,30);
+const hundred=await paginated.fetchRecentContext(100);
+assert.equal(hundred.turnCount,100); assert.equal(hundred.fetchedCount,200);
+assert.equal(paginated.requests.length,7);
+assert.ok(paginated.requests.every(url=>Number(new URL(url).searchParams.get('limit'))<=50));
+assert.ok(hundred.text.indexOf('question-0')<hundred.text.indexOf('question-99'));
+const short=await contextHarness(history.slice(0,4)).fetchRecentContext(50);
+assert.equal(short.turnCount,2);
+const clipped=await contextHarness([{ role:'assistant',content:'LATEST '+ 'x'.repeat(25000) },...history]).fetchRecentContext(100);
+assert.ok(clipped.turnCount<100); assert.match(clipped.text,/LATEST/); assert.ok(clipped.chars<20100);
+console.log('Translator context: saved count, zero-fetch mode, latest N turns, pagination and character budget PASS');
