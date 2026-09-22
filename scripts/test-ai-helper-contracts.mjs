@@ -65,11 +65,11 @@ const contextHarness = (history = [], pageSize = 50) => {
     return { ok:true, json:async()=>({ data:{ messages, nextCursor:end < history.length ? String(end) : '' } }) };
   };
   const api = Function('fetch','getChatId','buildHeaders','$','GM_setValue', `
-    const CONTEXT_TURNS=5, MAX_CONTEXT_TURNS=100, HISTORY_CHAR_BUDGET=20000;
+    const CONTEXT_TURNS=5, MAX_CONTEXT_TURNS=100, HISTORY_CHAR_BUDGET=20000, CURRENT_DRAFT_CHAR_BUDGET=24000;
     const API_BASE='https://example.test', KEY='test';
     ${code}
     ${contextCode}
-    return { normalizeContextTurns, saveContextTurns, fetchRecentContext };
+    return { normalizeContextTurns, saveContextTurns, fetchRecentContext, normalizeContextText, buildPrompt };
   `)(fetch,()=> 'chat',()=>({}),()=>field,(key,value)=>storage.set(key,value));
   return { ...api, requests, storage, field };
 };
@@ -102,3 +102,20 @@ assert.equal(short.turnCount,2);
 const clipped=await contextHarness([{ role:'assistant',content:'LATEST '+ 'x'.repeat(25000) },...history]).fetchRecentContext(100);
 assert.ok(clipped.turnCount<100); assert.match(clipped.text,/LATEST/); assert.ok(clipped.chars<20100);
 console.log('Translator context: saved count, zero-fetch mode, latest N turns, pagination and character budget PASS');
+
+const injectedBlock = '<!--RP_CONTEXT_MANAGER_START\nHIDDEN_MEMORY ' + 'x'.repeat(30000) + '\nRP_CONTEXT_MANAGER_END-->';
+const injectedHistory = history.slice(0,10).map(message=>({ ...message,content:message.content+injectedBlock }));
+const cleaned = await contextHarness(injectedHistory).fetchRecentContext(5);
+assert.equal(cleaned.turnCount,5);
+assert.equal(cleaned.text,defaults.text);
+assert.equal(cleaned.chars,defaults.chars);
+assert.doesNotMatch(cleaned.text,/HIDDEN_MEMORY|RP_CONTEXT_MANAGER/);
+assert.equal(injectedHistory[0].content,history[0].content+injectedBlock);
+assert.equal(context.normalizeContextText(`before${injectedBlock}middle${injectedBlock}after`),'before\nmiddle\nafter');
+assert.equal(context.normalizeContextText('before<!-- unrelated comment -->after'),'before<!-- unrelated comment -->after');
+const emptyContext = await contextHarness([{ role:'assistant',content:injectedBlock }]).fetchRecentContext(5);
+assert.equal(emptyContext.messageCount,0); assert.equal(emptyContext.chars,0);
+const cleanPrompt = context.buildPrompt([],cleaned,'',`draft before${injectedBlock}draft after`);
+assert.doesNotMatch(cleanPrompt,/HIDDEN_MEMORY|RP_CONTEXT_MANAGER/);
+assert.match(cleanPrompt,/draft before\ndraft after/);
+console.log('Translator RP Manager blocks: excluded before budget and prompt construction; original messages preserved PASS');

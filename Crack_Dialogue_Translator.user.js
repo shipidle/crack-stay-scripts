@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.5.1
+// @version      0.5.2
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -88,7 +88,7 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '0.5.1';
+  const VERSION = '0.5.2';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
@@ -537,6 +537,8 @@
 
   function normalizeContextText(text) {
     return String(text || '')
+      // Remove injected RP Manager memory before counting or clipping reference text.
+      .replace(/<!--\s*RP_CONTEXT_MANAGER_START\b[\s\S]*?RP_CONTEXT_MANAGER_END\s*-->/g, '\n')
       .replace(/\r\n?/g, '\n')
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{4,}/g, '\n\n\n')
