@@ -21,6 +21,10 @@ jobs:
         run: node scripts/generate-install-center.mjs --check
       - name: Test device and channel lists
         run: node scripts/test-install-center.mjs
+      - name: Check chat bookmarks
+        run: |
+          node --check Crack_Chat_Bookmarks.user.js
+          node scripts/test-chat-bookmarks.mjs
       - name: Check userscript update channel
         shell: bash
         run: |

@@ -29,7 +29,7 @@
 
 ## 🧪 BETA 테스트판 · 📱 iPhone
 
-최신 수정본을 먼저 실사용 테스트하는 채널 · 총 16개
+최신 수정본을 먼저 실사용 테스트하는 채널 · 총 17개
 
 1. [🧩 NAI 프롬프트 셀렉터 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/NAI_Prompt_Selector.user.js) — `NAI_Prompt_Selector.user.js`
 2. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
@@ -43,10 +43,11 @@
 10. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
 11. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
 12. [🌐 대사 번역기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Dialogue_Translator.user.js) — `Crack_Dialogue_Translator.user.js`
-13. [💌 크랙 메신저 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js) — `Crack_Messenger.user.js`
-14. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-15. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
-16. [🔠 크랙 폰트 조정 (폰) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPhone_Font_Adjust.user.js) — `Crack_iPhone_Font_Adjust.user.js`
+13. [🔖 채팅 찾기·북마크 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Chat_Bookmarks.user.js) — `Crack_Chat_Bookmarks.user.js`
+14. [💌 크랙 메신저 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js) — `Crack_Messenger.user.js`
+15. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+16. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+17. [🔠 크랙 폰트 조정 (폰) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPhone_Font_Adjust.user.js) — `Crack_iPhone_Font_Adjust.user.js`
 
 ---
 
@@ -54,7 +55,7 @@
 
 ## 🧪 BETA 테스트판 · ▣ iPad
 
-최신 수정본을 먼저 실사용 테스트하는 채널 · 총 16개
+최신 수정본을 먼저 실사용 테스트하는 채널 · 총 17개
 
 1. [🧩 NAI 프롬프트 셀렉터 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/NAI_Prompt_Selector.user.js) — `NAI_Prompt_Selector.user.js`
 2. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
@@ -68,10 +69,11 @@
 10. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
 11. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
 12. [🌐 대사 번역기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Dialogue_Translator.user.js) — `Crack_Dialogue_Translator.user.js`
-13. [💌 크랙 메신저 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js) — `Crack_Messenger.user.js`
-14. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-15. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
-16. [🔠 크랙 폰트 조정 (패드) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPad_Font_Adjust.user.js) — `Crack_iPad_Font_Adjust.user.js`
+13. [🔖 채팅 찾기·북마크 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Chat_Bookmarks.user.js) — `Crack_Chat_Bookmarks.user.js`
+14. [💌 크랙 메신저 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js) — `Crack_Messenger.user.js`
+15. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+16. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+17. [🔠 크랙 폰트 조정 (패드) 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_iPad_Font_Adjust.user.js) — `Crack_iPad_Font_Adjust.user.js`
 
 ---
 
@@ -79,7 +81,7 @@
 
 ## 🧪 BETA 테스트판 · 🖥️ Desktop
 
-최신 수정본을 먼저 실사용 테스트하는 채널 · 총 15개
+최신 수정본을 먼저 실사용 테스트하는 채널 · 총 16개
 
 1. [🧩 NAI 프롬프트 셀렉터 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/NAI_Prompt_Selector.user.js) — `NAI_Prompt_Selector.user.js`
 2. [🤖 캐챗 어시스턴트 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Assistant.user.js) — `Crack_Assistant.user.js`
@@ -93,9 +95,10 @@
 10. [🗂️ 크랙 유저노트 DB 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_UserNote_DB.user.js) — `Crack_UserNote_DB.user.js`
 11. [✍️ 윤문 헬퍼 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Rewriting_Helper.user.js) — `Crack_Rewriting_Helper.user.js`
 12. [🌐 대사 번역기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Dialogue_Translator.user.js) — `Crack_Dialogue_Translator.user.js`
-13. [💌 크랙 메신저 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js) — `Crack_Messenger.user.js`
-14. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
-15. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
+13. [🔖 채팅 찾기·북마크 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Chat_Bookmarks.user.js) — `Crack_Chat_Bookmarks.user.js`
+14. [💌 크랙 메신저 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Messenger.user.js) — `Crack_Messenger.user.js`
+15. [📊 턴수 & 크래커 표시기 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Count_Cracker_HUD.user.js) — `Crack_Count_Cracker_HUD.user.js`
+16. [📱 미니 사이드바 메뉴 설치/덮어쓰기](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Mini_Sidebar_Menu.user.js) — `Crack_Mini_Sidebar_Menu.user.js`
 
 ---
 
