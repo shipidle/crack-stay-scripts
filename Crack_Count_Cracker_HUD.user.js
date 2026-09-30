@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         📊 턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.11
-// @description  🧪 BETA · 입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다.
+// @version      1.1.12
+// @description  🧪 BETA · 입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다. 턴수를 길게 눌러 방별 수동 보정이 가능합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
@@ -20,6 +20,11 @@
     const VISIBLE_PARTS_STORAGE_KEY = 'info_display_visible_parts';
     const OUTPUT_COST_STORAGE_KEY = 'info_display_output_costs';
     const TIMESTAMPS_CACHE_KEY = 'info_display_chat_timestamps';
+    const TURN_OFFSET_KEY = 'info_display_turn_offset_v1:';
+    let turnAdjustMenu = null;
+    let turnAdjustRoom = null;
+    let turnPress = null;
+    let suppressTurnClick = false;
 
     const SELECTOR = {
         input: 'textarea[placeholder*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap',
@@ -174,6 +179,21 @@
                 cursor: pointer;
             }
 
+            .my-counter-part[data-part="turn"] { -webkit-touch-callout: none; -webkit-user-select: none; }
+            #info-display-turn-adjust {
+                position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+                width:280px;max-width:calc(100vw - 24px);box-sizing:border-box;
+                padding:16px;border:1px solid #ddd;border-radius:14px;background:#fff;color:#36383e;
+                z-index:2147483646;box-shadow:0 12px 40px #0003;color-scheme:light;
+                font:13px/1.6 'Pretendard',-apple-system,BlinkMacSystemFont,sans-serif;
+            }
+            #info-display-turn-adjust[hidden] { display:none!important; }
+            #info-display-turn-adjust .turn-adjust-row { display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0; }
+            #info-display-turn-adjust button { font:inherit;touch-action:manipulation;cursor:pointer;border:1px solid #ddd;border-radius:8px;background:#f5f5f6;color:#36383e;padding:8px 13px; }
+            #info-display-turn-adjust button:disabled { opacity:.4;cursor:default; }
+            #info-display-turn-adjust output { font-size:24px;font-weight:700; }
+            #info-display-turn-adjust p { margin:6px 0;font-size:12px; }
+
             .my-counter-separator {
                 opacity: 0.45;
                 margin: 0 3px;
@@ -278,6 +298,120 @@
 
         window.addEventListener('scroll', hideSettingsMenu, true);
         window.addEventListener('resize', hideSettingsMenu);
+        bindTurnAdjustment();
+    }
+
+    function turnRoomId() {
+        const match = location.pathname.match(/\/(?:episodes|chats)\/([^/?#]+)/)
+            || location.pathname.match(/\/u\/[^/]+\/c\/([^/?#]+)/);
+        return match?.[1] || null;
+    }
+
+    function turnOffset(roomId) {
+        if (!roomId) return 0;
+        // Do not silently overwrite unreadable storage when applying an adjustment.
+        const raw = localStorage.getItem(TURN_OFFSET_KEY + encodeURIComponent(roomId));
+        const value = raw === null ? 0 : Number(raw);
+        if (!Number.isSafeInteger(value)) throw new Error('저장된 보정값을 읽을 수 없음.');
+        return value;
+    }
+
+    function automaticTurns() {
+        return lastChatId === turnRoomId() && cachedTurns !== null ? cachedTurns
+            : Math.floor(document.querySelectorAll(SELECTOR.messageGroup).length / 2);
+    }
+
+    function correctedTurns(base, offset) { return Math.max(0, base + offset); }
+
+    function closeTurnAdjustment() {
+        if (turnAdjustMenu) turnAdjustMenu.hidden = true;
+        turnAdjustRoom = null;
+    }
+
+    function refreshTurnAdjustment() {
+        if (!turnAdjustRoom || turnAdjustMenu?.hidden) return;
+        if (turnAdjustRoom !== turnRoomId()) { closeTurnAdjustment(); return; }
+        const base = automaticTurns();
+        try {
+            const offset = turnOffset(turnAdjustRoom);
+            turnAdjustMenu.querySelector('output').textContent = `${correctedTurns(base, offset)}턴`;
+            turnAdjustMenu.querySelector('[data-info]').textContent = `자동 ${base}턴 · 수동 보정 ${offset >= 0 ? '+' : ''}${offset}턴`;
+            turnAdjustMenu.querySelector('[data-delta="-1"]').disabled = correctedTurns(base, offset) <= 0;
+        } catch (error) { turnAdjustMenu.querySelector('[data-info]').textContent = error.message; }
+    }
+
+    function openTurnAdjustment() {
+        const roomId = turnRoomId();
+        if (!roomId) return;
+        hideSettingsMenu();
+        if (!turnAdjustMenu) {
+            turnAdjustMenu = document.createElement('section');
+            turnAdjustMenu.id = 'info-display-turn-adjust';
+            turnAdjustMenu.setAttribute('role', 'dialog');
+            turnAdjustMenu.setAttribute('aria-label', '턴수 수동 보정');
+            turnAdjustMenu.innerHTML = `<strong>턴수 수동 보정</strong>
+                <div class="turn-adjust-row"><button type="button" data-delta="-1" aria-label="1턴 빼기">−</button><output aria-live="polite"></output><button type="button" data-delta="1" aria-label="1턴 더하기">+</button></div>
+                <p data-info></p><p>이 방에 즉시 저장됨. 이후 자동 턴수에도 같은 보정값이 적용됨.</p>
+                <div class="turn-adjust-row"><button type="button" data-reset>보정 초기화</button><button type="button" data-close>닫기</button></div>`;
+            turnAdjustMenu.addEventListener('click', e => {
+                const button = e.target.closest('button');
+                if (!button) return;
+                e.preventDefault(); e.stopPropagation();
+                if (button.hasAttribute('data-close')) { closeTurnAdjustment(); return; }
+                if (!turnAdjustRoom || turnAdjustRoom !== turnRoomId()) { closeTurnAdjustment(); return; }
+                try {
+                    const offset = turnOffset(turnAdjustRoom);
+                    const delta = Number(button.dataset.delta || 0);
+                    if (delta < 0 && correctedTurns(automaticTurns(), offset) <= 0) return;
+                    const base = automaticTurns();
+                    const next = button.hasAttribute('data-reset') ? 0 : correctedTurns(base, offset) + delta - base;
+                    if (!Number.isSafeInteger(next)) throw new Error('보정 가능한 범위를 넘었음.');
+                    localStorage.setItem(TURN_OFFSET_KEY + encodeURIComponent(turnAdjustRoom), String(next));
+                    refreshTurnAdjustment();
+                    if (currentInput) renderUpdate(currentInput, getCurrentModelName());
+                } catch (_) { turnAdjustMenu.querySelector('[data-info]').textContent = '보정값을 저장하지 못했음. 기기 저장소를 확인해줘.'; }
+            });
+            document.body.appendChild(turnAdjustMenu);
+        }
+        turnAdjustRoom = roomId; turnAdjustMenu.hidden = false; refreshTurnAdjustment();
+        turnAdjustMenu.querySelector('[data-close]').focus({ preventScroll: true });
+    }
+
+    function cancelTurnPress() { if (turnPress) clearTimeout(turnPress.timer); turnPress = null; }
+
+    function bindTurnAdjustment() {
+        const turnButton = target => target?.closest?.('#my-counter-text [data-part="turn"]');
+        document.addEventListener('pointerdown', e => {
+            if (!turnButton(e.target) || e.button !== 0 || e.isPrimary === false) return;
+            cancelTurnPress(); suppressTurnClick = false;
+            const press = { id: e.pointerId, x: e.clientX, y: e.clientY, room: turnRoomId(), timer: null };
+            press.timer = setTimeout(() => {
+                if (turnPress !== press || press.room !== turnRoomId() || !press.room) return;
+                suppressTurnClick = true; openTurnAdjustment();
+            }, 550);
+            turnPress = press;
+        });
+        document.addEventListener('pointermove', e => {
+            if (turnPress?.id === e.pointerId && Math.hypot(e.clientX - turnPress.x, e.clientY - turnPress.y) > 10) cancelTurnPress();
+        }, { passive: true });
+        document.addEventListener('pointerup', cancelTurnPress);
+        document.addEventListener('pointercancel', cancelTurnPress);
+        window.addEventListener('scroll', cancelTurnPress, true);
+        window.addEventListener('blur', cancelTurnPress);
+        document.addEventListener('contextmenu', e => {
+            if (!turnButton(e.target)) return;
+            e.preventDefault(); cancelTurnPress(); suppressTurnClick = true; openTurnAdjustment();
+        });
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeTurnAdjustment();
+            if (turnButton(e.target) && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
+                e.preventDefault(); openTurnAdjustment();
+            }
+        });
+        window.addEventListener('popstate', () => { cancelTurnPress(); closeTurnAdjustment(); scheduleUpdate(); });
+        window.addEventListener('storage', e => { if (e.key?.startsWith(TURN_OFFSET_KEY)) { refreshTurnAdjustment(); scheduleUpdate(); } });
+        // pushState navigation need not cause an immediate DOM mutation.
+        setInterval(() => { if (turnAdjustRoom && turnAdjustRoom !== turnRoomId()) closeTurnAdjustment(); }, 400);
     }
 
     function startObserver() {
@@ -286,7 +420,7 @@
         observer = new MutationObserver((mutations) => {
             const onlyMine = mutations.every((m) => {
                 const el = m.target.nodeType === Node.ELEMENT_NODE ? m.target : m.target.parentElement;
-                return el?.closest?.('#my-custom-info-display, #info-display-settings-menu');
+                return el?.closest?.('#my-custom-info-display, #info-display-settings-menu, #info-display-turn-adjust');
             });
 
             if (onlyMine) return;
@@ -447,6 +581,7 @@
 
             e.preventDefault();
             e.stopPropagation();
+            if (part.dataset.part === 'turn' && suppressTurnClick) { suppressTurnClick = false; return; }
             toggleDetailPart(part.dataset.part);
         };
 
@@ -835,7 +970,7 @@
             const isDetail = detailParts[part.key];
             const contentHtml = isDetail ? part.detailHtml : part.summaryHtml;
 
-            return `${sep}<button class="my-counter-part" data-part="${part.key}" ${part.key === 'cumulative' ? 'style="cursor:default;"' : ''}>${contentHtml}</button>`;
+            return `${sep}<button type="button" class="my-counter-part" data-part="${part.key}" ${part.key === 'turn' ? 'title="짧게 누르면 상세 · 길게 누르면 턴수 보정" aria-haspopup="dialog"' : ''} ${part.key === 'cumulative' ? 'style="cursor:default;"' : ''}>${contentHtml}</button>`;
         }).join('');
 
         if (html === lastRenderedText) return;
@@ -1036,6 +1171,7 @@
             currentInput = null;
             currentContainer = null;
             hideSettingsMenu();
+            closeTurnAdjustment();
             return;
         }
 
@@ -1050,11 +1186,12 @@
 
         if (!counterBadge || !textSpan) return;
 
-        const currentChatId = typeof CrackUtil !== 'undefined' ? CrackUtil.path().chatRoom() : null;
+        const currentChatId = turnRoomId();
 
         let forceCalculate = false;
 
         if (currentChatId && currentChatId !== lastChatId) {
+            closeTurnAdjustment();
             lastChatId = currentChatId;
             forceCalculate = true;
             cachedTurns = null;
@@ -1071,6 +1208,7 @@
             isCalculatingTurns = true;
 
             fetchRoomData().then(data => {
+                if (currentChatId !== turnRoomId()) { isCalculatingTurns = false; scheduleUpdate(); return; }
                 const domTotalMessages = document.querySelectorAll(SELECTOR.messageGroup).length;
 
                 if (data.chatCounts !== -1) {
@@ -1158,14 +1296,15 @@
 
         const parts = [];
 
-        let displayTurns = cachedTurns;
-        if (displayTurns === null) {
-            displayTurns = Math.floor(document.querySelectorAll(SELECTOR.messageGroup).length / 2);
-        }
+        const baseTurns = automaticTurns();
+        let offset = 0;
+        try { offset = turnOffset(turnRoomId()); } catch (_) { /* Keep automatic counting available. */ }
+        const displayTurns = correctedTurns(baseTurns, offset);
 
         if (displayTurns > 0) {
             const summary = `${ICON.clock}<span style="font-weight:700;">${displayTurns}</span>턴`;
             let detail = summary;
+            if (offset) detail += `&nbsp;<span style="opacity:.75;">(보정 ${offset > 0 ? '+' : ''}${offset}턴)</span>`;
 
             const totalMessages = cachedTotalMessages ?? document.querySelectorAll(SELECTOR.messageGroup).length;
 
@@ -1179,7 +1318,7 @@
                 detailHtml: detail
             });
         } else {
-            const html = `${ICON.clock}채팅 없음`;
+            const html = `${ICON.clock}${offset || baseTurns ? '0턴' : '채팅 없음'}`;
 
             parts.push({
                 key: 'turn',
@@ -1199,7 +1338,7 @@
             } else if (cachedCumulative !== null) {
                 cumText = cachedCumulative.toLocaleString();
                 suffix = '개';
-            } else if (displayTurns <= 0) {
+            } else if (baseTurns <= 0) {
                 cumText = '0';
                 suffix = '개';
             }
@@ -1250,6 +1389,7 @@
         }
 
         renderParts(parts);
+        refreshTurnAdjustment();
         updateLayout(inputEl);
 
         if (settingsMenu?.style.display === 'flex') {
