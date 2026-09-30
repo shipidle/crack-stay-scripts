@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.9
-// @description  🧪 BETA · 채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
+// @version      0.1.10
+// @description  🧪 BETA · 채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -14,26 +14,23 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
-// @grant        unsafeWindow
 // @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
-/* global GM_addStyle, GM_getValue, GM_setValue, GM_xmlhttpRequest, unsafeWindow */
+/* global GM_addStyle, GM_getValue, GM_setValue, GM_xmlhttpRequest */
 
 (() => {
   'use strict';
 
-  const VERSION = '0.1.9';
+  const VERSION = '0.1.10';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
-  const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
   const SLOT_COUNT = 6;
   const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
-  const MAX_CLOUD_BYTES = 700 * 1024;
+  const MAX_IMAGE_BYTES = 700 * 1024;
   const MAX_IMAGE_EDGE = 1920;
   const MIN_IMAGE_EDGE = 320;
-  const BRIDGE = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   const CHAT_ROUTES = [
     /^\/stories\/[^/]+\/episodes\/[^/]+/,
     /^\/characters\/[^/]+\/chats\/[^/]+/,
@@ -45,14 +42,12 @@
     close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11m0-11-11 11"/></svg>',
     upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5V4.75m0 0-4 4m4-4 4 4M5 14.5v4.25c0 .7.55 1.25 1.25 1.25h11.5c.7 0 1.25-.55 1.25-1.25V14.5"/></svg>',
     crop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5v12A1.5 1.5 0 0 0 8.5 17H20.5M3.5 7H15.5A1.5 1.5 0 0 1 17 8.5V20.5"/></svg>',
-    cloud: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.25 18.5h10.2a4.05 4.05 0 0 0 .55-8.06A6.2 6.2 0 0 0 6.2 8.65a4.95 4.95 0 0 0 1.05 9.85Z"/></svg>',
   };
 
   const defaultState = () => ({
     visible: true,
     activeSlot: 0,
     veilOpacity: 0.22,
-    cloudRevision: 0,
     slots: Array.from({ length: SLOT_COUNT }, () => null),
   });
 
@@ -111,9 +106,6 @@
     .cbg-range { width:100%; accent-color:var(--cbg-blue); }
     .cbg-status { min-height:18px; margin:10px 0 0; color:var(--cbg-sub); font-size:12px; line-height:1.45; }
     .cbg-status[data-tone="error"] { color:#e42939; }
-    .cbg-cloud-head { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:750; }
-    .cbg-cloud-head .cbg-icon { color:var(--cbg-blue); }
-    .cbg-cloud-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
     .cbg-crop-panel { width:min(400px,100%); overflow:hidden; border-radius:22px; background:#fff; box-shadow:0 24px 70px rgba(0,0,0,.24); }
     .cbg-crop-body { padding:18px 20px 20px; }
     .cbg-crop-frame { position:relative; overflow:hidden; margin:0 auto 18px; border-radius:16px; background:#e5e8eb; touch-action:none; cursor:grab; }
@@ -167,7 +159,6 @@
       visible: saved.visible !== false,
       activeSlot: clamp(Math.trunc(Number(saved.activeSlot) || 0), 0, SLOT_COUNT - 1),
       veilOpacity: clamp(Number.isFinite(Number(saved.veilOpacity)) ? Number(saved.veilOpacity) : 0.22, 0, 1),
-      cloudRevision: Math.max(0, Number(saved.cloudRevision) || 0),
       slots,
     };
   }
@@ -403,18 +394,6 @@
     container.appendChild(image);
   }
 
-  function sharedCloudApi() {
-    const api = BRIDGE?.[SHARED_CLOUD_API_KEY];
-    return api?.version >= 1 ? api : null;
-  }
-
-  function sharedCloudStatus() {
-    const api = sharedCloudApi();
-    if (!api) return { ready: false, reason: 'Lore Sync 최신판에서 Supabase 로그인을 완료해주셈.' };
-    try { return api.getStatus?.() || { ready: false, reason: 'Lore Sync 상태 확인 실패' }; }
-    catch (error) { return { ready: false, reason: error.message || 'Lore Sync 상태 확인 실패' }; }
-  }
-
   async function openSettings(replace = false) {
     if (replace) closeOverlay('cbg-settings-overlay');
     if (document.getElementById('cbg-settings-overlay')) return;
@@ -550,25 +529,9 @@
     veilCard.appendChild(veilRange);
     body.appendChild(veilCard);
 
-    const cloudCard = document.createElement('div');
-    cloudCard.className = 'cbg-card';
-    const cloud = sharedCloudStatus();
-    cloudCard.innerHTML = `<div class="cbg-cloud-head"><span class="cbg-icon">${ICONS.cloud}</span>기기 간 배경 동기화</div><p class="cbg-help">${cloud.ready ? `🟢 Lore Sync 계정 공유 · ${cloud.email || '로그인됨'}` : cloud.reason}</p>`;
-    const cloudActions = document.createElement('div');
-    cloudActions.className = 'cbg-cloud-actions';
-    const cloudUpload = makeButton('클라우드 저장', 'cbg-btn cbg-btn-primary');
-    const cloudRestore = makeButton('6장 전부 받기');
-    cloudUpload.disabled = !cloud.ready;
-    cloudRestore.disabled = !cloud.ready;
-    cloudUpload.addEventListener('click', () => void uploadCurrentRoom());
-    cloudRestore.addEventListener('click', () => void restoreFromCloud());
-    cloudActions.append(cloudUpload, cloudRestore);
-    cloudCard.appendChild(cloudActions);
-    body.appendChild(cloudCard);
-
     const note = document.createElement('p');
     note.className = 'cbg-help';
-    note.textContent = '이미지는 로컬에 압축 저장되어 매 턴 다시 받지 않음. 클라우드도 버튼을 누를 때만 전송함. 폰은 세로 화면 전체, 데스크탑은 중앙 채팅 글자 영역에만 표시함.';
+    note.textContent = '이미지는 로컬에 압축 저장되어 매 턴 다시 받지 않음. 폰은 세로 화면 전체, 데스크탑은 중앙 채팅 글자 영역에만 표시함.';
     const status = document.createElement('div');
     status.id = 'cbg-settings-status';
     status.className = 'cbg-status';
@@ -625,7 +588,7 @@
           try { dataUrl = canvas.toDataURL(encoder.mime, quality); }
           catch { continue; }
           if (!dataUrl.startsWith(`data:${encoder.mime};base64,`)) continue;
-          if (dataUrlBytes(dataUrl).byteLength <= MAX_CLOUD_BYTES) {
+          if (dataUrlBytes(dataUrl).byteLength <= MAX_IMAGE_BYTES) {
             return { dataUrl, mime: encoder.mime };
           }
         }
@@ -643,7 +606,7 @@
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(source, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/png');
-    if (dataUrl.startsWith('data:image/png;base64,') && dataUrlBytes(dataUrl).byteLength <= MAX_CLOUD_BYTES) {
+    if (dataUrl.startsWith('data:image/png;base64,') && dataUrlBytes(dataUrl).byteLength <= MAX_IMAGE_BYTES) {
       return { dataUrl, mime: 'image/png' };
     }
     throw new Error('브라우저 이미지 변환에 실패했음. 다른 형식의 원본을 사용해주셈.');
@@ -785,80 +748,6 @@
     overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
     refresh();
-  }
-
-  async function uploadCurrentRoom() {
-    setStatus('클라우드 상태를 확인하는 중…');
-    try {
-      const api = sharedCloudApi();
-      const status = sharedCloudStatus();
-      if (!api || !status.ready) throw new Error(status.reason);
-      const remote = await api.getManifest(location.pathname);
-      if (remote && Number(remote.revision) > state.cloudRevision
-        && !confirm(`다른 기기의 더 최신 배경(rev ${remote.revision})이 있음. 현재 설정으로 덮어쓸까요?`)) return;
-      const unique = new Map(state.slots.filter(Boolean).map(slot => [slot.hash, slot]));
-      let index = 0;
-      for (const slot of unique.values()) {
-        index += 1;
-        setStatus(`중복 제외 이미지 ${index}/${unique.size} 업로드 중…`);
-        const dataUrl = await getImageData(slot.hash);
-        if (!dataUrl) throw new Error(`${slot.hash.slice(0, 8)} 이미지가 이 기기에 없음.`);
-        await api.uploadImage({ hash:slot.hash, mime:slot.mime, dataUrl });
-      }
-      const revision = Math.max(state.cloudRevision, Number(remote?.revision) || 0) + 1;
-      const saved = await api.saveManifest({
-        roomKey: location.pathname,
-        state: { ...state, cloudRevision: revision },
-        revision,
-        deviceLabel: status.deviceLabel || '내 기기',
-      });
-      state.cloudRevision = Number(saved?.revision) || revision;
-      await saveState();
-      setStatus(`클라우드 저장 완료 · ${unique.size}장 · rev ${state.cloudRevision}`);
-    } catch (error) {
-      console.warn('[Chat Background] cloud upload failed:', error);
-      setStatus(cloudErrorMessage(error, '클라우드 저장 실패'), 'error');
-    }
-  }
-
-  async function restoreFromCloud() {
-    setStatus('클라우드 배경 설정을 확인하는 중…');
-    try {
-      const api = sharedCloudApi();
-      const status = sharedCloudStatus();
-      if (!api || !status.ready) throw new Error(status.reason);
-      const remote = await api.getManifest(location.pathname);
-      if (!remote) throw new Error('이 채팅방의 클라우드 저장본이 없음.');
-      if (state.slots.some(Boolean) && !confirm(`${remote.device_label || '다른 기기'}의 rev ${remote.revision} 배경으로 바꿀까요?`)) return;
-      const next = normalizeState(remote.state);
-      next.cloudRevision = Number(remote.revision) || next.cloudRevision;
-      let downloaded = 0;
-      for (const slot of new Map(next.slots.filter(Boolean).map(item => [item.hash, item])).values()) {
-        if (await getImageData(slot.hash)) continue;
-        setStatus(`이미지 ${downloaded + 1}장째 받는 중…`);
-        const dataUrl = await api.downloadImage({ hash:slot.hash, mime:slot.mime });
-        if (await hashDataUrl(dataUrl) !== slot.hash) throw new Error('받은 이미지 해시가 원격 설정과 다름.');
-        await GM_setValue(`${IMAGE_PREFIX}${slot.hash}`, dataUrl);
-        imageCache.set(slot.hash, dataUrl);
-        downloaded += 1;
-      }
-      state = next;
-      await saveState();
-      await renderStage();
-      updateHeaderButton();
-      await openSettings(true);
-      setStatus(`6개 슬롯 복원 완료 · 새 이미지 ${downloaded}장`);
-    } catch (error) {
-      console.warn('[Chat Background] cloud restore failed:', error);
-      setStatus(cloudErrorMessage(error, '클라우드 복원 실패'), 'error');
-    }
-  }
-
-  function cloudErrorMessage(error, fallback) {
-    const raw = String(error?.message || error || '');
-    if (/chat_background_sync|PGRST205|schema cache/i.test(raw)) return 'Supabase에서 supabase/chat_background_sync.sql을 먼저 Run해주셈.';
-    if (/bucket|chat-backgrounds|not found/i.test(raw)) return 'Supabase 배경 이미지 버킷이 없음. 최신 chat_background_sync.sql을 Run해주셈.';
-    return raw || fallback;
   }
 
   async function scan() {
