@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🔖 채팅 찾기·북마크
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-chat-bookmarks
-// @version      0.1.0
+// @version      0.1.1
 // @description  🧪 BETA · 채팅방별 문장 북마크·코멘트를 기기에 저장하고 북마크와 전체 대화를 검색합니다. 원문 대화 최신순 정렬·선택 삭제 지원.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -82,7 +82,6 @@
     #csb-panel button:hover{background:#eaeaec}
     #csb-panel button:disabled{opacity:.45;cursor:default}
     #csb-panel button:focus-visible,#csb-panel input:focus-visible,#csb-panel textarea:focus-visible{outline:2px solid #7b7f88;outline-offset:2px}
-    #csb-panel .csb-primary{background:#42454d;color:#fff;border-color:#42454d}
     .csb-head,.csb-row{display:flex;align-items:center;gap:8px}
     .csb-head{justify-content:space-between;margin-bottom:10px;flex-shrink:0}
     .csb-title{font-size:16px;font-weight:750;white-space:nowrap}
@@ -141,7 +140,7 @@
     <div class="csb-row" id="csb-bulk" hidden><button id="csb-select-all">검색 결과 전체 선택</button><button id="csb-delete-selected" disabled>선택 삭제</button><button id="csb-delete-all">이 방 전체 삭제</button></div>
     <div id="csb-status" class="csb-muted" role="status" aria-live="polite"></div>
     <div id="csb-list"></div>
-    <div id="csb-editor" hidden><div class="csb-muted" id="csb-editor-meta"></div><blockquote id="csb-editor-quote"></blockquote><label for="csb-comment">코멘트</label><textarea id="csb-comment" placeholder="이 문장을 남긴 이유, 감상, 메모…"></textarea><div class="csb-actions"><button id="csb-save" class="csb-primary">저장</button><button id="csb-cancel">취소</button></div></div>
+    <div id="csb-editor" hidden><div class="csb-muted" id="csb-editor-meta"></div><blockquote id="csb-editor-quote"></blockquote><label for="csb-comment">코멘트</label><textarea id="csb-comment" placeholder="이 문장을 남긴 이유, 감상, 메모…"></textarea><div class="csb-actions"><button id="csb-save">저장</button><button id="csb-cancel">취소</button></div></div>
   `;
   const toolbar = document.createElement('button'); toolbar.id = 'csb-toolbar-btn'; toolbar.type = 'button';
   toolbar.title = '채팅 찾기·북마크'; toolbar.setAttribute('aria-label', '채팅 찾기·북마크');
