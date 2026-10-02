@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.5.3
+// @version      0.5.4
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -88,7 +88,7 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '0.5.3';
+  const VERSION = '0.5.4';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
@@ -102,6 +102,7 @@
   const CLOUD_API_KEY = '__SHIPIDLE_DIALOGUE_TRANSLATOR_SYNC__';
   const BRIDGE = unsafeWindow || window;
 
+  const OVERRIDE_ONLY = 'override-only';
   const LANGUAGES = {
     en: { label: '영어', prompt: 'English' },
     fr: { label: '프랑스어', prompt: 'French' },
@@ -180,11 +181,12 @@
       <div class="cdt-title"><span class="cdt-emoji">🌐</span> 대사 번역</div>
       <button class="cdt-close" id="cdt-close" type="button" aria-label="닫기">×</button>
     </div>
-    <div class="cdt-desc">따옴표 안 한국어 대사를 <b>"번역문" (한국어 원문)</b> 형식으로 바꿈. 대사 뒤에 <b>-프 / -일</b>처럼 적으면 그 대사만 언어를 바꿀 수 있음.</div>
+    <div class="cdt-desc">따옴표 안 한국어 대사를 <b>"번역문" (한국어 원문)</b> 형식으로 바꿈. 대사 뒤에 <b>-프 / -일</b>처럼 적으면 그 대사만 언어를 바꿀 수 있음. <b>지정 언어만 번역</b>을 고르면 약칭이 붙은 대사만 처리함.</div>
 
     <div class="cdt-card">
       <label class="cdt-label" for="cdt-language">기본 번역 언어</label>
       <select class="cdt-select" id="cdt-language">
+        <option value="override-only">지정 언어만 번역</option>
         <option value="en">영어</option>
         <option value="fr">프랑스어</option>
         <option value="es">스페인어</option>
@@ -483,6 +485,7 @@
 
   function selectedLanguage() {
     const value = $('#cdt-language').value;
+    if (value === OVERRIDE_ONLY) return OVERRIDE_ONLY;
     return LANGUAGES[value] ? value : 'en';
   }
 
@@ -496,6 +499,7 @@
 
       const suffixSource = source.slice(re.lastIndex);
       const override = suffixSource.match(LANGUAGE_OVERRIDE_RE);
+      if (!override && defaultLanguage === OVERRIDE_ONLY) continue;
       const language = override ? LANGUAGE_OVERRIDE_MAP[override[1]] : defaultLanguage;
       const suffixLength = override ? override[0].length : 0;
 
@@ -1043,7 +1047,9 @@
 
     const targets = findDialogueSpans(source, selectedLanguage());
     if (!targets.length) {
-      $('#cdt-status').textContent = '따옴표 안 한국어 대사가 없음.';
+      $('#cdt-status').textContent = selectedLanguage() === OVERRIDE_ONLY
+        ? '번역할 언어 약칭이 붙은 한국어 대사가 없음.'
+        : '따옴표 안 한국어 대사가 없음.';
       return;
     }
     if (targets.length > MAX_TARGETS) {
@@ -1113,7 +1119,9 @@
       const targets = findDialogueSpans(getInputText(input), selectedLanguage());
       $('#cdt-status').textContent = targets.length
         ? `${targetSummary(targets)} 감지됨.`
-        : '따옴표 안 한국어 대사를 입력해줘.';
+        : selectedLanguage() === OVERRIDE_ONLY
+          ? '번역할 대사 뒤에 -영 / -프 / -몰 같은 언어 약칭을 붙여줘.'
+          : '따옴표 안 한국어 대사를 입력해줘.';
     }
   }
 
@@ -1123,7 +1131,7 @@
   $('#cdt-gateway-model').value = GM_getValue(KEY + ':gatewayModel', GATEWAY_DEFAULT_MODEL);
   $('#cdt-google-model').value = GM_getValue(KEY + ':googleModel', MODEL);
   const savedLanguage = GM_getValue(`${KEY}:language`, 'en');
-  $('#cdt-language').value = LANGUAGES[savedLanguage] ? savedLanguage : 'en';
+  $('#cdt-language').value = savedLanguage === OVERRIDE_ONLY || LANGUAGES[savedLanguage] ? savedLanguage : 'en';
   $('#cdt-context-turns').value = String(normalizeContextTurns(GM_getValue(`${KEY}:contextTurns`, CONTEXT_TURNS)));
   loadRoomSettings(true);
   updateCost();
