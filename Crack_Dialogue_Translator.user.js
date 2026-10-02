@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌐 대사 번역기
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-dialogue-translator
-// @version      0.5.2
+// @version      0.5.3
 // @description  🧪 BETA · 크랙 채팅 입력문의 한국어 대사를 선택한 언어로 번역하고 원문을 병기합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -88,7 +88,7 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '0.5.2';
+  const VERSION = '0.5.3';
   const MODEL = 'gemini-3.5-flash-lite';
   const INPUT_USD_PER_M = 0.30;
   const OUTPUT_USD_PER_M = 2.50;
@@ -110,6 +110,7 @@
     ja: { label: '일본어', prompt: 'Japanese' },
     zh: { label: '중국어', prompt: 'Chinese' },
     de: { label: '독일어', prompt: 'German' },
+    mt: { label: '몰타어', prompt: 'Maltese' },
   };
   const LANGUAGE_OVERRIDE_MAP = {
     영: 'en', 영어: 'en',
@@ -119,8 +120,9 @@
     일: 'ja', 일본어: 'ja',
     중: 'zh', 중국어: 'zh',
     독: 'de', 독일어: 'de',
+    몰: 'mt', 몰타어: 'mt',
   };
-  const LANGUAGE_OVERRIDE_RE = /^[ \t]*-[ \t]*(프랑스어|스페인어|핀란드어|일본어|중국어|독일어|영어|영|프|불|스|핀|일|중|독)(?=$|[^가-힣ㄱ-ㅎㅏ-ㅣ])/;
+  const LANGUAGE_OVERRIDE_RE = /^[ \t]*-[ \t]*(프랑스어|스페인어|핀란드어|일본어|중국어|독일어|몰타어|영어|영|프|불|스|핀|일|중|독|몰)(?=$|[^가-힣ㄱ-ㅎㅏ-ㅣ])/;
 
   let busy = false;
   let cloudBusy = false;
@@ -190,8 +192,9 @@
         <option value="ja">일본어</option>
         <option value="zh">중국어</option>
         <option value="de">독일어</option>
+        <option value="mt">몰타어</option>
       </select>
-      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어). 여러 언어가 섞여도 언어별로 묶어 Gemini 요청 1회로 처리함.</div>
+      <div class="cdt-meta">대사별 지정: -영(영어) · -프/-불(프랑스어) · -스(스페인어) · -핀(핀란드어) · -일(일본어) · -중(중국어) · -독(독일어) · -몰(몰타어). 여러 언어가 섞여도 언어별로 묶어 Gemini 요청 1회로 처리함.</div>
     </div>
 
     <div class="cdt-card">
