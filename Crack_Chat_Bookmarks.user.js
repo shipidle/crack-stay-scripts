@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🔖 채팅 찾기·북마크
 // @namespace    https://github.com/shipidle/crack-stay-scripts/crack-chat-bookmarks
-// @version      0.1.1
+// @version      0.1.2
 // @description  🧪 BETA · 채팅방별 문장 북마크·코멘트를 기기에 저장하고 북마크와 전체 대화를 검색합니다. 원문 대화 최신순 정렬·선택 삭제 지원.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -16,6 +16,106 @@
 
 (() => {
   'use strict';
+
+  // BEGIN SHARED COMPOSER LAYOUT (identical in all three standalone scripts)
+  function mountComposerButton(input, button) {
+    if (!input || input.closest('#cdt-panel,#csb-panel,#cwa-host')) return false;
+    const ids = ['cwa-toolbar-btn', 'cdt-toolbar-btn', 'csb-toolbar-btn'];
+    const excluded = '#cdt-panel,#csb-panel,#cwa-host,[id^="custom-"],#' + ids.join(',#');
+    const visible = el => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight;
+    };
+    const native = el => !el.closest(excluded);
+    const label = el => [el.textContent, el.getAttribute('aria-label'), el.getAttribute('title')].join(' ').trim();
+    const isTool = el => native(el) && (/추천\s*답변/.test(label(el)) || ['*', '/', '／'].includes((el.textContent || '').trim()));
+    const isSend = el => native(el) && !isTool(el) && (/보내기|전송|send\b/i.test(label(el)) || el.type === 'submit'
+      || !!el.querySelector('svg.lucide-send,svg.lucide-arrow-up,[data-lucide="send"],[data-lucide="arrow-up"]'));
+    const set = (el, values) => {
+      for (const [key, value] of Object.entries(values)) {
+        if (el.style.getPropertyValue(key) !== value || el.style.getPropertyPriority(key) !== 'important') {
+          el.style.setProperty(key, value, 'important');
+        }
+      }
+    };
+    const branch = (parent, el) => {
+      while (el && el.parentElement !== parent) el = el.parentElement;
+      return el;
+    };
+    const rect = input.getBoundingClientRect();
+    let scope = input.parentElement, tools = [], send = null;
+    for (let depth = 0; scope && depth < 7 && scope !== document.body; depth++, scope = scope.parentElement) {
+      const nearby = [...scope.querySelectorAll('button')].filter(el => {
+        if (!visible(el)) return false;
+        const r = el.getBoundingClientRect();
+        return r.top >= rect.top - 12 && r.top <= rect.bottom + 140;
+      });
+      tools = nearby.filter(isTool);
+      send = nearby.find(isSend);
+      if (tools.length) break;
+    }
+    if (!scope || !tools.length) return false;
+
+    // Use the common native tool group, never a single button's inner wrapper.
+    let group = tools[0].parentElement;
+    while (group && !tools.every(el => group.contains(el))) group = group.parentElement;
+    if (!group || group.contains(input)) return false;
+    let row = group;
+    if (send && !group.contains(send)) {
+      while (row && !row.contains(send)) row = row.parentElement;
+      if (!row || row.contains(input)) row = group;
+    }
+    // Some versions have only one tool inside its own wrapper: promote to the action row.
+    if (row === group && tools.length === 1 && group.parentElement && !group.parentElement.contains(input)) {
+      const parent = group.parentElement;
+      if (parent.querySelectorAll('button').length > 1 && visible(parent)) row = parent;
+    }
+    const sendItem = send && row.contains(send) ? branch(row, send) : null;
+    let lane = row;
+    if (row !== group && !group.contains(send)) {
+      lane = branch(row, group);
+      set(lane, { display: 'flex', 'align-items': 'center', 'justify-content': 'flex-start',
+        'flex-direction': 'row', 'flex-wrap': 'nowrap', gap: '8px', 'min-width': '0px', flex: '1 1 0%',
+        'overflow-x': 'auto', 'scrollbar-width': 'none' });
+    }
+    set(row, { display: 'flex', 'align-items': 'center', 'justify-content': 'flex-start',
+      'flex-direction': 'row', 'flex-wrap': 'nowrap', gap: '8px', 'min-width': '0px' });
+    if (sendItem) set(sendItem, { 'margin-left': 'auto', 'flex-shrink': '0', order: '100', position: 'relative', inset: 'auto' });
+    if (send) set(send, { 'flex-shrink': '0' });
+
+    // Tailwind space-x margins must not add a second gap on top of flex gap.
+    for (const container of new Set([row, lane, group])) {
+      if (container === group && group !== lane && group !== row) {
+        set(group, { display: 'flex', 'align-items': 'center', 'flex-direction': 'row',
+          'flex-wrap': 'nowrap', gap: '8px', 'flex-shrink': '0' });
+      }
+      for (const child of container.children) {
+        if (child !== sendItem) set(child, { 'margin-left': '0px', 'margin-right': '0px' });
+      }
+    }
+
+    // A DOM-owned lane works across isolated userscript sandboxes and load orders.
+    let own = [...lane.children].find(el => el.id === 'crack-stay-composer-tools');
+    if (!own) {
+      own = document.createElement('div');
+      own.id = 'crack-stay-composer-tools';
+      lane.insertBefore(own, lane === row ? sendItem : null);
+    }
+    set(own, { display: 'flex', 'align-items': 'center', 'flex-direction': 'row',
+      'flex-wrap': 'nowrap', gap: '8px', 'flex-shrink': '0', order: '10', 'margin-left': '0px', 'margin-right': '0px' });
+    for (const id of ids) {
+      const el = id === button.id ? button : document.getElementById(id);
+      if (!el) continue;
+      set(el, { position: 'relative', inset: 'auto', transform: 'none', margin: '0px',
+        width: '28px', height: '28px', 'min-width': '28px', 'flex-shrink': '0',
+        display: 'inline-flex', 'align-items': 'center', 'justify-content': 'center' });
+      const next = ids.slice(ids.indexOf(id) + 1).map(key => document.getElementById(key)).find(item => item?.parentElement === own);
+      if (el.parentElement !== own || el.nextElementSibling !== (next || null)) own.insertBefore(el, next || null);
+    }
+    return true;
+  }
+  // END SHARED COMPOSER LAYOUT
 
   // The API supplies newest-first conversation order. Never sort by bookmark creation time.
   function createBookmarkCore() {
@@ -477,33 +577,12 @@
   function isVisible(el) { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight; }
   function findChatInput() {
     return [...document.querySelectorAll('textarea,input[type=text],[contenteditable=true],div[role=textbox]')]
-      .filter(el => !panel.contains(el) && !el.closest(GROUP) && isVisible(el) && el.getBoundingClientRect().bottom > innerHeight * .45)
+      .filter(el => !el.closest('#cdt-panel,#csb-panel,#cwa-host') && !el.closest(GROUP) && isVisible(el) && el.getBoundingClientRect().bottom > innerHeight * .45)
       .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0];
-  }
-  function findToolbarNearInput(input) {
-    if (!input) return null;
-    const inputRect = input.getBoundingClientRect(); let root = input;
-    for (let depth = 0; depth < 8 && root.parentElement; depth++) {
-      root = root.parentElement;
-      const exact = root.querySelector('.flex.items-center.space-x-2'); if (isVisible(exact)) return exact;
-      const rows = [...root.querySelectorAll('div,section,footer')].filter(el => {
-        if (!isVisible(el) || panel.contains(el)) return false;
-        const r = el.getBoundingClientRect(), buttons = [...el.querySelectorAll('button')].filter(isVisible);
-        return r.height <= 80 && r.width >= 40 && Math.abs(r.bottom - inputRect.bottom) <= 160 && buttons.length && (/flex|items-center|gap|space-x/.test(String(el.className)) || buttons.length > 1);
-      });
-      rows.sort((a, b) => Math.abs(a.getBoundingClientRect().bottom - inputRect.bottom) - Math.abs(b.getBoundingClientRect().bottom - inputRect.bottom));
-      if (rows.length) return rows[0];
-    }
-    return null;
   }
   function injectToolbar() {
     if (!C.chatId(location.pathname)) { toolbar.remove(); return; }
-    if (toolbar.isConnected && isVisible(toolbar.parentElement)) return;
-    const reference = ['cdt-toolbar-btn', 'custom-rp-tools'].map(id => document.getElementById(id)).find(el => isVisible(el?.parentElement))
-      || [...document.querySelectorAll('button')].find(el => isVisible(el) && !panel.contains(el) && (el.textContent || '').includes('추천답변'));
-    const container = reference?.parentElement || findToolbarNearInput(findChatInput());
-    if (!container || panel.contains(container)) return;
-    if (reference) container.insertBefore(toolbar, reference.nextSibling); else container.append(toolbar);
+    mountComposerButton(findChatInput(), toolbar);
   }
   // SPA navigation and toolbar remounts. A room change invalidates every pending task.
   let scheduled = false;
@@ -517,3 +596,4 @@
     await syncRoom(); injectToolbar();
   })();
 })();
+
