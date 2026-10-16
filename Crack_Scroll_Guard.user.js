@@ -1,24 +1,27 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.0
-// @description  🧪 BETA · iPhone 터치 스크롤은 건드리지 않고, AI 응답 후 자동 하단 이동만 방지합니다.
+// @version      1.4.0
+// @description  🧪 BETA · iPhone 수동·관성 스크롤을 유지하며 답변 도착 시 크랙 본체의 강제 하단 이동을 차단합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
-// @match        https://crack.wrtn.ai/stories/*/episodes/*
-// @match        https://crack.wrtn.ai/characters/*/chats/*
-// @match        https://crack.wrtn.ai/u/*/c/*
+// @match        https://crack.wrtn.ai/*
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Scroll_Guard.user.js
 // @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Scroll_Guard.user.js
 // @run-at       document-start
 // @inject-into  page
-// @grant        none
+// @grant        unsafeWindow
+// @noframes
 // ==/UserScript==
 
-(() => {
+/* global unsafeWindow */
+(function installScrollGuard(window) {
   'use strict';
+  // Stay documents unsafeWindow, not @inject-into. Patch the site's realm.
+  const { document, Element, HTMLElement, history, location } = window;
+  const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = true;
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.4.0' };
 
   const BOTTOM_GAP = 24;
   const INERTIA_QUIET_MS = 280;
@@ -30,6 +33,11 @@
   let finishTimer = null;
   let checkTimer = null;
   let correcting = false;
+
+  function inChat() {
+    if (path !== location.pathname) resetRoute();
+    return /^\/(?:stories\/[^/]+\/episodes\/[^/]+|characters\/[^/]+\/chats\/[^/]+|u\/[^/]+\/c\/[^/]+)/.test(path);
+  }
 
   function documentScroller() {
     return document.scrollingElement || document.documentElement;
@@ -72,13 +80,18 @@
     if (!reading || !reading.target?.isConnected) return;
     const el = reading.target;
     const box = el === documentScroller()
-      ? { left: 0, right: innerWidth, top: 0, bottom: innerHeight }
+      ? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight }
       : el.getBoundingClientRect();
     if (box.bottom - box.top < 90) return;
     const x = (box.left + box.right) * 0.5;
     const y = Math.min(box.bottom - 32, box.top + Math.min(130, (box.bottom - box.top) * 0.3));
     const node = document.elementFromPoint?.(x, y);
-    const anchor = node?.closest?.('[data-message-id], [data-testid*="message"], .wrtn-markdown p, .wrtn-markdown li, .wrtn-markdown blockquote') || node;
+    // Never anchor to a fixed overlay, background or the entire chat viewport.
+    const anchor = node?.closest?.('.wrtn-markdown p, .wrtn-markdown li, .wrtn-markdown blockquote, [data-message-id]');
+    if (!anchor) return;
+    for (let parent = anchor; parent && parent !== el; parent = parent.parentElement) {
+      if (/^(fixed|sticky)$/.test(getComputedStyle(parent).position)) return;
+    }
     if (anchor && anchor !== el && (el === documentScroller() || el.contains(anchor))) {
       reading.anchor = anchor;
       reading.anchorY = anchor.getBoundingClientRect().top;
@@ -86,18 +99,28 @@
   }
 
   function saveUserPosition(el) {
-    if (!isScrollable(el)) return;
+    if (!inChat() || !isScrollable(el)) return;
     if (bottomGap(el) <= BOTTOM_GAP) {
       clearReading();
       return;
     }
+    const previous = reading?.target === el ? reading : null;
     reading = {
       target: el,
       top: el.scrollTop,
+      parents: previous ? previous.parents.map(parent => ({ target: parent.target, top: parent.target.scrollTop })) : parentPositions(el),
       anchor: null,
       anchorY: null,
     };
     watchWhileReading();
+  }
+
+  function parentPositions(el) {
+    const parents = [];
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      if (node === documentScroller() || isScrollable(node)) parents.push({ target: node, top: node.scrollTop });
+    }
+    return parents;
   }
 
   function endGesture() {
@@ -118,21 +141,33 @@
   }
 
   function startGesture(target, down) {
-    if (!isScrollable(target)) return;
+    if (!inChat() || !isScrollable(target)) return;
+    // Arm before the first scroll event; JS scrolling stays guarded during touch.
+    if (!gesture) checkPosition();
+    saveUserPosition(target);
     if (finishTimer !== null) clearTimeout(finishTimer);
     finishTimer = null;
-    gesture = { target, down, moved: !down };
+    gesture = { target, down, moved: !down, y: null, direction: 0 };
     if (!down) queueGestureEnd();
   }
 
   function pointerStart(event) {
     if (event.target?.closest?.('textarea, input, [contenteditable="true"]')) return;
     const target = scrollTarget(event.target);
-    if (isScrollable(target)) startGesture(target, true);
+    if (isScrollable(target)) {
+      startGesture(target, true);
+      if (gesture) gesture.y = event.touches?.[0]?.clientY ?? null;
+    }
   }
 
-  function pointerMove() {
-    if (gesture) gesture.moved = true;
+  function pointerMove(event) {
+    if (!gesture) return;
+    gesture.moved = true;
+    const y = event?.touches?.[0]?.clientY;
+    if (Number.isFinite(y) && gesture.y !== null && Math.abs(gesture.y - y) > 1) {
+      gesture.direction = Math.sign(gesture.y - y);
+    }
+    if (Number.isFinite(y)) gesture.y = y;
   }
 
   function pointerEnd() {
@@ -142,11 +177,21 @@
   }
 
   function nativeScroll(event) {
-    if (correcting) return;
+    if (correcting || !inChat()) return;
     const target = scrollTarget(event.target);
     if (!isScrollable(target)) return;
-    if (gesture && gesture.target === target) {
+    if (gesture && (gesture.target === target || target.contains?.(gesture.target))) {
+      // Native scroll chaining to an outer container is also user input.
+      gesture.target = target;
       if (gesture.moved) {
+        // A cached native API can bypass wrappers. A bottom snap opposite an
+        // upward swipe is not inertia; never save it as the user's new position.
+        if (gesture.direction < 0 && reading?.target === target
+          && target.scrollTop > reading.top + 80 && bottomGap(target) <= BOTTOM_GAP) {
+          restoreDirect(target, reading.top);
+          if (!gesture.down) queueGestureEnd();
+          return;
+        }
         saveUserPosition(target);
         if (!gesture.down) queueGestureEnd();
       }
@@ -175,24 +220,36 @@
   }
 
   function findReplacement() {
-    const sample = document.querySelector('.wrtn-markdown') || document.querySelector('main');
+    const sample = document.querySelector('main .wrtn-markdown') || document.querySelector('.wrtn-markdown') || document.querySelector('main');
     const target = sample && scrollTarget(sample);
     return isScrollable(target) ? target : (isScrollable(documentScroller()) ? documentScroller() : null);
   }
 
-  function checkPosition() {
-    if (!reading || gesture) return;
-    if (location.pathname !== path) {
-      resetRoute();
-      return;
-    }
-    let el = reading.target;
-    if (!el?.isConnected || !isScrollable(el)) {
+  function readingTarget() {
+    if (!inChat() || !reading) return null;
+    if (!reading.target?.isConnected) {
       const replacement = findReplacement();
-      if (!replacement) return;
-      reading.target = el = replacement;
+      if (!replacement) return null;
+      const old = reading.target;
+      reading.target = replacement;
+      reading.parents = parentPositions(replacement);
       reading.anchor = null;
       reading.anchorY = null;
+      if (gesture?.target === old) gesture.target = replacement;
+      // A replacement starts at zero; protect it before the app's first scroll.
+      if (!gesture) restoreDirect(replacement, reading.top);
+    }
+    return reading.target;
+  }
+
+  function checkPosition() {
+    if (!inChat() || !reading || gesture || correcting) return;
+    const el = readingTarget();
+    if (!el || !isScrollable(el)) return;
+    for (const parent of reading.parents) {
+      if (parent.target.isConnected && parent.target.scrollTop > parent.top + 2) {
+        restoreDirect(parent.target, parent.top);
+      }
     }
     const actual = el.scrollTop;
     const shift = actual - reading.top;
@@ -204,13 +261,13 @@
 
     // If the browser anchored the same visible message while content above grew,
     // its numeric scrollTop change is correct and must NOT be undone.
-    if (anchorDelta !== null && Math.abs(anchorDelta) <= 5 && Math.abs(shift) > 2) {
+    if (anchorDelta !== null && Math.abs(anchorDelta) <= 5 && bottomGap(el) > BOTTOM_GAP) {
       reading.top = actual;
       return;
     }
     const threshold = Math.max(85, el.clientHeight * 0.17);
     const movedFarDown = shift > threshold;
-    const snappedToBottom = bottomGap(el) <= BOTTOM_GAP && shift > 35;
+    const snappedToBottom = bottomGap(el) <= BOTTOM_GAP && shift > 2;
     if (!movedFarDown && !snappedToBottom) return;
 
     const anchoredTop = anchorDelta !== null && Math.abs(anchorDelta) < 10000
@@ -235,8 +292,39 @@
   }
 
   function guard(el, desired) {
-    return !!reading && !gesture && !correcting && reading.target === el
-      && desired !== null && Number.isFinite(desired) && desired > reading.top + 2;
+    if (correcting || desired === null || !Number.isFinite(desired)) return false;
+    const target = readingTarget();
+    if (!target) return false;
+    const saved = el === target ? reading.top : reading.parents.find(parent => parent.target === el)?.top;
+    // Native touch/inertia does not invoke these JS methods or JS setters.
+    // Do NOT disable this guard while a gesture exists: AI jumps used that gap.
+    return saved !== undefined && desired > saved + 2;
+  }
+
+  function intoViewTop(node, el, args, method) {
+    const box = el === documentScroller()
+      ? { top: 0, bottom: window.innerHeight } : el.getBoundingClientRect();
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    const padding = getComputedStyle(el);
+    const top = box.top + (parseFloat(padding.scrollPaddingTop) || 0);
+    const bottom = box.bottom - (parseFloat(padding.scrollPaddingBottom) || 0);
+    const a = rect.top - (parseFloat(style.scrollMarginTop) || 0);
+    const b = rect.bottom + (parseFloat(style.scrollMarginBottom) || 0);
+    const arg = args[0];
+    const block = method === 'scrollIntoViewIfNeeded' ? (arg === false ? 'nearest' : 'center')
+      : arg === false ? 'end' : (arg && typeof arg === 'object' ? arg.block || 'start' : 'start');
+    if (method === 'scrollIntoViewIfNeeded' && a >= top && b <= bottom) return el.scrollTop;
+    let delta = 0;
+    if (block === 'start') delta = a - top;
+    else if (block === 'end') delta = b - bottom;
+    else if (block === 'center') delta = (a + b - top - bottom) / 2;
+    else if (block === 'nearest') {
+      if (a < top && b > bottom) return el.scrollTop;
+      if (a < top) delta = a - top;
+      else if (b > bottom) delta = b - bottom;
+    }
+    return el.scrollTop + delta;
   }
 
   // Programmatic-only interception; native iPhone touch inertia is never modified.
@@ -262,10 +350,11 @@
     const original = Element.prototype[method];
     if (typeof original !== 'function') continue;
     Element.prototype[method] = function (...args) {
-      const el = reading?.target;
-      if (el && !gesture && !correcting && (el === documentScroller() || el.contains(this))) {
-        const bottom = el === documentScroller() ? innerHeight : el.getBoundingClientRect().bottom;
-        if (this.getBoundingClientRect().bottom > bottom + 2) return;
+      const el = readingTarget();
+      if (el && !correcting) {
+        for (const target of [el, ...reading.parents.map(parent => parent.target)]) {
+          if (target.contains(this) && guard(target, intoViewTop(this, target, args, method))) return;
+        }
       }
       return original.apply(this, args);
     };
@@ -273,7 +362,7 @@
   const nativeFocus = HTMLElement.prototype.focus;
   if (typeof nativeFocus === 'function') {
     HTMLElement.prototype.focus = function (options) {
-      if (reading && !gesture && !correcting) {
+      if (readingTarget() && !correcting) {
         return nativeFocus.call(this, { ...(options && typeof options === 'object' ? options : {}), preventScroll: true });
       }
       return nativeFocus.apply(this, arguments);
@@ -293,7 +382,10 @@
   document.addEventListener('touchmove', pointerMove, { capture: true, passive: true });
   document.addEventListener('touchend', pointerEnd, { capture: true, passive: true });
   document.addEventListener('touchcancel', pointerEnd, { capture: true, passive: true });
-  document.addEventListener('wheel', event => startGesture(scrollTarget(event.target), false), { capture: true, passive: true });
+  document.addEventListener('wheel', event => {
+    startGesture(scrollTarget(event.target), false);
+    if (gesture) gesture.direction = Math.sign(event.deltaY);
+  }, { capture: true, passive: true });
   document.addEventListener('keydown', event => {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || '') || event.target?.isContentEditable) return;
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
@@ -301,14 +393,24 @@
     }
   }, true);
   document.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'touch') return;
     const el = scrollTarget(event.target);
-    const right = el === documentScroller() ? innerWidth : el.getBoundingClientRect().right;
+    const right = el === documentScroller() ? window.innerWidth : el.getBoundingClientRect().right;
     if (isScrollable(el) && event.clientX > right - 18) startGesture(el, true);
   }, true);
-  document.addEventListener('pointermove', pointerMove, true);
-  document.addEventListener('pointerup', pointerEnd, true);
-  document.addEventListener('pointercancel', pointerEnd, true);
+  // iOS emits both pointer and touch events; touchcancel/pointercancel differ.
+  document.addEventListener('pointermove', event => { if (event.pointerType !== 'touch') pointerMove(); }, true);
+  document.addEventListener('pointerup', event => { if (event.pointerType !== 'touch') pointerEnd(); }, true);
+  document.addEventListener('pointercancel', event => { if (event.pointerType !== 'touch') pointerEnd(); }, true);
   document.addEventListener('scroll', nativeScroll, true);
+
+  document.addEventListener('click', event => {
+    if (!event.isTrusted) return;
+    const button = event.target?.closest?.('button, [role="button"]');
+    if (!button) return;
+    const label = [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent].filter(Boolean).join(' ');
+    if (/최신\s*(?:메시지|대화)|맨\s*(?:아래|밑)|(?:scroll|jump)\s*to\s*(?:bottom|latest)/i.test(label)) clearReading();
+  }, true);
 
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
@@ -322,4 +424,4 @@
   window.addEventListener('hashchange', () => { if (path !== location.pathname) resetRoute(); });
   window.addEventListener('pageshow', () => { if (path !== location.pathname) resetRoute(); });
   setInterval(() => { if (path !== location.pathname) resetRoute(); }, 1500);
-})();
+})(typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window);
