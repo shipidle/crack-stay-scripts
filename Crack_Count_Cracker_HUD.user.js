@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊 턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.12
+// @version      1.1.13
 // @description  🧪 BETA · 입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다. 턴수를 길게 눌러 방별 수동 보정이 가능합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -70,10 +70,19 @@
     let observer = null;
     let lastRenderedText = '';
 
+    // Count the full server-side history (the DOM may only contain 10 turns).
+    const TURN_PAGE_SIZE = 50;
+    const TURN_MAX_PAGES = 400;
+    const TURN_POLL_MS = 10000;
+    const TURN_RESCAN_MS = 300000;
     let cachedTurns = null;
     let cachedTotalMessages = null;
     let isCalculatingTurns = false;
     let lastCalculatedTime = 0;
+    let lastFullTurnScanTime = 0;
+    let cachedFirstPageSignature = null;
+    let turnRequestEpoch = 0;
+    let turnLoadFailed = false;
     let lastChatId = null;
 
     let cachedCumulative = null;
@@ -317,8 +326,7 @@
     }
 
     function automaticTurns() {
-        return lastChatId === turnRoomId() && cachedTurns !== null ? cachedTurns
-            : Math.floor(document.querySelectorAll(SELECTOR.messageGroup).length / 2);
+        return lastChatId === turnRoomId() && cachedTurns !== null ? cachedTurns : 0;
     }
 
     function correctedTurns(base, offset) { return Math.max(0, base + offset); }
@@ -1001,53 +1009,85 @@
         }
     }
 
-    async function fetchRoomData() {
-        if (typeof CrackUtil === 'undefined') {
-            return { chatCounts: -1, totalMessages: -1, timestamps: [] };
-        }
+    async function fetchRoomData(roomId, previousFirstPageSignature, forceFull = false) {
+    if (!roomId) throw new Error('채팅방 ID 없음.');
+    const token = extractAccessToken();
+    const wrtnId = document.cookie.match(/(?:^|;\s*)__w_id=([^;]+)/)?.[1];
+    const headers = { 'Content-Type': 'application/json', platform: 'web', 'wrtn-locale': 'ko-KR' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (wrtnId) headers['x-wrtn-id'] = wrtnId;
+    const seenIds = new Set();
+    const seenCursors = new Set();
+    const liveTimestamps = [];
+    let chatCounts = 0;
+    let totalMessages = 0;
+    let cursor = '';
+    let firstPageSignature = '';
 
+    for (let page = 0; page < TURN_MAX_PAGES; page++) {
+        const query = `?limit=${TURN_PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+        const url = `https://crack-api.wrtn.ai/crack-gen/v3/chats/${encodeURIComponent(roomId)}/messages${query}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        let response;
         try {
-            const pathInfo = CrackUtil.path();
-            if (!pathInfo.isChattingPath()) {
-                return { chatCounts: -1, totalMessages: -1, timestamps: [] };
-            }
-
-            const chatId = pathInfo.chatRoom();
-            if (!chatId) {
-                return { chatCounts: -1, totalMessages: -1, timestamps: [] };
-            }
-
-            let chatCounts = 0;
-            let totalMessages = 0;
-            const liveTimestamps = [];
-
-            const iterator = CrackUtil.chatRoom().iterateLogs(chatId);
-
-            for await (let log of iterator) {
-                totalMessages++;
-
-                if (log.isUser()) {
-                    chatCounts++;
-                    continue;
-                }
-
-                liveTimestamps.push(getTimeFromObjectId(log.id));
-            }
-
-            const validLive = liveTimestamps.filter(t => t > 0);
-            addTimestampsToCache(chatId, validLive);
-
-            const cachedAll = getCachedTimestamps(chatId);
-
-            return {
-                chatCounts,
-                totalMessages,
-                timestamps: cachedAll.length > 0 ? cachedAll : validLive
-            };
-        } catch {
-            return { chatCounts: -1, totalMessages: -1, timestamps: [] };
+            response = await fetch(url, { headers, credentials: 'include', signal: controller.signal });
+        } finally {
+            clearTimeout(timeout);
         }
+        if (!response.ok) throw new Error(`메시지 조회 실패 (HTTP ${response.status})`);
+        const json = await response.json();
+        const data = json?.data || json;
+        if (!Array.isArray(data?.messages)) throw new Error('메시지 API 응답 형식이 변경됨.');
+        const messages = data.messages;
+        if (page === 0) {
+            firstPageSignature = messages.map(m => {
+                const id = m._id || m.id || m.messageId || m.turnId || '';
+                return `${m.role}:${String(id)}:${m.content != null && m.content.length !== 0 ? 1 : 0}`;
+            }).join('|');
+            if (!forceFull && previousFirstPageSignature !== null &&
+                previousFirstPageSignature === firstPageSignature) {
+                return { unchanged: true, firstPageSignature };
+            }
+        }
+        for (const message of messages) {
+            // Match old iterateLogs: skip records whose content is empty.
+            if (message.content == null || message.content.length === 0) continue;
+            const id = String(message._id || message.id || message.messageId || '');
+            if (id && seenIds.has(id)) continue;
+            if (id) seenIds.add(id);
+            totalMessages++;
+            if (message.role === 'user') {
+                chatCounts++;
+            } else if (message.role === 'assistant') {
+                const objectTime = /^[0-9a-f]{24}$/i.test(id) ? getTimeFromObjectId(id) : 0;
+                const created = Date.parse(message.createdAt || '');
+                if (objectTime > 0) liveTimestamps.push(objectTime);
+                else if (Number.isFinite(created) && created > 0) liveTimestamps.push(created);
+            }
+        }
+        const next = String(data.nextCursor || json.nextCursor || '');
+        if (data.hasNext === false) {
+            addTimestampsToCache(roomId, liveTimestamps);
+            return { chatCounts, totalMessages, timestamps: getCachedTimestamps(roomId), firstPageSignature };
+        }
+        if (!next) {
+            // A full page with an absent cursor is ambiguous, not a complete result.
+            if (data.hasNext === true || messages.length >= TURN_PAGE_SIZE) {
+                throw new Error('과거 대화 페이지 커서가 없어 전체 턴수를 확정할 수 없음.');
+            }
+            addTimestampsToCache(roomId, liveTimestamps);
+            return { chatCounts, totalMessages, timestamps: getCachedTimestamps(roomId), firstPageSignature };
+        }
+        if (!messages.length || seenCursors.has(next)) {
+            throw new Error('채팅 페이지가 반복되어 집계를 중단함.');
+        }
+        seenCursors.add(next);
+        cursor = next;
+        await new Promise(resolve => setTimeout(resolve, 30));
     }
+    throw new Error('대화 길이가 집계 상한을 초과했음.');
+}
 
     async function fetchCumulativeCrackers(timestamps) {
         const token = extractAccessToken();
@@ -1187,15 +1227,20 @@
         if (!counterBadge || !textSpan) return;
 
         const currentChatId = turnRoomId();
-
         let forceCalculate = false;
-
-        if (currentChatId && currentChatId !== lastChatId) {
+        if (currentChatId !== lastChatId) {
             closeTurnAdjustment();
             lastChatId = currentChatId;
+            turnRequestEpoch++;
             forceCalculate = true;
+            isCalculatingTurns = false;
+            isCalculatingCumulative = false;
             cachedTurns = null;
             cachedTotalMessages = null;
+            cachedFirstPageSignature = null;
+            lastCalculatedTime = 0;
+            lastFullTurnScanTime = 0;
+            turnLoadFailed = false;
             cachedCumulative = null;
             cachedLastConsumed = null;
             lastProcessedTurns = -1;
@@ -1204,51 +1249,53 @@
 
         const currentModelName = getCurrentModelName();
 
-        if (!isCalculatingTurns && (forceCalculate || now - lastCalculatedTime > 1500)) {
+        if (currentChatId && !isCalculatingTurns &&
+            (forceCalculate || now - lastCalculatedTime >= TURN_POLL_MS)) {
             isCalculatingTurns = true;
+            lastCalculatedTime = now;
+            const epoch = turnRequestEpoch;
+            const full = cachedTurns === null || cachedFirstPageSignature === null ||
+                now - lastFullTurnScanTime >= TURN_RESCAN_MS;
 
-            fetchRoomData().then(data => {
-                if (currentChatId !== turnRoomId()) { isCalculatingTurns = false; scheduleUpdate(); return; }
-                const domTotalMessages = document.querySelectorAll(SELECTOR.messageGroup).length;
+            fetchRoomData(currentChatId, cachedFirstPageSignature, full).then(data => {
+                if (epoch !== turnRequestEpoch || currentChatId !== turnRoomId()) return;
+                turnLoadFailed = false;
+                if (data.unchanged) return;
+                cachedTurns = data.chatCounts;
+                cachedTotalMessages = data.totalMessages;
+                cachedFirstPageSignature = data.firstPageSignature;
+                lastFullTurnScanTime = Date.now();
 
-                if (data.chatCounts !== -1) {
-                    if (data.chatCounts === 0 && data.totalMessages <= 0 && domTotalMessages > 0) {
-                        cachedTurns = Math.floor(domTotalMessages / 2);
-                        cachedTotalMessages = domTotalMessages;
-                    } else {
-                        cachedTurns = data.chatCounts;
-                        cachedTotalMessages = data.totalMessages !== -1 ? data.totalMessages : null;
-                    }
-
-                    if (cachedTurns !== lastProcessedTurns && !isCalculatingCumulative && data.timestamps.length > 0) {
-                        lastProcessedTurns = cachedTurns;
-                        isCalculatingCumulative = true;
+                if (cachedTurns !== lastProcessedTurns && !isCalculatingCumulative && data.timestamps.length > 0) {
+                    lastProcessedTurns = cachedTurns;
+                    isCalculatingCumulative = true;
+                    renderUpdate(inputEl, currentModelName);
+                    fetchCumulativeCrackers(data.timestamps).then(async cum => {
+                        if (epoch !== turnRequestEpoch) return;
+                        if (cum === 0 && cachedTurns >= 2 && currentChatId &&
+                            cumulativeRetryDoneForChat !== currentChatId) {
+                            cumulativeRetryDoneForChat = currentChatId;
+                            await new Promise(r => setTimeout(r, 1000));
+                            if (epoch !== turnRequestEpoch) return;
+                            cum = await fetchCumulativeCrackers(data.timestamps);
+                        }
+                        if (epoch !== turnRequestEpoch) return;
+                        cachedCumulative = cum;
+                        isCalculatingCumulative = false;
                         renderUpdate(inputEl, currentModelName);
-
-                        fetchCumulativeCrackers(data.timestamps).then(async cum => {
-                            if (cum === 0 && cachedTurns >= 2 && currentChatId && cumulativeRetryDoneForChat !== currentChatId) {
-                                cumulativeRetryDoneForChat = currentChatId;
-                                await new Promise(r => setTimeout(r, 1000));
-                                cum = await fetchCumulativeCrackers(data.timestamps);
-                            }
-
-                            cachedCumulative = cum;
-                            isCalculatingCumulative = false;
-                            renderUpdate(inputEl, currentModelName);
-                        }).catch(() => {
-                            isCalculatingCumulative = false;
-                            renderUpdate(inputEl, currentModelName);
-                        });
-                    }
-                } else {
-                    cachedTotalMessages = domTotalMessages;
-                    cachedTurns = Math.floor(domTotalMessages / 2);
+                    }).catch(() => {
+                        if (epoch !== turnRequestEpoch) return;
+                        isCalculatingCumulative = false;
+                        renderUpdate(inputEl, currentModelName);
+                    });
                 }
-
-                lastCalculatedTime = Date.now();
-                isCalculatingTurns = false;
-                renderUpdate(inputEl, currentModelName);
-            }).catch(() => {
+            }).catch(error => {
+                if (epoch !== turnRequestEpoch) return;
+                turnLoadFailed = true;
+                console.warn('[턴수 & 크래커 표시기] 전체 턴수 조회 실패:', error);
+                // Never report the 10 loaded DOM turns as a verified count.
+            }).finally(() => {
+                if (epoch !== turnRequestEpoch) return;
                 isCalculatingTurns = false;
                 renderUpdate(inputEl, currentModelName);
             });
@@ -1298,33 +1345,23 @@
 
         const baseTurns = automaticTurns();
         let offset = 0;
-        try { offset = turnOffset(turnRoomId()); } catch (_) { /* Keep automatic counting available. */ }
+        try { offset = turnOffset(turnRoomId()); } catch (_) { /* Retain automatic counting. */ }
         const displayTurns = correctedTurns(baseTurns, offset);
 
-        if (displayTurns > 0) {
+        if (cachedTurns === null) {
+            const html = `${ICON.clock}${turnLoadFailed ? '턴수 확인 실패' : '전체 턴수 계산 중'}`;
+            parts.push({ key: 'turn', summaryHtml: html, detailHtml: html });
+        } else if (displayTurns > 0) {
             const summary = `${ICON.clock}<span style="font-weight:700;">${displayTurns}</span>턴`;
             let detail = summary;
             if (offset) detail += `&nbsp;<span style="opacity:.75;">(보정 ${offset > 0 ? '+' : ''}${offset}턴)</span>`;
-
-            const totalMessages = cachedTotalMessages ?? document.querySelectorAll(SELECTOR.messageGroup).length;
-
-            if (totalMessages > 0) {
-                detail += `&nbsp;<span style="opacity:.75;">(총 메시지 수 ${totalMessages.toLocaleString()}개)</span>`;
+            if (cachedTotalMessages > 0) {
+                detail += `&nbsp;<span style="opacity:.75;">(총 메시지 수 ${cachedTotalMessages.toLocaleString()}개)</span>`;
             }
-
-            parts.push({
-                key: 'turn',
-                summaryHtml: summary,
-                detailHtml: detail
-            });
+            parts.push({ key: 'turn', summaryHtml: summary, detailHtml: detail });
         } else {
             const html = `${ICON.clock}${offset || baseTurns ? '0턴' : '채팅 없음'}`;
-
-            parts.push({
-                key: 'turn',
-                summaryHtml: html,
-                detailHtml: html
-            });
+            parts.push({ key: 'turn', summaryHtml: html, detailHtml: html });
         }
 
         if (visibleParts.cumulative !== false) {
@@ -1338,7 +1375,7 @@
             } else if (cachedCumulative !== null) {
                 cumText = cachedCumulative.toLocaleString();
                 suffix = '개';
-            } else if (baseTurns <= 0) {
+            } else if (baseTurns <= 0 && cachedTurns !== null) {
                 cumText = '0';
                 suffix = '개';
             }
