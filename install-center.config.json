@@ -66,5 +66,12 @@
     "Crack_Mini_Sidebar_Menu.user.js",
     "Crack_iPad_Font_Adjust.user.js",
     "Crack_iPhone_Font_Adjust.user.js"
-  ]
+  ],
+  "channelDeviceExcludes": {
+    "main": {
+      "iphone": [
+        "Crack_Scroll_Guard.user.js"
+      ]
+    }
+  }
 }
