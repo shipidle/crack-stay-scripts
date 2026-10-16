@@ -36,7 +36,8 @@ function rawUrl(channel, file) {
 function section(channel, device, files) {
   const excluded = new Set([
     ...device.exclude,
-    ...(config.channelExcludes?.[channel.id] || [])
+    ...(config.channelExcludes?.[channel.id] || []),
+    ...(config.channelDeviceExcludes?.[channel.id]?.[device.id] || [])
   ]);
   const selected = files.filter(file => !excluded.has(file));
   const heading = `${channel.label} · ${device.label}`;
@@ -57,6 +58,14 @@ for (const device of config.devices) {
 for (const channel of config.channels) {
   for (const file of config.channelExcludes?.[channel.id] || []) {
     if (!files.includes(file)) throw new Error(`${channel.id} 채널 제외 파일이 루트에 없음: ${file}`);
+  }
+}
+
+for (const [channelId, byDevice] of Object.entries(config.channelDeviceExcludes || {})) {
+  for (const [deviceId, excludedFiles] of Object.entries(byDevice)) {
+    for (const file of excludedFiles) {
+      if (!files.includes(file)) throw new Error(`${channelId}/${deviceId} 제외 파일이 루트에 없음: ${file}`);
+    }
   }
 }
 
