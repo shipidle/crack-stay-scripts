@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.5.0
-// @description  🧪 BETA · iPhone 수동·관성 스크롤을 유지하며 답변 도착 시 크랙 본체의 강제 하단 이동을 차단합니다.
+// @version      1.6.0
+// @description  🧪 BETA · 답변 도착 시 읽던 위치를 유지하고 iPhone 입력창 키보드 이동과 수동 스크롤을 허용합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.5.0' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.6.0' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.5.0');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.6.0');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -41,6 +41,21 @@
   let correcting = false;
   let layoutObserver = null;
   let observedLayoutTarget = null;
+  let editorActive = false;
+  let keyboardSettlingUntil = 0;
+  const EDITOR_SELECTOR = 'textarea, input, [contenteditable="true"], [role="textbox"]';
+
+  function isEditor(node) {
+    return !!(node?.matches?.(EDITOR_SELECTOR) || node?.closest?.(EDITOR_SELECTOR));
+  }
+  function keyboardTransition() {
+    return editorActive || Date.now() < keyboardSettlingUntil;
+  }
+  function releaseForKeyboard() {
+    // Safari must be able to move the composer above its on-screen keyboard.
+    keyboardSettlingUntil = Date.now() + 1300;
+    clearReading();
+  }
 
   function stopLayoutObserver() {
     layoutObserver?.disconnect();
@@ -52,7 +67,7 @@
     stopLayoutObserver();
     observedLayoutTarget = el;
     layoutObserver = new window.MutationObserver(() => {
-      if (!reading || gesture || correcting || !inChat()) return;
+      if (!reading || gesture || correcting || keyboardTransition() || !inChat()) return;
       const target = readingTarget();
       if (!target || !isScrollable(target)) return;
       // Ignore small message/UI changes and never interrupt an active swipe.
@@ -131,7 +146,7 @@
   }
 
   function saveUserPosition(el) {
-    if (!inChat() || !isScrollable(el)) return;
+    if (!inChat() || keyboardTransition() || !isScrollable(el)) return;
     if (bottomGap(el) <= BOTTOM_GAP) {
       clearReading();
       return;
@@ -145,6 +160,8 @@
       anchorY: null,
       height: el.scrollHeight,
       gap: bottomGap(el),
+      settledAt: Date.now() + 600,
+      lastVisualCorrectionHeight: null,
     };
     watchWhileReading();
     watchLayout(el);
@@ -187,7 +204,10 @@
   }
 
   function pointerStart(event) {
-    if (event.target?.closest?.('textarea, input, [contenteditable="true"]')) return;
+    if (isEditor(event.target)) {
+      releaseForKeyboard();
+      return;
+    }
     const target = scrollTarget(event.target);
     if (isScrollable(target)) {
       startGesture(target, true);
@@ -212,7 +232,7 @@
   }
 
   function nativeScroll(event) {
-    if (correcting || !inChat()) return;
+    if (correcting || keyboardTransition() || !inChat()) return;
     const target = scrollTarget(event.target);
     if (!isScrollable(target)) return;
     if (gesture && (gesture.target === target || target.contains?.(gesture.target))) {
@@ -275,13 +295,14 @@
       if (!gesture) restoreDirect(replacement, reading.top);
       reading.height = replacement.scrollHeight;
       reading.gap = bottomGap(replacement);
+      reading.settledAt = Date.now() + 550;
       watchLayout(replacement);
     }
     return reading.target;
   }
 
   function checkPosition() {
-    if (!inChat() || !reading || gesture || correcting) return;
+    if (!inChat() || !reading || gesture || correcting || keyboardTransition()) return;
     const el = readingTarget();
     if (!el || !isScrollable(el)) return;
     for (const parent of reading.parents) {
@@ -298,6 +319,22 @@
     let anchorDelta = null;
     if (reading.anchor?.isConnected && (el === documentScroller() || el.contains(reading.anchor))) {
       anchorDelta = reading.anchor.getBoundingClientRect().top - reading.anchorY;
+    }
+
+    // Pixel-level correction ONLY after a structural reply reflow, with
+    // no active editor, touch, or momentum. Preserve the same visible paragraph.
+    if (anchorDelta !== null && gap > BOTTOM_GAP &&
+        Math.abs(heightDelta) >= 70 &&
+        Math.abs(anchorDelta) > 12 && Math.abs(anchorDelta) < 320 &&
+        Date.now() >= (reading.settledAt || 0) &&
+        reading.lastVisualCorrectionHeight !== height) {
+      const desired = Math.max(0, Math.min(height - el.clientHeight, actual + anchorDelta));
+      reading.lastVisualCorrectionHeight = height;
+      if (Math.abs(desired - actual) > 8) restoreDirect(el, desired);
+      reading.top = desired;
+      reading.height = height;
+      reading.gap = bottomGap(el);
+      return;
     }
 
     // In the iPhone log, scrollTop and scrollHeight grew by exactly 1697px:
@@ -359,6 +396,8 @@
   function resetRoute() {
     path = location.pathname;
     clearReading();
+    editorActive = false;
+    keyboardSettlingUntil = 0;
     gesture = null;
     if (finishTimer !== null) clearTimeout(finishTimer);
     finishTimer = null;
@@ -372,7 +411,7 @@
   }
 
   function guard(el, desired) {
-    if (correcting || desired === null || !Number.isFinite(desired)) return false;
+    if (correcting || keyboardTransition() || desired === null || !Number.isFinite(desired)) return false;
     const target = readingTarget();
     if (!target) return false;
     const saved = el === target ? reading.top : reading.parents.find(parent => parent.target === el)?.top;
@@ -442,7 +481,13 @@
   const nativeFocus = HTMLElement.prototype.focus;
   if (typeof nativeFocus === 'function') {
     HTMLElement.prototype.focus = function (options) {
-      if (readingTarget() && !correcting) {
+      if (isEditor(this)) {
+        editorActive = true;
+        releaseForKeyboard();
+        // Do NOT use preventScroll: true on a real editable composer.
+        return nativeFocus.apply(this, arguments);
+      }
+      if (readingTarget() && !correcting && !keyboardTransition()) {
         return nativeFocus.call(this, { ...(options && typeof options === 'object' ? options : {}), preventScroll: true });
       }
       return nativeFocus.apply(this, arguments);
@@ -457,6 +502,25 @@
       return original.apply(this, args);
     };
   }
+
+  document.addEventListener('focusin', event => {
+    if (isEditor(event.target)) {
+      editorActive = true;
+      releaseForKeyboard();
+    }
+  }, true);
+  document.addEventListener('focusout', event => {
+    if (isEditor(event.target)) {
+      editorActive = false;
+      keyboardSettlingUntil = Date.now() + 1150;
+    }
+  }, true);
+  window.visualViewport?.addEventListener('resize', () => {
+    if (editorActive || isEditor(document.activeElement)) releaseForKeyboard();
+  }, { passive: true });
+  window.addEventListener('resize', () => {
+    if (editorActive || isEditor(document.activeElement)) releaseForKeyboard();
+  }, { passive: true });
 
   document.addEventListener('touchstart', pointerStart, { capture: true, passive: true });
   document.addEventListener('touchmove', pointerMove, { capture: true, passive: true });
