@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🌌 크랙 채팅 배경
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.9
+// @version      0.2.0
 // @description  채팅방별 배경 6장을 로컬에 저장하고 구도·가독성 막을 조절하며 Lore Sync 계정으로 선택 동기화합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -13,18 +13,20 @@
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_listValues
+// @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
-/* global GM_addStyle, GM_getValue, GM_setValue, GM_xmlhttpRequest, unsafeWindow */
+/* global GM_addStyle, GM_getValue, GM_setValue, GM_listValues, GM_deleteValue, GM_xmlhttpRequest, unsafeWindow */
 
 (() => {
   'use strict';
 
-  const VERSION = '0.1.9';
+  const VERSION = '0.2.0';
   const STORAGE_PREFIX = 'crackChatBackground:v1:';
   const IMAGE_PREFIX = `${STORAGE_PREFIX}image:`;
   const SHARED_CLOUD_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -195,6 +197,84 @@
       return dataUrl;
     }
     return null;
+  }
+
+  // Stay/Greasemonkey 저장소에서 이 스크립트의 접두사가 붙은 항목만 조회함.
+  async function backgroundStorageKeys() {
+    const keys = await GM_listValues();
+    if (!Array.isArray(keys)) throw new Error('스크립트 저장소 목록을 읽을 수 없음.');
+    return keys.filter(key => typeof key === 'string' && key.startsWith(STORAGE_PREFIX));
+  }
+
+  function storedBytes(value) {
+    return new Blob([typeof value === 'string' ? value : JSON.stringify(value ?? '')]).size;
+  }
+
+  function formatStorageBytes(bytes) {
+    return bytes >= 1024 * 1024
+      ? (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+      : (bytes / 1024).toFixed(1) + ' KB';
+  }
+
+  async function inspectBackgroundStorage() {
+    const keys = await backgroundStorageKeys();
+    const referencedHashes = new Set();
+    const images = [];
+    let totalBytes = 0;
+    let roomCount = 0;
+    for (const key of keys) {
+      const value = await GM_getValue(key, null);
+      const bytes = storedBytes(value);
+      totalBytes += bytes;
+      if (key.startsWith(STORAGE_PREFIX + 'room:')) {
+        roomCount += 1;
+        const room = parseSaved(value);
+        if (!room || typeof room !== 'object') {
+          throw new Error('손상된 채팅방 배경 정보가 있어 이미지 자동 삭제를 중단함: ' + key);
+        }
+        for (const slot of normalizeState(room).slots) {
+          if (slot) referencedHashes.add(slot.hash);
+        }
+      } else if (key.startsWith(IMAGE_PREFIX)) {
+        images.push({ key, hash: key.slice(IMAGE_PREFIX.length), bytes });
+      }
+    }
+    const unusedImages = images.filter(item => !referencedHashes.has(item.hash));
+    return {
+      keys, roomCount, imageCount: images.length, totalBytes,
+      unusedImages, unusedBytes: unusedImages.reduce((sum, item) => sum + item.bytes, 0),
+    };
+  }
+
+  async function cleanUnusedBackgrounds() {
+    const report = await inspectBackgroundStorage();
+    if (!report.unusedImages.length) {
+      setStatus('삭제할 미사용 이미지가 없음.');
+      return;
+    }
+    if (!window.confirm('어떤 채팅방에서도 사용하지 않는 이미지 ' + report.unusedImages.length
+      + '장 (약 ' + formatStorageBytes(report.unusedBytes) + ')을 이 기기에서 삭제할까요?')) return;
+    for (const item of report.unusedImages) {
+      await GM_deleteValue(item.key);
+      imageCache.delete(item.hash);
+    }
+    setStatus('미사용 이미지 ' + report.unusedImages.length + '장 삭제 완료 (약 '
+      + formatStorageBytes(report.unusedBytes) + ').');
+  }
+
+  async function clearAllBackgroundStorage() {
+    const keys = await backgroundStorageKeys();
+    if (!keys.length) { setStatus('삭제할 배경 로컬 데이터가 없음.'); return; }
+    if (!window.confirm('이 기기에 저장한 모든 채팅방 배경 설정과 이미지 '
+      + keys.length + '개 항목을 삭제할까요? 클라우드에 저장한 자료는 삭제하지 않음.')) return;
+    if (!window.confirm('최종 확인: 모든 로컬 채팅 배경 데이터를 되돌릴 수 없게 삭제합니다.')) return;
+    for (const key of keys) await GM_deleteValue(key);
+    imageCache.clear();
+    state = defaultState();
+    await renderStage();
+    updateHeaderButton();
+    await openSettings(true);
+    setStatus('이 기기의 배경 설정과 이미지 ' + keys.length + '개 항목을 삭제했음.');
   }
 
   function applyCrop(image, crop) {
@@ -565,6 +645,38 @@
     cloudActions.append(cloudUpload, cloudRestore);
     cloudCard.appendChild(cloudActions);
     body.appendChild(cloudCard);
+
+    const storageCard = document.createElement('div');
+    storageCard.className = 'cbg-card';
+    storageCard.innerHTML = '<div class="cbg-label">저장공간 관리</div>'
+      + '<p class="cbg-help" id="cbg-storage-report">이 스크립트의 로컬 데이터만 조회·정리함. 클라우드 데이터와 다른 스크립트 설정은 그대로 유지함.</p>';
+    const storageActions = document.createElement('div');
+    storageActions.className = 'cbg-actions';
+    const inspectButton = makeButton('사용량 확인');
+    inspectButton.addEventListener('click', async () => {
+      try {
+        const report = await inspectBackgroundStorage();
+        const status = document.getElementById('cbg-storage-report');
+        if (status) status.textContent = '약 ' + formatStorageBytes(report.totalBytes)
+          + ' · 채팅방 ' + report.roomCount + '개 · 이미지 ' + report.imageCount
+          + '장 · 미사용 ' + report.unusedImages.length + '장 ('
+          + formatStorageBytes(report.unusedBytes) + ')';
+      } catch (error) { setStatus(String(error?.message || error), 'error'); }
+    });
+    const cleanButton = makeButton('미사용 이미지 정리');
+    cleanButton.addEventListener('click', async () => {
+      try { await cleanUnusedBackgrounds(); }
+      catch (error) { setStatus(String(error?.message || error), 'error'); }
+    });
+    const clearButton = makeButton('로컬 데이터 전체 삭제', 'cbg-btn cbg-btn-danger');
+    clearButton.style.cssText = 'width:100%;margin-top:8px';
+    clearButton.addEventListener('click', async () => {
+      try { await clearAllBackgroundStorage(); }
+      catch (error) { setStatus(String(error?.message || error), 'error'); }
+    });
+    storageActions.append(inspectButton, cleanButton);
+    storageCard.append(storageActions, clearButton);
+    body.appendChild(storageCard);
 
     const note = document.createElement('p');
     note.className = 'cbg-help';
