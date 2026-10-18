@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.6.1
+// @version      1.6.2
 // @description  🧪 BETA · 답변 도착 시 읽던 위치를 유지하고 iPhone 입력창 키보드 이동과 수동 스크롤을 허용합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.6.1' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.6.2' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.6.1');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.6.2');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -417,10 +417,10 @@
     const saved = el === target ? reading.top : reading.parents.find(parent => parent.target === el)?.top;
     // Native touch/inertia does not invoke these JS methods or JS setters.
     // Do NOT disable this guard while a gesture exists: AI jumps used that gap.
-    // A 2px allowance let tiny scripted downward nudges accumulate.
-    // Read the live scrollTop: Safari's native touch inertia/anchoring bypasses
-    // JS setters, while every programmatic downward attempt is stopped.
-    return saved !== undefined && desired > el.scrollTop + 0.25;
+    // No positive deadband: even 0.1px scripted nudges can accumulate.
+    // Native touch inertia and Safari scroll anchoring do not use JS setters.
+    // Keyboard and deliberate bottom navigation remain exempt upstream.
+    return saved !== undefined && desired > el.scrollTop;
   }
 
   function intoViewTop(node, el, args, method) {
