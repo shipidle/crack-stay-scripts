@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.4.0
+// @version      1.5.0
 // @description  🧪 BETA · iPhone 수동·관성 스크롤을 유지하며 답변 도착 시 크랙 본체의 강제 하단 이동을 차단합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,7 +21,13 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.4.0' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.5.0' };
+  // Shared DOM marker for Stay's separate userscript execution worlds.
+  function exposeStatus() {
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.5.0');
+  }
+  exposeStatus();
+  if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
 
   const BOTTOM_GAP = 24;
   const INERTIA_QUIET_MS = 280;
@@ -33,6 +39,31 @@
   let finishTimer = null;
   let checkTimer = null;
   let correcting = false;
+  let layoutObserver = null;
+  let observedLayoutTarget = null;
+
+  function stopLayoutObserver() {
+    layoutObserver?.disconnect();
+    layoutObserver = null;
+    observedLayoutTarget = null;
+  }
+  function watchLayout(el) {
+    if (!window.MutationObserver || !el || observedLayoutTarget === el) return;
+    stopLayoutObserver();
+    observedLayoutTarget = el;
+    layoutObserver = new window.MutationObserver(() => {
+      if (!reading || gesture || correcting || !inChat()) return;
+      const target = readingTarget();
+      if (!target || !isScrollable(target)) return;
+      // Ignore small message/UI changes and never interrupt an active swipe.
+      if (Math.abs(target.scrollHeight - (reading.height ?? target.scrollHeight)) > 70 ||
+          (bottomGap(target) <= BOTTOM_GAP && reading.gap > 90)) {
+        checkPosition();
+      }
+    });
+    try { layoutObserver.observe(el, { childList: true, subtree: true }); }
+    catch (_) { stopLayoutObserver(); }
+  }
 
   function inChat() {
     if (path !== location.pathname) resetRoute();
@@ -66,6 +97,7 @@
 
   function clearReading() {
     reading = null;
+    stopLayoutObserver();
     if (checkTimer !== null) {
       clearInterval(checkTimer);
       checkTimer = null;
@@ -111,8 +143,11 @@
       parents: previous ? previous.parents.map(parent => ({ target: parent.target, top: parent.target.scrollTop })) : parentPositions(el),
       anchor: null,
       anchorY: null,
+      height: el.scrollHeight,
+      gap: bottomGap(el),
     };
     watchWhileReading();
+    watchLayout(el);
   }
 
   function parentPositions(el) {
@@ -238,6 +273,9 @@
       if (gesture?.target === old) gesture.target = replacement;
       // A replacement starts at zero; protect it before the app's first scroll.
       if (!gesture) restoreDirect(replacement, reading.top);
+      reading.height = replacement.scrollHeight;
+      reading.gap = bottomGap(replacement);
+      watchLayout(replacement);
     }
     return reading.target;
   }
@@ -252,28 +290,70 @@
       }
     }
     const actual = el.scrollTop;
+    const height = el.scrollHeight;
+    const gap = bottomGap(el);
     const shift = actual - reading.top;
-    if (Math.abs(shift) <= 2) return;
+    const heightDelta = height - (reading.height ?? height);
+    const savedGap = reading.gap ?? gap;
     let anchorDelta = null;
     if (reading.anchor?.isConnected && (el === documentScroller() || el.contains(reading.anchor))) {
       anchorDelta = reading.anchor.getBoundingClientRect().top - reading.anchorY;
     }
 
-    // If the browser anchored the same visible message while content above grew,
-    // its numeric scrollTop change is correct and must NOT be undone.
-    if (anchorDelta !== null && Math.abs(anchorDelta) <= 5 && bottomGap(el) > BOTTOM_GAP) {
+    // In the iPhone log, scrollTop and scrollHeight grew by exactly 1697px:
+    // native anchoring was preserving the visible text. Do not fight it.
+    if (Math.abs(heightDelta) > 70 && Math.abs(shift - heightDelta) < 35 &&
+        Math.abs(gap - savedGap) < 45) {
       reading.top = actual;
+      reading.height = height;
+      reading.gap = gap;
+      return;
+    }
+
+    // 17ms later the rendered chat lost 1586px and Safari clamped scrollTop
+    // to the new bottom. Restore the prior distance from the end instead.
+    const clampedToBottom = gap <= BOTTOM_GAP &&
+      savedGap > Math.max(80, el.clientHeight * 0.1);
+    if (clampedToBottom) {
+      const desired = Math.max(0, height - el.clientHeight - savedGap);
+      if (Math.abs(actual - desired) > 3) restoreDirect(el, desired);
+      reading.top = desired;
+      reading.height = height;
+      reading.gap = Math.max(0, height - el.clientHeight - desired);
+      return;
+    }
+
+    // Normal response growth below the viewport is not an automatic jump.
+    if (Math.abs(shift) <= 2) {
+      reading.height = height;
+      reading.gap = gap;
+      return;
+    }
+
+    if (anchorDelta !== null && Math.abs(anchorDelta) <= 5 && gap > BOTTOM_GAP) {
+      reading.top = actual;
+      reading.height = height;
+      reading.gap = gap;
       return;
     }
     const threshold = Math.max(85, el.clientHeight * 0.17);
     const movedFarDown = shift > threshold;
     const snappedToBottom = bottomGap(el) <= BOTTOM_GAP && shift > 2;
-    if (!movedFarDown && !snappedToBottom) return;
+    if (!movedFarDown && !snappedToBottom) {
+      reading.height = height;
+      if (Math.abs(shift) < 45) {
+        reading.top = actual;
+        reading.gap = gap;
+      }
+      return;
+    }
 
     const anchoredTop = anchorDelta !== null && Math.abs(anchorDelta) < 10000
       ? actual + anchorDelta : reading.top;
-    if (Math.abs(actual - anchoredTop) <= 6) return;
-    restoreDirect(el, anchoredTop);
+    if (Math.abs(actual - anchoredTop) > 6) restoreDirect(el, anchoredTop);
+    reading.top = Math.max(0, Math.min(anchoredTop, height - el.clientHeight));
+    reading.height = height;
+    reading.gap = bottomGap(el);
   }
 
   function resetRoute() {
