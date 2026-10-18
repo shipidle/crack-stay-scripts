@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧪 스크롤 점프 진단 (임시)
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.0
+// @version      0.2.0
 // @description  iPhone 답변 도착 시 강제 하단 이동을 진단합니다. 채팅 본문과 계정 정보는 수집하지 않습니다.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -16,9 +16,14 @@
   'use strict';
   const doc = w.document;
   if (!doc || !w.Element || !w.HTMLElement || w.__SHIPIDLE_SCROLL_JUMP_PROBE__) return;
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   w.__SHIPIDLE_SCROLL_JUMP_PROBE__ = { version: VERSION };
 
+  function guardVersion() {
+    // A DOM attribute crosses Stay's isolated userscript execution worlds.
+    return doc.documentElement?.getAttribute('data-shipidle-scroll-guard')
+      || w.__SHIPIDLE_SCROLL_GUARD__?.version || 'missing';
+  }
   const UI_ID = 'shipidle-scroll-jump-probe';
   const MAX_EVENTS = 220;
   const candidates = new Map();
@@ -136,7 +141,20 @@
       if (changed) {
         const snappedBottom = current.gap <= 30 && prev.gap > 120 && delta > 30;
         const jumped = delta > Math.max(130, current.viewport * 0.22) && passed <= 1100;
-        if (jumped || snappedBottom) {
+        const nativeAnchoring = delta > 120 && Math.abs(delta - changeHeight) < 35 &&
+          Math.abs(prev.gap - current.gap) < 45;
+        const bottomClamp = prev.gap > 100 && current.gap <= 24 && changeHeight < -150;
+        if (nativeAnchoring) {
+          add('NATIVE_ANCHORING', { reason, delta: safeRound(delta),
+            heightChange: safeRound(changeHeight), previousGap: prev.gap,
+            touching: manual.touching, ...current });
+        } else if (bottomClamp) {
+          jumpCount++;
+          add('BOTTOM_CLAMP', { reason, from: prev.top, to: current.top,
+            delta: safeRound(delta), heightChange: safeRound(changeHeight),
+            previousGap: prev.gap, lastTouchMsAgo: manualAge(), ...current });
+          if (bubble) bubble.textContent = `진단 (${jumpCount})`;
+        } else if (jumped || snappedBottom) {
           jumpCount++;
           add('DOWNWARD_JUMP', { reason, from: prev.top, to: current.top, delta: safeRound(delta),
             heightChange: safeRound(changeHeight), elapsedMs: passed, toBottom: snappedBottom,
@@ -271,7 +289,7 @@
     begunAt = clock();
     startedAt = new Date().toISOString();
     lastPageKind = pageKind();
-    add('START', { guardVersion: w.__SHIPIDLE_SCROLL_GUARD__?.version || 'missing',
+    add('START', { guardVersion: guardVersion(),
       device: /iPhone|iPad/i.test(w.navigator.userAgent) ? 'iOS' : 'other',
       viewportWidth: w.innerWidth, viewportHeight: w.innerHeight,
       visualViewportHeight: safeRound(w.visualViewport?.height || 0),
@@ -294,7 +312,12 @@
       });
       observer.observe(doc.body, { subtree: true, childList: true });
     }
-    if (status) status.textContent = '기록 중. AI 답변이 도착하면 다시 진단 버튼을 눌러.';
+    if (status) {
+      const version = guardVersion();
+      status.textContent = version === 'missing'
+        ? '스크롤 가드 미감지! Stay에서 스크롤 가드 설치·활성화·업데이트를 확인해 줘.'
+        : `가드 ${version} 실행 확인 · AI 답변이 도착하면 진단을 눌러.`;
+    }
     if (bubble) bubble.textContent = '진단 기록중';
     if (panel) panel.hidden = true;
     if (manualCopy) manualCopy.hidden = true;
@@ -311,7 +334,7 @@
     if (recording) {
       inspect('manual-mark');
       add('USER_MARKED_DOWNWARD_JUMP',
-        { guardVersion: w.__SHIPIDLE_SCROLL_GUARD__?.version || 'missing' });
+        { guardVersion: guardVersion() });
     }
     markAt = clock() - begunAt;
     stop();
@@ -324,7 +347,7 @@
     return JSON.stringify({
       tool: 'Crack Scroll Jump Probe', version: VERSION,
       createdAt: startedAt, chatType: lastPageKind,
-      guardVersion: w.__SHIPIDLE_SCROLL_GUARD__?.version || 'missing',
+      guardVersion: guardVersion(),
       privacy: 'No chat content, account IDs, URLs, or tokens collected.',
       totalEvents: events.length, detectedJumps: jumpCount,
       start: startEvent || null, events: recent
