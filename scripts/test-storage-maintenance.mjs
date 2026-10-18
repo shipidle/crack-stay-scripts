@@ -138,7 +138,7 @@ function fakeStorage(entries) {
     [configKey, '{"apiKey":"placeholder"}'],
     ['another-app', 'keep'],
   ]);
-  const config = { backupRetention: 5 };
+  const config = { backupRetention: 5, apiKey: 'placeholder' };
   const ctx = {
     Blob, Map, Set, URL, JSON, Object, Array, Number, String, Date, Error,
     localStorage: store, STORAGE_KEY: 'shipidle:crack-memory-manager:v2',
@@ -173,7 +173,7 @@ function fakeStorage(entries) {
   ctx.exposed.clearAllLocalBackups();
   assert.deepEqual(JSON.parse(store.getItem(backupsKey)), {});
   assert.equal(store.getItem(stateKey), '{"progress":40}');
-  assert.equal(JSON.parse(store.getItem(configKey)).apiKey, undefined, 'test config save should not include actual secrets');
+  assert.equal(JSON.parse(store.getItem(configKey)).apiKey, 'placeholder', 'API settings must survive cleanup');
   assert.equal(store.getItem('another-app'), 'keep');
 }
 
