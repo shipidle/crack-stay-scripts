@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧪 스크롤 점프 진단 (임시)
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.2.0
+// @version      0.3.0
 // @description  iPhone 답변 도착 시 강제 하단 이동을 진단합니다. 채팅 본문과 계정 정보는 수집하지 않습니다.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -16,7 +16,7 @@
   'use strict';
   const doc = w.document;
   if (!doc || !w.Element || !w.HTMLElement || w.__SHIPIDLE_SCROLL_JUMP_PROBE__) return;
-  const VERSION = '0.2.0';
+  const VERSION = '0.3.0';
   w.__SHIPIDLE_SCROLL_JUMP_PROBE__ = { version: VERSION };
 
   function guardVersion() {
@@ -31,6 +31,7 @@
   const lastLogged = new WeakMap();
   let nextId = 0;
   let events = [];
+  let startRecord = null;
   let recording = false;
   let begunAt = 0;
   let startedAt = '';
@@ -83,7 +84,23 @@
   }
   function add(type, data = {}) {
     if (!recording) return;
-    events.push({ ms: Math.round(clock() - begunAt), type, ...data });
+    const ms = Math.round(clock() - begunAt);
+    // A blocked site scroll animation calls scrollTop hundreds of times and
+    // previously flushed real movement events out of the 220-entry ring.
+    if (type === 'JS_SCROLL_CALL') {
+      const last = events[events.length - 1];
+      if (last?.type === type && last.method === data.method &&
+          last.target?.scroller === data.target?.scroller &&
+          ms - (last.lastMs ?? last.ms) <= 320) {
+        last.calls = (last.calls || 1) + 1;
+        last.lastMs = ms;
+        last.lastIntendedTop = data.intendedTop;
+        return;
+      }
+    }
+    const item = { ms, type, ...data };
+    if (type === 'START') startRecord = item;
+    events.push(item);
     if (events.length > MAX_EVENTS) events.shift();
   }
   function stackHint() {
@@ -99,7 +116,8 @@
     if (!el || typeof el.scrollTop !== 'number' || el.clientHeight < 50 ||
       el.scrollHeight <= el.clientHeight + 10 || candidates.has(el)) return;
     const snap = metrics(el);
-    candidates.set(el, { last: snap, when: clock(), lastMessageAt: 0 });
+    candidates.set(el, { last: snap, when: clock(), lastMessageAt: 0,
+      anchor: null, lastAnchorAt: 0 });
     add('SCROLLER_FOUND', snap);
   }
   function trackAncestors(el) {
@@ -115,6 +133,20 @@
     if (target) trackAncestors(target);
     const main = doc.querySelector('main');
     if (main) trackAncestors(main);
+  }
+  function visibleTextAnchor(el) {
+    if (typeof doc.elementFromPoint !== 'function') return null;
+    const rect = el === documentScroller()
+      ? { left: 0, right: w.innerWidth, top: 0, bottom: w.innerHeight }
+      : el.getBoundingClientRect();
+    if (rect.bottom - rect.top < 80) return null;
+    const x = (rect.left + rect.right) / 2;
+    const y = rect.top + Math.min(130, (rect.bottom - rect.top) * 0.3);
+    const node = doc.elementFromPoint(x, y)?.closest?.(
+      '.wrtn-markdown p, .wrtn-markdown li, .wrtn-markdown blockquote, [data-message-id]'
+    );
+    return node?.isConnected && (el === documentScroller() || el.contains(node))
+      ? { node, y: node.getBoundingClientRect().top } : null;
   }
   function manualAge() {
     return manual.lastAt < 0 ? null : Math.round(clock() - manual.lastAt);
@@ -137,7 +169,7 @@
       const delta = current.top - prev.top;
       const changeHeight = current.height - prev.height;
       const passed = Math.round(clock() - item.when);
-      const changed = Math.abs(delta) > 3 || Math.abs(changeHeight) > 100;
+      const changed = Math.abs(delta) > 2 || Math.abs(changeHeight) > 100;
       if (changed) {
         const snappedBottom = current.gap <= 30 && prev.gap > 120 && delta > 30;
         const jumped = delta > Math.max(130, current.viewport * 0.22) && passed <= 1100;
@@ -166,7 +198,30 @@
             heightChange: safeRound(changeHeight), touching: manual.touching,
             lastTouchMsAgo: manualAge(), ...current });
           item.lastMessageAt = clock();
+        } else if (delta > 2 && delta <= 18 && !manual.touching &&
+          (manualAge() === null || manualAge() > 800) &&
+          clock() - item.lastMessageAt >= 220) {
+          add('MICRO_SCROLL', { reason, delta: safeRound(delta),
+            heightChange: safeRound(changeHeight), lastTouchMsAgo: manualAge(), ...current });
+          item.lastMessageAt = clock();
         }
+      }
+      // Track a visible paragraph's position, not its content or ID.
+      // This detects a visual wobble even when scrollTop stays unchanged.
+      if (!manual.touching && (manualAge() === null || manualAge() > 800)) {
+        if (item.anchor?.node?.isConnected) {
+          const visualShift = item.anchor.node.getBoundingClientRect().top - item.anchor.y;
+          if (Math.abs(visualShift) >= 3 && clock() - item.lastAnchorAt >= 180) {
+            add('VISIBLE_TEXT_SHIFT', { reason, pixelDelta: safeRound(visualShift),
+              scrollDelta: safeRound(delta), heightChange: safeRound(changeHeight), ...current });
+            item.lastAnchorAt = clock();
+          }
+          item.anchor.y += visualShift;
+        } else {
+          item.anchor = visibleTextAnchor(el);
+        }
+      } else {
+        item.anchor = null;
       }
       item.last = current;
       item.when = clock();
@@ -281,6 +336,7 @@
   function start() {
     stop();
     events = [];
+    startRecord = null;
     candidates.clear();
     jumpCount = 0;
     manual = { touching: false, lastAt: -1, direction: 0, y: null };
@@ -343,7 +399,7 @@
   function payload() {
     const ending = markAt ?? (clock() - begunAt);
     const recent = events.filter(e => e.ms >= ending - 25000).slice(-175);
-    const startEvent = events.find(e => e.type === 'START');
+    const startEvent = startRecord;
     return JSON.stringify({
       tool: 'Crack Scroll Jump Probe', version: VERSION,
       createdAt: startedAt, chatType: lastPageKind,
