@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.6.2
-// @description  🧪 BETA · 답변 도착 시 읽던 위치를 유지하고 iPhone 입력창 키보드 이동과 수동 스크롤을 허용합니다.
+// @version      1.7.0
+// @description  🧪 BETA · AI 강제 스크롤 방지, 모델 변경 시 위치 유지, 최하단 버튼과 iPhone 키보드 정상 허용.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.6.2' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.7.0' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.6.2');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.7.0');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -43,6 +43,9 @@
   let observedLayoutTarget = null;
   let editorActive = false;
   let keyboardSettlingUntil = 0;
+  let modelHold = null;
+  let modelObserver = null;
+  const MODEL_HOLD_MS = 9000;
   const EDITOR_SELECTOR = 'textarea, input, [contenteditable="true"], [role="textbox"]';
 
   function isEditor(node) {
@@ -113,14 +116,82 @@
   function clearReading() {
     reading = null;
     stopLayoutObserver();
-    if (checkTimer !== null) {
+    if (checkTimer !== null && !modelHold) {
       clearInterval(checkTimer);
       checkTimer = null;
     }
   }
 
   function watchWhileReading() {
-    if (reading && checkTimer === null) checkTimer = setInterval(checkPosition, CHECK_INTERVAL_MS);
+    if ((reading || modelHold) && checkTimer === null) checkTimer = setInterval(checkPosition, CHECK_INTERVAL_MS);
+  }
+
+  function clearModelHold() {
+    modelHold = null;
+    modelObserver?.disconnect();
+    modelObserver = null;
+    if (!reading && checkTimer !== null) {
+      clearInterval(checkTimer);
+      checkTimer = null;
+    }
+  }
+
+  function holdCurrentModelPosition() {
+    if (!inChat()) return;
+    const now = Date.now();
+    // Opening the menu and picking an option are separate taps.
+    if (modelHold && now < modelHold.until) {
+      modelHold.until = now + MODEL_HOLD_MS;
+      return;
+    }
+    const target = reading?.target?.isConnected ? reading.target : findReplacement();
+    if (!isScrollable(target)) return;
+    const gap = bottomGap(target);
+    modelHold = { target, top: target.scrollTop, gap,
+      atBottom: gap <= BOTTOM_GAP, until: now + MODEL_HOLD_MS };
+    watchWhileReading();
+    if (!modelObserver && window.MutationObserver && document.body) {
+      try {
+        modelObserver = new window.MutationObserver(() => {
+          if (modelHold && !gesture && !keyboardTransition()) checkPosition();
+        });
+        modelObserver.observe(document.body, { childList: true, subtree: true });
+      } catch (_) {
+        modelObserver?.disconnect();
+        modelObserver = null;
+      }
+    }
+  }
+
+  function restoreModelPosition() {
+    if (!modelHold) return;
+    if (Date.now() >= modelHold.until) {
+      clearModelHold();
+      return;
+    }
+    let el = modelHold.target;
+    if (!el?.isConnected || !isScrollable(el)) {
+      const replacement = findReplacement();
+      if (!replacement) return;
+      el = replacement;
+      modelHold.target = replacement;
+    }
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (max < 100) return;
+    if (!modelHold.atBottom && max + 40 < modelHold.top) return;
+    const desired = modelHold.atBottom ? max : Math.min(modelHold.top, max);
+    if (Math.abs(el.scrollTop - desired) > Math.max(35, el.clientHeight * 0.12)) {
+      restoreDirect(el, desired);
+      if (reading && reading.target === el) {
+        reading.top = desired;
+        reading.height = el.scrollHeight;
+        reading.gap = bottomGap(el);
+        if (!reading.anchor?.isConnected) {
+          reading.anchor = null;
+          reading.anchorY = null;
+        }
+      }
+    }
   }
 
   function saveVisibleAnchor() {
@@ -239,6 +310,7 @@
       // Native scroll chaining to an outer container is also user input.
       gesture.target = target;
       if (gesture.moved) {
+        if (modelHold && modelHold.target === target) clearModelHold();
         // A cached native API can bypass wrappers. A bottom snap opposite an
         // upward swipe is not inertia; never save it as the user's new position.
         if (gesture.direction < 0 && reading?.target === target
@@ -252,7 +324,8 @@
       }
       return;
     }
-    if (reading && reading.target === target) checkPosition();
+    if ((reading && reading.target === target) ||
+        (modelHold && modelHold.target === target)) checkPosition();
   }
 
   function restoreDirect(el, value) {
@@ -302,7 +375,9 @@
   }
 
   function checkPosition() {
-    if (!inChat() || !reading || gesture || correcting || keyboardTransition()) return;
+    if (!inChat() || gesture || correcting || keyboardTransition()) return;
+    restoreModelPosition();
+    if (!reading) return;
     const el = readingTarget();
     if (!el || !isScrollable(el)) return;
     for (const parent of reading.parents) {
@@ -314,6 +389,14 @@
     const height = el.scrollHeight;
     const gap = bottomGap(el);
     const shift = actual - reading.top;
+    // Restore native framework-driven top resets after changing a chat model.
+    if (modelHold && actual <= 4 &&
+        reading.top > Math.max(160, el.clientHeight * 0.4)) {
+      if (height - el.clientHeight >= reading.top - 40) {
+        restoreDirect(el, reading.top);
+      }
+      return;
+    }
     const heightDelta = height - (reading.height ?? height);
     const savedGap = reading.gap ?? gap;
     let anchorDelta = null;
@@ -395,6 +478,7 @@
 
   function resetRoute() {
     path = location.pathname;
+    clearModelHold();
     clearReading();
     editorActive = false;
     keyboardSettlingUntil = 0;
@@ -411,16 +495,21 @@
   }
 
   function guard(el, desired) {
-    if (correcting || keyboardTransition() || desired === null || !Number.isFinite(desired)) return false;
+    if (correcting || keyboardTransition() ||
+        desired === null || !Number.isFinite(desired)) return false;
     const target = readingTarget();
-    if (!target) return false;
-    const saved = el === target ? reading.top : reading.parents.find(parent => parent.target === el)?.top;
-    // Native touch/inertia does not invoke these JS methods or JS setters.
-    // Do NOT disable this guard while a gesture exists: AI jumps used that gap.
-    // No positive deadband: even 0.1px scripted nudges can accumulate.
-    // Native touch inertia and Safari scroll anchoring do not use JS setters.
-    // Keyboard and deliberate bottom navigation remain exempt upstream.
-    return saved !== undefined && desired > el.scrollTop;
+    const saved = reading
+      ? (el === target ? reading.top :
+        reading.parents.find(parent => parent.target === el)?.top)
+      : undefined;
+    // Never allow automated downward motion while reading history.
+    if (saved !== undefined && desired > el.scrollTop) return true;
+    // Model changes (and other React rerenders) sometimes write scrollTop=0.
+    // Browser-native finger scrolling does not use this setter.
+    const protectedTarget = saved !== undefined ||
+      (modelHold && modelHold.target === el);
+    return !!protectedTarget && desired <= 4 &&
+      el.scrollTop > Math.max(160, el.clientHeight * 0.4);
   }
 
   function intoViewTop(node, el, args, method) {
@@ -551,13 +640,70 @@
   document.addEventListener('pointercancel', event => { if (event.pointerType !== 'touch') pointerEnd(); }, true);
   document.addEventListener('scroll', nativeScroll, true);
 
-  document.addEventListener('click', event => {
-    if (!event.isTrusted) return;
-    const button = event.target?.closest?.('button, [role="button"]');
-    if (!button) return;
-    const label = [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent].filter(Boolean).join(' ');
-    if (/최신\s*(?:메시지|대화)|맨\s*(?:아래|밑)|(?:scroll|jump)\s*to\s*(?:bottom|latest)/i.test(label)) clearReading();
-  }, true);
+  function isModelControl(target) {
+    const control = target?.closest?.(
+      'button, [role="button"], [role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], select, option, label'
+    );
+    const icon = target?.closest?.('img[src*="model-icon"]');
+    if (!control && !icon) return false;
+    const node = control || icon.parentElement;
+    const label = [
+      node?.getAttribute?.('aria-label'), node?.getAttribute?.('title'),
+      node?.getAttribute?.('data-testid'), node?.getAttribute?.('id'),
+      node?.getAttribute?.('class'), (node?.textContent || '').slice(0, 180),
+    ].filter(Boolean).join(' ');
+    return /(?:하이퍼챗|슈퍼챗|프로챗|파워챗|hyperchat|superchat|prochat|powerchat|모델\s*(?:선택|설정|변경)|채팅\s*모델|대화\s*모델|chat[-_ ]?model|model[-_ ]?(?:select|picker|switch|change))/i.test(label)
+      || !!icon || !!node?.querySelector?.('img[src*="model-icon"]');
+  }
+
+  function isBottomButton(target) {
+    const button = target?.closest?.('button, [role="button"]');
+    if (!button || isModelControl(button)) return false;
+    if (button.closest?.('[role="menu"], [role="listbox"], [role="dialog"], form')) return false;
+    const label = [
+      button.getAttribute?.('aria-label'), button.getAttribute?.('title'),
+      button.getAttribute?.('data-testid'), button.getAttribute?.('id'),
+      (button.textContent || '').slice(0, 100),
+    ].filter(Boolean).join(' ');
+    if (/최하단|맨\s*아래|가장\s*아래|최신\s*(?:메시지|대화)|마지막\s*(?:메시지|대화)|새\s*메시지|아래로\s*(?:이동|가기)|(?:scroll|go|jump)[\s_-]*(?:to[\s_-]*)?(?:bottom|latest|end)|(?:to|scroll)[\s_-]*bottom/i.test(label)) return true;
+
+    // The floating latest-message button can be an icon with no text/label.
+    const svg = button.querySelector?.('svg');
+    if (!svg) return false;
+    const icon = [
+      svg.getAttribute?.('class'), svg.getAttribute?.('data-lucide'),
+      svg.querySelector?.('use')?.getAttribute?.('href'),
+    ].filter(Boolean).join(' ');
+    const downArrow = /(?:arrow|chevron|chevrons)[-_ ]?down(?:[-_ ]to[-_ ]line)?|down[-_ ](?:arrow|chevron)|scroll[-_ ]down/i.test(icon);
+    const paths = [...(svg.querySelectorAll?.('path, polyline') || [])]
+      .map(el => el.getAttribute?.('d') || el.getAttribute?.('points') || '').join(' ');
+    const downShape = /6\s+9\s+6\s+6\s+6\s*-\s*6|12\s+5\s*v\s*14|12\s+19\s*[vl]\s*-?\s*14/i.test(paths);
+    if (!downArrow && !downShape) return false;
+    const r = button.getBoundingClientRect?.();
+    const scroller = reading?.target || modelHold?.target || findReplacement();
+    const view = scroller?.getBoundingClientRect?.();
+    if (!r || !view || r.width > 96 || r.height > 96) return false;
+    const x = (r.left + r.right) / 2;
+    return x > view.left + view.width * 0.18 &&
+      x < view.right - view.width * 0.12 &&
+      r.bottom > view.top + view.height * 0.58 &&
+      r.top < view.bottom + 35;
+  }
+
+  function handleNavigationControl(event) {
+    if (!inChat() || event.isTrusted === false) return;
+    if (isModelControl(event.target)) {
+      holdCurrentModelPosition();
+    } else if (isBottomButton(event.target)) {
+      // The capture listener runs before the site's React click handler.
+      clearModelHold();
+      clearReading();
+    }
+  }
+
+  for (const type of ['touchstart', 'pointerdown', 'click', 'change']) {
+    document.addEventListener(type, handleNavigationControl, { capture: true, passive: true });
+  }
 
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
