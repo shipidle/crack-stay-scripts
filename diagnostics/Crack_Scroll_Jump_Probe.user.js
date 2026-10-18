@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧪 스크롤 점프 진단 (임시)
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.3.0
+// @version      0.3.1
 // @description  iPhone 답변 도착 시 강제 하단 이동을 진단합니다. 채팅 본문과 계정 정보는 수집하지 않습니다.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-start
@@ -16,7 +16,7 @@
   'use strict';
   const doc = w.document;
   if (!doc || !w.Element || !w.HTMLElement || w.__SHIPIDLE_SCROLL_JUMP_PROBE__) return;
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   w.__SHIPIDLE_SCROLL_JUMP_PROBE__ = { version: VERSION };
 
   function guardVersion() {
@@ -32,6 +32,7 @@
   let nextId = 0;
   let events = [];
   let startRecord = null;
+  let significantEvents = [];
   let recording = false;
   let begunAt = 0;
   let startedAt = '';
@@ -100,6 +101,12 @@
     }
     const item = { ms, type, ...data };
     if (type === 'START') startRecord = item;
+    // Store jumps independently: the exported 25-second window previously hid
+    // the only detected jump when the user captured a longer conversation.
+    if (type === 'DOWNWARD_JUMP' || type === 'BOTTOM_CLAMP') {
+      significantEvents.push(item);
+      if (significantEvents.length > 8) significantEvents.shift();
+    }
     events.push(item);
     if (events.length > MAX_EVENTS) events.shift();
   }
@@ -212,8 +219,14 @@
         if (item.anchor?.node?.isConnected) {
           const visualShift = item.anchor.node.getBoundingClientRect().top - item.anchor.y;
           if (Math.abs(visualShift) >= 3 && clock() - item.lastAnchorAt >= 180) {
+            const box = item.anchor.node.getBoundingClientRect();
+            const screenTop = el === documentScroller() ? 0 : el.getBoundingClientRect().top;
+            const screenBottom = el === documentScroller() ? w.innerHeight : el.getBoundingClientRect().bottom;
+            const visibleBefore = item.anchor.y < screenBottom && item.anchor.y + box.height > screenTop;
+            const visibleAfter = box.top < screenBottom && box.bottom > screenTop;
             add('VISIBLE_TEXT_SHIFT', { reason, pixelDelta: safeRound(visualShift),
-              scrollDelta: safeRound(delta), heightChange: safeRound(changeHeight), ...current });
+              scrollDelta: safeRound(delta), heightChange: safeRound(changeHeight),
+              anchorVisibleBefore: visibleBefore, anchorVisibleAfter: visibleAfter, ...current });
             item.lastAnchorAt = clock();
           }
           item.anchor.y += visualShift;
@@ -337,6 +350,7 @@
     stop();
     events = [];
     startRecord = null;
+    significantEvents = [];
     candidates.clear();
     jumpCount = 0;
     manual = { touching: false, lastAt: -1, direction: 0, y: null };
@@ -406,7 +420,7 @@
       guardVersion: guardVersion(),
       privacy: 'No chat content, account IDs, URLs, or tokens collected.',
       totalEvents: events.length, detectedJumps: jumpCount,
-      start: startEvent || null, events: recent
+      start: startEvent || null, significantEvents, events: recent
     }, null, 2);
   }
   async function copyLog() {
