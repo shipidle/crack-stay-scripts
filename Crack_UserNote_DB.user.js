@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         🗂️ 크랙 유저노트 DB
 // @namespace    crack-usernote-db
-// @version      1.0.5
+// @version      1.1.0
 // @description  🧪 BETA · 크랙 유저노트에 저장해둔 범용지침/옵션/페르소나를 마커 기반으로 자동 적용
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_deleteValue
 // @grant        GM_addStyle
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -18,9 +19,11 @@
 
   const STORAGE_KEY = 'crackUserNoteDB:v1';
   const LOCAL_BACKUP_KEY = 'crackUserNoteDB:localBackups:v1';
+  const BACKUP_RETENTION_KEY = 'crackUserNoteDB:backupRetention:v1';
   const NOTE_LIMIT = 2000;
   const SLOT_COUNT = 10;
   const LOCAL_BACKUP_LIMIT = 30;
+  const DEFAULT_LOCAL_BACKUP_LIMIT = 3;
   const MARK = {
     rules: ['[r]', '[/r]'],
     option: (n) => [`[o${n}]`, `[/o${n}]`],
@@ -214,11 +217,24 @@
           <button class="undb-btn light" id="undb-import-selected">불러오기</button>
         </div>
         <div class="undb-order-title">로컬 백업</div>
+        <div class="undb-small" id="undb-storage-usage"></div>
+        <div class="undb-small" style="margin-top:8px">스냅샷 보관 개수 (기본 3개, 최대 30개)</div>
+        <select class="undb-select" id="undb-backup-retention">
+          ${[1, 2, 3, 5, 10, 20, 30].map(n => `<option value="${n}" ${n === getLocalBackupLimit() ? 'selected' : ''}>${n}개</option>`).join('')}
+        </select>
+        <div class="undb-actions">
+          <button class="undb-btn light wide" id="undb-backup-retention-save">보관 개수 저장 · 초과 스냅샷 정리</button>
+        </div>
         <select class="undb-select" id="undb-local-backup-target">${localBackupOptionsHTML()}</select>
         <div class="undb-actions three">
           <button class="undb-btn light" id="undb-local-backup-save">스냅샷 저장</button>
           <button class="undb-btn light" id="undb-local-backup-restore">복원</button>
           <button class="undb-btn red" id="undb-local-backup-delete">삭제</button>
+        </div>
+        <div class="undb-order-title">이 기기의 유저노트 DB 데이터 전체 삭제</div>
+        <div class="undb-small">저장한 범용지침·옵션·페르소나·로컬 스냅샷을 삭제함. 크랙 서버의 현재 유저노트는 건드리지 않음.</div>
+        <div class="undb-actions">
+          <button class="undb-btn red wide" id="undb-clear-local-storage">DB 및 스냅샷 전체 삭제 (2회 확인)</button>
         </div>
       </div>
 
@@ -362,7 +378,7 @@
       renderOrderPanel();
       toggleManage('order');
     });
-    $('#undb-manage-backup-btn').addEventListener('click', () => toggleManage('backup'));
+    $('#undb-manage-backup-btn').addEventListener('click', () => { refreshStorageUsage(); toggleManage('backup'); });
     $('#undb-manage-delete-btn').addEventListener('click', () => toggleManage('delete'));
     $$('[data-manage-close]').forEach((el) => el.addEventListener('click', closeManagePanels));
     $('#undb-copy-selected').addEventListener('click', () => copyTarget($('#undb-backup-target').value));
@@ -371,6 +387,8 @@
     $('#undb-local-backup-save').addEventListener('click', createLocalBackup);
     $('#undb-local-backup-restore').addEventListener('click', restoreLocalBackup);
     $('#undb-local-backup-delete').addEventListener('click', deleteLocalBackup);
+    $('#undb-backup-retention-save').addEventListener('click', saveBackupRetention);
+    $('#undb-clear-local-storage').addEventListener('click', () => void clearAllLocalDB());
     $('#undb-delete-selected').addEventListener('click', () => clearTarget($('#undb-delete-target').value));
     $('#undb-apply-room').addEventListener('click', () => applyToNote('room'));
     $('#undb-clear-room').addEventListener('click', () => clearNote('room'));
@@ -1117,6 +1135,66 @@
     input.click();
   }
 
+  function getLocalBackupLimit() {
+    const saved = Math.trunc(Number(GM_getValue(BACKUP_RETENTION_KEY, DEFAULT_LOCAL_BACKUP_LIMIT)));
+    return Number.isInteger(saved) && saved >= 1 && saved <= LOCAL_BACKUP_LIMIT
+      ? saved : DEFAULT_LOCAL_BACKUP_LIMIT;
+  }
+
+  function storageValueBytes(value) {
+    if (value === null || value === undefined) return 0;
+    return new Blob([typeof value === 'string' ? value : JSON.stringify(value)]).size;
+  }
+
+  function refreshStorageUsage() {
+    const label = $('#undb-storage-usage');
+    if (!label) return;
+    const main = GM_getValue(STORAGE_KEY, null);
+    const snapshots = GM_getValue(LOCAL_BACKUP_KEY, null);
+    const retention = GM_getValue(BACKUP_RETENTION_KEY, null);
+    const bytes = storageValueBytes(main) + storageValueBytes(snapshots) + storageValueBytes(retention);
+    label.textContent = '이 스크립트의 저장 데이터 약 '
+      + (bytes / 1024).toFixed(1) + ' KB · 스냅샷 ' + getLocalBackups().length
+      + '개 (다른 스크립트·사이트 용량 제외)';
+  }
+
+  function saveBackupRetention() {
+    const limit = Number($('#undb-backup-retention')?.value);
+    if (!Number.isInteger(limit) || limit < 1 || limit > LOCAL_BACKUP_LIMIT) {
+      return setStatus('보관 개수는 1~30으로 지정해줘.', true);
+    }
+    const backups = getLocalBackups();
+    const removeCount = Math.max(0, backups.length - limit);
+    if (removeCount && !window.confirm('오래된 로컬 스냅샷 ' + removeCount
+      + '개를 삭제하고 최신 ' + limit + '개만 남길까요?')) return;
+    // 스냅샷을 먼저 줄여 저장해야 저장용량 부족 시에도 실행할 여지가 있음.
+    setLocalBackups(backups, limit);
+    GM_setValue(BACKUP_RETENTION_KEY, limit);
+    refreshStorageUsage();
+    setStatus('스냅샷 보관 개수 ' + limit + '개 적용됨. ' + removeCount + '개 정리함.');
+  }
+
+  async function clearAllLocalDB() {
+    if (!doubleConfirm(
+      '이 기기에 저장한 UserNote DB 전체와 로컬 스냅샷을 삭제할까요? 현재 크랙 유저노트는 유지됨.',
+      '최종 확인: 이 스크립트의 범용지침·옵션·페르소나·스냅샷이 모두 삭제됩니다.'
+    )) return;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+    await GM_deleteValue(STORAGE_KEY);
+    await GM_deleteValue(LOCAL_BACKUP_KEY);
+    await GM_deleteValue(BACKUP_RETENTION_KEY);
+    state = emptyState();
+    renderSlotPanels();
+    renderOrderPanel();
+    refreshPanelValues();
+    refreshLocalBackupSelect();
+    const select = $('#undb-backup-retention');
+    if (select) select.value = String(DEFAULT_LOCAL_BACKUP_LIMIT);
+    refreshStorageUsage();
+    setStatus('이 기기의 UserNote DB 데이터·스냅샷 삭제 완료. 필요 없으면 Stay에서 스크립트를 비활성화해줘.');
+  }
+
   function getLocalBackups() {
     try {
       const raw = GM_getValue(LOCAL_BACKUP_KEY, '[]');
@@ -1127,9 +1205,10 @@
     }
   }
 
-  function setLocalBackups(backups) {
-    GM_setValue(LOCAL_BACKUP_KEY, JSON.stringify(backups.slice(0, LOCAL_BACKUP_LIMIT)));
+  function setLocalBackups(backups, limit = getLocalBackupLimit()) {
+    GM_setValue(LOCAL_BACKUP_KEY, JSON.stringify(backups.slice(0, limit)));
     refreshLocalBackupSelect();
+    refreshStorageUsage();
   }
 
   function createLocalBackup() {
