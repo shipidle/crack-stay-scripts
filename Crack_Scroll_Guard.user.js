@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.7.0
+// @version      1.7.1
 // @description  🧪 BETA · AI 강제 스크롤 방지, 모델 변경 시 위치 유지, 최하단 버튼과 iPhone 키보드 정상 허용.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.7.0' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.7.1' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.7.0');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.7.1');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -663,9 +663,9 @@
     const label = [
       button.getAttribute?.('aria-label'), button.getAttribute?.('title'),
       button.getAttribute?.('data-testid'), button.getAttribute?.('id'),
-      (button.textContent || '').slice(0, 100),
+      button.getAttribute?.('class'), (button.textContent || '').slice(0, 100),
     ].filter(Boolean).join(' ');
-    if (/최하단|맨\s*아래|가장\s*아래|최신\s*(?:메시지|대화)|마지막\s*(?:메시지|대화)|새\s*메시지|아래로\s*(?:이동|가기)|(?:scroll|go|jump)[\s_-]*(?:to[\s_-]*)?(?:bottom|latest|end)|(?:to|scroll)[\s_-]*bottom/i.test(label)) return true;
+    if (/최하단|맨\s*아래|가장\s*아래|최신\s*(?:메시지|대화)|마지막\s*(?:메시지|대화)|새\s*메시지|아래로\s*(?:이동|가기)|아래\s*스크롤|끝으로\s*이동|[↓⇩⬇⤓]|(?:scroll|go|jump)[\s_-]*(?:to[\s_-]*)?(?:bottom|latest|end)|(?:to|scroll)[\s_-]*bottom/i.test(label)) return true;
 
     // The floating latest-message button can be an icon with no text/label.
     const svg = button.querySelector?.('svg');
@@ -674,10 +674,10 @@
       svg.getAttribute?.('class'), svg.getAttribute?.('data-lucide'),
       svg.querySelector?.('use')?.getAttribute?.('href'),
     ].filter(Boolean).join(' ');
-    const downArrow = /(?:arrow|chevron|chevrons)[-_ ]?down(?:[-_ ]to[-_ ]line)?|down[-_ ](?:arrow|chevron)|scroll[-_ ]down/i.test(icon);
+    const downArrow = /(?:arrow|chevron|chevrons)[-_ ]?down(?:[-_ ]to[-_ ]line)?|down[-_ ]?(?:arrow|chevron)|scroll[-_ ]?down/i.test(icon);
     const paths = [...(svg.querySelectorAll?.('path, polyline') || [])]
       .map(el => el.getAttribute?.('d') || el.getAttribute?.('points') || '').join(' ');
-    const downShape = /6\s+9\s+6\s+6\s+6\s*-\s*6|12\s+5\s*v\s*14|12\s+19\s*[vl]\s*-?\s*14/i.test(paths);
+    const downShape = /6\s+9\s+6\s+6\s+6\s*-\s*6|12\s+5\s*v\s*14|12\s+19\s*[vl]\s*-?\s*14|5\s+12\s*l\s*7\s+7\s+7\s*-\s*7/i.test(paths);
     if (!downArrow && !downShape) return false;
     const r = button.getBoundingClientRect?.();
     const scroller = reading?.target || modelHold?.target || findReplacement();
@@ -690,11 +690,22 @@
       r.top < view.bottom + 35;
   }
 
+  function isTopButton(target) {
+    const button = target?.closest?.('button, [role="button"]');
+    if (!button || isModelControl(button)) return false;
+    const label = [
+      button.getAttribute?.('aria-label'), button.getAttribute?.('title'),
+      button.getAttribute?.('data-testid'), button.getAttribute?.('id'),
+      (button.textContent || '').slice(0, 90),
+    ].filter(Boolean).join(' ');
+    return /최상단|맨\s*위|가장\s*위|처음\s*(?:메시지|대화)|위로\s*(?:이동|가기)|(?:scroll|go|jump)[\s_-]*(?:to[\s_-]*)?top/i.test(label);
+  }
+
   function handleNavigationControl(event) {
     if (!inChat() || event.isTrusted === false) return;
     if (isModelControl(event.target)) {
       holdCurrentModelPosition();
-    } else if (isBottomButton(event.target)) {
+    } else if (isBottomButton(event.target) || isTopButton(event.target)) {
       // The capture listener runs before the site's React click handler.
       clearModelHold();
       clearReading();
