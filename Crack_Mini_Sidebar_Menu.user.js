@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📱 미니 사이드바 메뉴
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.9
+// @version      1.3.10
 // @description  🧪 BETA · 입력창 상단에 자주 쓰는 메뉴와 채팅방 최하단 이동 버튼을 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -60,8 +60,7 @@
         summaryButton: true,
         imageButton: true,
         archiveButton: true,
-        externalArchiveButton: true,
-        startButton: true
+        externalArchiveButton: true
     };
 
     const ICON = {
@@ -75,8 +74,7 @@
         summary: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15" class="my-counter-button-icon"><path d="M16.25 10.8a5.39 5.39 0 1 0 .02 10.78 5.39 5.39 0 0 0-.02-10.78m0 9.16a3.78 3.78 0 1 1 0-7.57 3.78 3.78 0 0 1 0 7.57"></path><path d="M17.02 13.43h-1.5v3.12l2.02 1.55.91-1.2-1.43-1.09z"></path><path d="M6.8 19.54v-3.29h-3V4.15h14.9V9.5h1.6V3.85c0-.72-.58-1.3-1.3-1.3H3.5c-.72 0-1.3.58-1.3 1.3v12.7c0 .72.58 1.3 1.3 1.3h1.7v3.2a.9.9 0 0 0 .89.89q.3 0 .58-.21l3.35-2.81-1.03-1.22z"></path><path d="M16.5 6.72H6v1.6h10.5zM11 10.03H6v1.6h5z"></path></svg>`,
         image: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" class="my-counter-button-icon"><path d="m11.7 6.08 6.36 3.67-6.36 3.67z"></path><path fill-rule="evenodd" d="M6.71 3.91c0-.94.76-1.7 1.7-1.7H20.1c.94 0 1.7.76 1.7 1.7V15.6c0 .94-.76 1.7-1.7 1.7h-2.81v2.8c0 .94-.76 1.7-1.7 1.7H3.9a1.7 1.7 0 0 1-1.7-1.7V8.41c0-.94.76-1.7 1.7-1.7h2.81zm1.7-.1a.1.1 0 0 0-.1.1V15.6q0 .1.1.1H20.1a.1.1 0 0 0 .1-.1V3.91a.1.1 0 0 0-.1-.1zm0 13.49h7.28v2.8a.1.1 0 0 1-.1.1H3.9a.1.1 0 0 1-.1-.1V8.41q0-.1.1-.1h2.81v7.29c0 .94.76 1.7 1.7 1.7" clip-rule="evenodd"></path></svg>`,
         archive: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" class="my-counter-button-icon"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>`,
-        externalArchive: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" class="my-counter-button-icon"><path d="M14 3h7v7h-1.6V5.73l-6.65 6.65-1.13-1.13 6.65-6.65H14z"></path><path d="M5 5h6v1.6H5.6v11.8h11.8V13H19v6c0 .55-.45 1-1 1H5c-.55 0-1-.45-1-1V6c0-.55.45-1 1-1z"></path><path d="M7.2 15.5l2.1-2.7 1.6 1.9 2.2-2.8 3 4H7.2z"></path></svg>`,
-        start: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="currentColor" class="my-counter-button-icon"><path d="M4.2 4.8c0-.72.58-1.3 1.3-1.3h13c.72 0 1.3.58 1.3 1.3v10.4c0 .72-.58 1.3-1.3 1.3h-4.55l-3.6 3.15a.75.75 0 0 1-1.24-.56V16.5H5.5c-.72 0-1.3-.58-1.3-1.3zm1.6.3v9.8h4.91v2.7l2.64-2.7h4.85V5.1z"></path><path d="M11.2 7.5h1.6v2.1h2.1v1.6h-2.1v2.1h-1.6v-2.1H9.1V9.6h2.1z"></path></svg>`
+        externalArchive: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" class="my-counter-button-icon"><path d="M14 3h7v7h-1.6V5.73l-6.65 6.65-1.13-1.13 6.65-6.65H14z"></path><path d="M5 5h6v1.6H5.6v11.8h11.8V13H19v6c0 .55-.45 1-1 1H5c-.55 0-1-.45-1-1V6c0-.55.45-1 1-1z"></path><path d="M7.2 15.5l2.1-2.7 1.6 1.9 2.2-2.8 3 4H7.2z"></path></svg>`
     };
 
     function extractFirstPathD(svgString) {
@@ -94,7 +92,7 @@
     let menuBadge = null;
     let settingsBtn = null;
     let settingsMenu = null;
-    let quickBtn, profileBtn, noteBtn, outputBtn, summaryBtn, imageBtn, archiveBtn, externalArchiveBtn, startBtn, scrollBottomBtn;
+    let quickBtn, profileBtn, noteBtn, outputBtn, summaryBtn, imageBtn, archiveBtn, externalArchiveBtn, scrollBottomBtn;
     let customMenu = null;
     let contentWrapper = null;
     let currentInput = null;       // [변경] textarea → input (textarea OR contenteditable)
@@ -141,12 +139,11 @@
             #my-custom-btn-menu #my-counter-settings-button::after { content: ''; position: absolute; top: -10px; bottom: -10px; left: -8px; right: -10px; }
             #my-custom-btn-menu #my-counter-settings-button:hover { opacity: 0.7; }
             .my-counter-settings-icon { display: block; flex-shrink: 0; }
-            #my-custom-btn-menu #my-counter-content { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+            #my-custom-btn-menu #my-counter-content { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
             #my-custom-btn-menu #my-counter-content > .btn-menu-action-btn { flex-shrink: 0; }
 
             .btn-menu-action-btn { all: unset; position: relative; pointer-events: auto; cursor: pointer; margin-left: 8px; display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; border-radius: 6px; font-weight: 700; transition: background 0.15s, color 0.15s, opacity 0.15s; touch-action: manipulation; background: var(--btn-bg); color: inherit; }
             #my-custom-btn-menu #my-counter-content > .btn-menu-action-btn:first-child { margin-left: 0; }
-            #my-custom-btn-menu #my-counter-scroll-bottom-button { flex: 0 0 auto; margin-left: 8px; }
             .btn-menu-action-btn:hover { background: var(--btn-hover-bg); opacity: 0.9; }
             .btn-menu-action-btn.is-active { background: var(--active-btn-bg); color: var(--active-text); }
             .btn-menu-action-btn.is-active:hover { background: var(--active-btn-hover-bg); }
@@ -222,7 +219,6 @@
                 imageBtn?.contains(e.target) ||
                 archiveBtn?.contains(e.target) ||
                 externalArchiveBtn?.contains(e.target) ||
-                startBtn?.contains(e.target) ||
                 scrollBottomBtn?.contains(e.target) ||
                 customMenu?.contains(e.target);
 
@@ -525,61 +521,6 @@
         if (trigger) fireClickSequence(trigger);
     }
 
-    function getStartSettingTrigger() {
-        const sectionTitle = Array.from(document.querySelectorAll('p, span')).find(el => {
-            if (isOwnMenuElement(el)) return false;
-            if (el.closest('[role="dialog"]')) return false;
-
-            const text = (el.textContent || '').replace(/\s+/g, '').trim();
-            return text === '시작설정';
-        });
-
-        if (sectionTitle) {
-            let next = sectionTitle.nextElementSibling;
-
-            for (let i = 0; next && i < 6; i++, next = next.nextElementSibling) {
-                if (!(next instanceof HTMLElement)) continue;
-
-                const text = (next.textContent || '').replace(/\s+/g, ' ').trim();
-
-                if (text.includes('채팅방 설정') || text.includes('전체 설정') || text.includes('나의 크래커')) break;
-
-                const btn =
-                    next.matches('button, [role="button"]')
-                        ? next
-                        : next.querySelector('button, [role="button"]');
-
-                if (btn && isVisibleClickable(btn)) {
-                    return btn;
-                }
-            }
-        }
-
-        const fallback = Array.from(document.querySelectorAll('button, [role="button"]')).find(btn => {
-            if (isOwnMenuElement(btn)) return false;
-            if (btn.closest('[role="dialog"]')) return false;
-            if (!isVisibleClickable(btn)) return false;
-
-            const text = (btn.textContent || '').replace(/\s+/g, ' ').trim();
-
-            return text === '이미지+세계관 질의응답';
-        });
-
-        return fallback || null;
-    }
-
-    function openStartSetting() {
-        const trigger = getStartSettingTrigger();
-
-        if (trigger) {
-            fireClickSequence(trigger);
-            lastHeavyCheckTime = 0;
-            scheduleUpdate();
-        } else {
-            console.warn('[미니 사이드바 메뉴] 시작 설정 버튼을 찾지 못함');
-        }
-    }
-
     function refreshHeavyState() {
         const imageSwitch = getContextImageSwitch();
 
@@ -692,7 +633,6 @@
         imageBtn = createBtn('my-counter-image-button', ICON.image, toggleContextImage);
         archiveBtn = createBtn('my-counter-archive-button', ICON.archive, openNativeImageArchive);
         externalArchiveBtn = createBtn('my-counter-external-archive-button', ICON.externalArchive, openExternalImageArchive);
-        startBtn = createBtn('my-counter-start-button', ICON.start, openStartSetting);
         scrollBottomBtn = createBtn('my-counter-scroll-bottom-button', ICON.bottom, scrollChatToBottom);
         scrollBottomBtn.title = '채팅방 최하단으로 이동';
         scrollBottomBtn.setAttribute('aria-label', '채팅방 최하단으로 이동');
@@ -705,10 +645,10 @@
             imageBtn,
             archiveBtn,
             externalArchiveBtn,
-            startBtn
+            scrollBottomBtn
         );
 
-        menuBadge.append(settingsBtn, contentWrapper, scrollBottomBtn);
+        menuBadge.append(settingsBtn, contentWrapper);
         container.appendChild(menuBadge);
 
         customMenu = buildMenu();
@@ -798,8 +738,7 @@
             { key: 'summaryButton', label: '요약 메모리' },
             { key: 'imageButton', label: '이미지 ON/OFF' },
             { key: 'archiveButton', label: '이미지 보관함' },
-            { key: 'externalArchiveButton', label: '외부 이미지 보관함' },
-            { key: 'startButton', label: '시작 설정' }
+            { key: 'externalArchiveButton', label: '외부 이미지 보관함' }
         ];
 
         for (const item of items) {
@@ -900,8 +839,6 @@
         if (archiveBtn) archiveBtn.style.display = cachedNativeArchiveAvailable && visibleParts.archiveButton !== false ? 'inline-flex' : 'none';
         if (externalArchiveBtn) externalArchiveBtn.style.display = cachedExternalArchiveAvailable && visibleParts.externalArchiveButton !== false ? 'inline-flex' : 'none';
 
-        if (startBtn) startBtn.style.display = visibleParts.startButton !== false ? 'inline-flex' : 'none';
-
         const imageRow = settingsMenu?.querySelector('[data-part="imageButton"]');
         if (imageRow) imageRow.style.display = cachedImageSwitchAvailable ? 'flex' : 'none';
 
@@ -911,8 +848,6 @@
         const externalRow = settingsMenu?.querySelector('[data-part="externalArchiveButton"]');
         if (externalRow) externalRow.style.display = cachedExternalArchiveAvailable ? 'flex' : 'none';
 
-        const startRow = settingsMenu?.querySelector('[data-part="startButton"]');
-        if (startRow) startRow.style.display = 'flex';
     }
 
     function overlapsMenuBadge(el) {
