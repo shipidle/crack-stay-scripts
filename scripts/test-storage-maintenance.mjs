@@ -152,7 +152,7 @@ function fakeStorage(entries) {
     saveJson: (key, value) => store.setItem(key, JSON.stringify(value)),
     persistConfig: () => store.setItem(configKey, JSON.stringify(config)),
   };
-  const code = section(memory, '  function formatLocalBytes()', '  function renderPanel()');
+  const code = section(memory, '  function formatLocalBytes(bytes) {', '  function renderPanel() {');
   runInNewContext(code + '\nglobalThis.exposed = { localStorageUsage, pruneLocalBackups, clearAllLocalBackups, importLocalBackups };', ctx);
   assert.equal(ctx.exposed.localStorageUsage().snapshots, 4);
   ctx.exposed.pruneLocalBackups(2);
