@@ -17,6 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Test storage maintenance and userscript syntax
+        run: node scripts/test-storage-maintenance.mjs
       - name: Check generated install center
         run: node scripts/generate-install-center.mjs --check
       - name: Test device and channel lists
@@ -25,8 +27,6 @@ jobs:
         run: |
           node --check Crack_Chat_Bookmarks.user.js
           node scripts/test-chat-bookmarks.mjs
-      - name: Test storage maintenance and userscript syntax
-        run: node scripts/test-storage-maintenance.mjs
       - name: Check userscript update channel
         shell: bash
         run: |
