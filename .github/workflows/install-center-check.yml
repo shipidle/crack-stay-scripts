@@ -25,6 +25,8 @@ jobs:
         run: |
           node --check Crack_Chat_Bookmarks.user.js
           node scripts/test-chat-bookmarks.mjs
+      - name: Test storage maintenance and userscript syntax
+        run: node scripts/test-storage-maintenance.mjs
       - name: Check userscript update channel
         shell: bash
         run: |
