@@ -145,6 +145,7 @@ function fakeStorage(entries) {
     BACKUP_KEY: backupsKey, MAX_BACKUPS_PER_CHAT: 5, config,
     window: { confirm: () => true },
     getChatId: () => 'room1',
+    localBackupRetention: () => Number(config.backupRetention),
     escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;'),
     backupsFor: roomId => {
       const all = JSON.parse(store.getItem(backupsKey) || '{}');
