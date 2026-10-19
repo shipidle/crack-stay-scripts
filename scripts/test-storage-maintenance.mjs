@@ -144,6 +144,12 @@ function fakeStorage(entries) {
     localStorage: store, STORAGE_KEY: 'shipidle:crack-memory-manager:v2',
     BACKUP_KEY: backupsKey, MAX_BACKUPS_PER_CHAT: 5, config,
     window: { confirm: () => true },
+    getChatId: () => 'room1',
+    escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;'),
+    backupsFor: roomId => {
+      const all = JSON.parse(store.getItem(backupsKey) || '{}');
+      return Array.isArray(all[roomId]) ? all[roomId] : [];
+    },
     showToast: () => {}, renderPanel: () => {},
     loadJson: (key, fallback) => {
       const raw = store.getItem(key);
@@ -153,7 +159,24 @@ function fakeStorage(entries) {
     persistConfig: () => store.setItem(configKey, JSON.stringify(config)),
   };
   const code = section(memory, '  function formatLocalBytes(bytes) {', '  function renderPanel() {');
-  runInNewContext(code + '\nglobalThis.exposed = { localStorageUsage, pruneLocalBackups, clearAllLocalBackups, importLocalBackups };', ctx);
+  runInNewContext(code + '\nglobalThis.exposed = { localStorageUsage, pruneLocalBackups, clearAllLocalBackups, importLocalBackups, backupsHtml };', ctx);
+  const ui = ctx.exposed.backupsHtml();
+  assert.match(ui, /전체 방 과거 백업/);
+  assert.match(ui, /data-room="room1"/);
+  assert.match(ui, /data-room="room2"/);
+  assert.match(ui, /현재 방/);
+  assert.match(ui, /복원하려면 이 채팅방을 먼저 열어야 함/);
+  assert.equal((ui.match(/data-action="restore-backup"/g) || []).length, 3, 'Only the current room should offer restore controls');
+
+  const restoreCode = section(memory, '  async function restoreBackup(roomId, id) {', '  async function handleAction(');
+  const actionCode = section(memory, '  async function handleAction(action, target) {', '  async function withBusy(');
+  let apiReads = 0;
+  ctx.fetchSummaries = async () => { apiReads++; return { items: [] }; };
+  runInNewContext(restoreCode + actionCode
+    + '\nglobalThis.exposed.restoreBackup = restoreBackup; globalThis.exposed.handleAction = handleAction;', ctx);
+  await assert.rejects(() => ctx.exposed.restoreBackup('room2', 'other'), /다른 채팅방/);
+  assert.equal(apiReads, 0, 'Cross-room restore must not reach the remote API');
+
   assert.equal(ctx.exposed.localStorageUsage().snapshots, 4);
   ctx.exposed.pruneLocalBackups(2);
   let result = JSON.parse(store.getItem(backupsKey));
@@ -161,6 +184,10 @@ function fakeStorage(entries) {
   assert.equal(result.room1[0].id, 'new');
   assert.equal(result.room2.length, 1);
   assert.equal(config.backupRetention, 2);
+  await ctx.exposed.handleAction('delete-backup', { dataset: { room: 'room2', id: 'other' } });
+  result = JSON.parse(store.getItem(backupsKey));
+  assert.equal(Object.hasOwn(result, 'room2'), false, 'A different room archive should be removable');
+  assert.equal(result.room1.length, 2, 'Removing another room archive must not affect this room');
   const archived = { kind: 'crack-memory-manager-backups', version: 1, backups: {
     room1: [makeItem('old', '2026-10-17'), makeItem('new', '2026-10-19')],
   } };
@@ -171,7 +198,7 @@ function fakeStorage(entries) {
   result = JSON.parse(store.getItem(backupsKey));
   assert.equal(result.room1.length, 3, 're-import must not duplicate IDs');
   ctx.exposed.clearAllLocalBackups();
-  assert.deepEqual(JSON.parse(store.getItem(backupsKey)), {});
+  assert.equal(store.getItem(backupsKey), null, 'Clearing archives must free the storage entry entirely');
   assert.equal(store.getItem(stateKey), '{"progress":40}');
   assert.equal(JSON.parse(store.getItem(configKey)).apiKey, 'placeholder', 'API settings must survive cleanup');
   assert.equal(store.getItem('another-app'), 'keep');
