@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💾 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.3.1
+// @version      2.3.2
 // @description  🧪 BETA · 전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -82,7 +82,7 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '2.3.1';
+  const VERSION = '2.3.2';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -1666,8 +1666,8 @@
     if (!window.confirm('과거 로컬 백업 ' + count
       + '개를 모두 지울까요? 현재 메모리·자동요약 상태·설정은 삭제되지 않음.')) return;
     if (!window.confirm('최종 확인: 백업 JSON을 외부에 보관했나요? 삭제 후 되돌릴 수 없음.')) return;
-    saveJson(BACKUP_KEY, {});
-    showToast('과거 로컬 백업 ' + count + '개 삭제 완료.');
+    localStorage.removeItem(BACKUP_KEY);
+    showToast('전체 방 과거 로컬 백업 ' + count + '개 삭제 완료.');
     renderPanel();
   }
 
@@ -1701,31 +1701,62 @@
   }
 
   function backupsHtml() {
-    const chatId = getChatId();
-    const backups = chatId ? backupsFor(chatId) : [];
+    // 백업은 방마다 생성되지만 저장소는 모든 방이 공유하므로 여기서도 전체 방을 보여줌.
+    const currentChatId = getChatId();
+    const saved = loadJson(BACKUP_KEY, {});
+    const allRooms = Object.entries(saved)
+      .filter(([, snapshots]) => Array.isArray(snapshots) && snapshots.length > 0)
+      .sort(([, first], [, second]) => String(second[0]?.createdAt || '')
+        .localeCompare(String(first[0]?.createdAt || '')));
     const usage = localStorageUsage();
     const limit = localBackupRetention();
-    const controls = `<div class="cmm-section"><h3>로컬 저장공간 및 백업 관리</h3>
-      <p class="cmm-sub">이 사이트의 localStorage 추정 사용량 ${formatLocalBytes(usage.siteBytes)} · 메모리 관리자 ${formatLocalBytes(usage.managerBytes)}
+    const controls = `<div class="cmm-section"><h3>전체 방 로컬 저장공간 및 백업 관리</h3>
+      <p class="cmm-sub">이 사이트의 localStorage 추정 사용량 ${formatLocalBytes(usage.siteBytes)}
+      · 메모리 관리자 ${formatLocalBytes(usage.managerBytes)}
       · 과거 백업 ${formatLocalBytes(usage.archiveBytes)} (${usage.rooms}개 방, ${usage.snapshots}개).
       다른 스크립트의 GM 저장소나 Safari 전체 저장량은 포함하지 않음.</p>
-      <p class="cmm-sub">정리 대상은 과거 자동 백업뿐이며 현재 장기기억·요약 진행 상태·모델/API 설정은 유지함.</p>
+      <p class="cmm-sub">여기 표시되는 것은 모든 방에서 삭제·재정리·편집 전에 만든 로컬 복구용 백업임.
+      크랙 서버에 저장된 <strong>최신 장기기억 전체를 다시 백업하는 기능은 아님.</strong>
+      자동 요약의 처리 상태·진행 중 작업·모델/API 설정은 정리 대상에서 제외함.</p>
       <div class="cmm-row">
-        <button class="cmm-btn gray" data-action="export-all-backups">전체 백업 JSON 다운로드</button>
-        <button class="cmm-btn gray" data-action="import-all-backups">백업 JSON 가져오기</button>
+        <button class="cmm-btn gray" data-action="export-all-backups">전체 방 백업 JSON 다운로드</button>
+        <button class="cmm-btn gray" data-action="import-all-backups">전체 방 백업 JSON 가져오기</button>
         <input id="cmm-backups-file" type="file" accept=".json,application/json" hidden>
       </div>
-      <label class="cmm-field">채팅방당 보관 개수
-        <select id="cmm-backup-retention">${[1, 2, 3, 5].map(n => `<option value="${n}" ${n === limit ? 'selected' : ''}>${n}개</option>`).join('')}</select>
+      <label class="cmm-field">모든 채팅방의 방별 백업 보관 개수
+        <select id="cmm-backup-retention">${[1, 2, 3, 5].map(n => `<option value="${n}" ${n === limit ? 'selected' : ''}>방마다 ${n}개</option>`).join('')}</select>
       </label>
       <div class="cmm-row">
-        <button class="cmm-btn" data-action="prune-backups">보관 개수 적용·오래된 백업 정리</button>
-        <button class="cmm-btn gray" data-action="clear-all-backups">과거 백업 전체 삭제</button>
+        <button class="cmm-btn" data-action="prune-backups">전체 방에 보관 개수 적용·정리</button>
+        <button class="cmm-btn gray" data-action="clear-all-backups">전체 방 과거 백업 삭제</button>
       </div>
+      <p class="cmm-sub">저장공간 절약을 위해 방마다 1개 보관을 권장함. 정리는 버튼을 눌러야 실행됨.</p>
     </div>`;
-    if (!backups.length) return controls + '<div class="cmm-section"><h3>현재 방 자동 백업</h3><p class="cmm-sub">이 채팅방에는 아직 과거 백업이 없음.</p></div>';
-    return controls + `<div class="cmm-section"><h3>현재 방 자동 백업</h3><p class="cmm-sub">복구는 현재 내용을 지우지 않고 누락된 항목만 추가함.</p>
-      ${backups.map(item => `<div class="cmm-backup"><div class="cmm-preview-title"><span>${escapeHtml(item.reason)}</span><span>${item.entries.length}개</span></div><div class="cmm-sub">${new Date(item.createdAt).toLocaleString()}</div><div class="cmm-row" style="margin-top:8px"><button class="cmm-btn gray" data-action="copy-backup" data-id="${escapeHtml(item.id)}">JSON 복사</button><button class="cmm-btn" data-action="restore-backup" data-id="${escapeHtml(item.id)}">누락분 복구</button><button class="cmm-btn gray" data-action="delete-backup" data-id="${escapeHtml(item.id)}">이 백업 삭제</button></div></div>`).join('')}
+    if (!allRooms.length) {
+      return controls + '<div class="cmm-section"><h3>전체 방 과거 백업</h3><p class="cmm-sub">저장된 로컬 백업이 없음. 기존 크랙 서버 장기기억과 자동 요약은 그대로 유지됨.</p></div>';
+    }
+    return controls + `<div class="cmm-section"><h3>전체 방 과거 백업 · ${usage.rooms}개 방</h3>
+      <p class="cmm-sub">어느 방에서 열어도 모든 방의 백업을 볼 수 있음. 다른 방의 백업은 복사·삭제할 수 있지만,
+      <strong>서버 장기기억 복원은 해당 채팅방으로 이동해야 가능함.</strong> 잘못된 방으로 복원되지 않도록 제한했음.</p>
+      ${allRooms.map(([roomId, backups]) => {
+        const isCurrentRoom = roomId === currentChatId;
+        return `<details class="cmm-backup" ${isCurrentRoom ? 'open' : ''}>
+          <summary style="cursor:pointer;display:list-item;font-weight:750;color:#2b4454">
+            ${isCurrentRoom ? '현재 방' : '다른 방'} · ${escapeHtml(roomId.slice(0, 12))}${roomId.length > 12 ? '…' : ''} · ${backups.length}개
+          </summary>
+          <div class="cmm-sub" style="margin-top:8px;word-break:break-all">채팅 ID: ${escapeHtml(roomId)}</div>
+          ${!isCurrentRoom ? '<p class="cmm-sub">복원하려면 이 채팅방을 먼저 열어야 함. 현재 방의 장기기억에는 적용되지 않음.</p>' : ''}
+          ${backups.map(item => `<div class="cmm-backup">
+            <div class="cmm-preview-title"><span>${escapeHtml(item.reason)}</span><span>${item.entries.length}개</span></div>
+            <div class="cmm-sub">${new Date(item.createdAt).toLocaleString()}</div>
+            <div class="cmm-row" style="margin-top:8px">
+              <button class="cmm-btn gray" data-action="copy-backup" data-room="${escapeHtml(roomId)}" data-id="${escapeHtml(item.id)}">JSON 복사</button>
+              ${isCurrentRoom ? `<button class="cmm-btn" data-action="restore-backup" data-room="${escapeHtml(roomId)}" data-id="${escapeHtml(item.id)}">누락분 복구</button>` : ''}
+              <button class="cmm-btn gray" data-action="delete-backup" data-room="${escapeHtml(roomId)}" data-id="${escapeHtml(item.id)}">이 백업 삭제</button>
+            </div>
+          </div>`).join('')}
+        </details>`;
+      }).join('')}
     </div>`;
   }
 
@@ -1763,9 +1794,12 @@
     meta.classList.toggle('cmm-error', analysis.errors.length > 0);
   }
 
-  async function restoreBackup(id) {
+  async function restoreBackup(roomId, id) {
     const chatId = getChatId();
-    const backup = backupsFor(chatId).find(item => item.id === id);
+    if (!chatId || chatId !== roomId) {
+      throw new Error('다른 채팅방의 장기기억을 현재 방으로 복원할 수 없음. 해당 채팅방에서 다시 열어줘.');
+    }
+    const backup = backupsFor(roomId).find(item => item.id === id);
     if (!backup) throw new Error('백업을 찾을 수 없음.');
     if (!window.confirm('현재 장기기억은 삭제하지 않고, 제목과 내용이 모두 같은 항목이 없을 때만 백업 항목을 추가함. 계속할까?')) return;
     const current = await fetchSummaries('longTerm');
@@ -1823,24 +1857,27 @@
     }
     if (action === 'clear-all-backups') return clearAllLocalBackups();
     if (action === 'delete-backup') {
+      const roomId = String(target.dataset.room || '');
       const all = loadJson(BACKUP_KEY, {});
-      const current = Array.isArray(all[chatId]) ? all[chatId] : [];
+      const current = Object.hasOwn(all, roomId) && Array.isArray(all[roomId]) ? all[roomId] : [];
       const selected = current.find(item => item.id === target.dataset.id);
-      if (!selected) throw new Error('삭제할 백업을 찾지 못함.');
-      if (!window.confirm('이 채팅방의 선택한 과거 백업 1개를 삭제할까요? 현재 장기기억은 유지함.')) return;
-      all[chatId] = current.filter(item => item.id !== selected.id);
-      if (!all[chatId].length) delete all[chatId];
-      saveJson(BACKUP_KEY, all);
-      showToast('선택한 과거 백업 삭제 완료.');
+      if (!selected) throw new Error('선택한 방의 백업을 찾지 못함.');
+      if (!window.confirm('채팅 ' + roomId.slice(0, 12) + '…의 과거 백업 1개를 삭제할까요? 서버 장기기억은 유지함.')) return;
+      all[roomId] = current.filter(item => item.id !== selected.id);
+      if (!all[roomId].length) delete all[roomId];
+      if (Object.keys(all).length) saveJson(BACKUP_KEY, all);
+      else localStorage.removeItem(BACKUP_KEY);
+      showToast('선택한 방의 과거 백업 1개 삭제 완료.');
       return renderPanel();
     }
     if (action === 'copy-backup') {
-      const backup = backupsFor(chatId).find(item => item.id === target.dataset.id);
-      if (!backup) throw new Error('백업을 찾을 수 없음.');
-      await navigator.clipboard.writeText(JSON.stringify(backup, null, 2));
-      return showToast('✅ 백업 JSON 복사 완료');
+      const roomId = String(target.dataset.room || '');
+      const backup = backupsFor(roomId).find(item => item.id === target.dataset.id);
+      if (!backup) throw new Error('선택한 방의 백업을 찾지 못함.');
+      await navigator.clipboard.writeText(JSON.stringify({ chatId: roomId, ...backup }, null, 2));
+      return showToast('백업 JSON 복사 완료 (' + roomId.slice(0, 12) + '…)');
     }
-    if (action === 'restore-backup') return restoreBackup(target.dataset.id);
+    if (action === 'restore-backup') return restoreBackup(String(target.dataset.room || ''), target.dataset.id);
   }
 
   async function withBusy(task) {
