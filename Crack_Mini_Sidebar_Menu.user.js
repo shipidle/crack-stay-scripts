@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         📱 미니 사이드바 메뉴
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.8
-// @description  🧪 BETA · 입력창 내부 상단에 사이드바 메뉴를 표시합니다. 내 추천 모델 표시 추가.
+// @version      1.3.9
+// @description  🧪 BETA · 입력창 상단에 자주 쓰는 메뉴와 채팅방 최하단 이동 버튼을 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
@@ -54,8 +54,6 @@
     };
 
     const DEFAULT_VISIBLE_PARTS = {
-        modelButton: true,
-        guideButton: true,
         profileButton: true,
         noteButton: true,
         outputButton: true,
@@ -67,6 +65,7 @@
     };
 
     const ICON = {
+        bottom: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="my-counter-button-icon"><path d="M12 3v12"></path><path d="m6 9 6 6 6-6"></path><path d="M4 20h16"></path></svg>`,
         settings: `<svg width="6" height="18" viewBox="0 0 6 18" fill="currentColor" class="my-counter-settings-icon"><circle cx="3" cy="3.5" r="1.8"/><circle cx="3" cy="9" r="1.8"/><circle cx="3" cy="14.5" r="1.8"/></svg>`,
         model: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="my-counter-button-icon"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"></path><path d="M12 12l8-4.5"></path><path d="M12 12v9"></path><path d="M12 12L4 7.5"></path></svg>`,
         guide: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15" class="my-counter-button-icon"><path fill-rule="evenodd" d="M15.43 6.9c.5-.25 1.07-.14 1.44.23s.48.93.23 1.44l-2.61 5.33q-.2.4-.6.6l-5.33 2.6c-.5.26-1.08.15-1.44-.22a1.25 1.25 0 0 1-.23-1.44L9.5 10.1q.2-.4.6-.6zm-6.65 8.32 3.72-1.82-1.9-1.9z" clip-rule="evenodd"></path><path fill-rule="evenodd" d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20m0 1.6a8.41 8.41 0 0 0 0 16.8 8.41 8.41 0 0 0 0-16.8" clip-rule="evenodd"></path></svg>`,
@@ -95,7 +94,7 @@
     let menuBadge = null;
     let settingsBtn = null;
     let settingsMenu = null;
-    let quickBtn, guideBtn, profileBtn, noteBtn, outputBtn, summaryBtn, imageBtn, archiveBtn, externalArchiveBtn, startBtn;
+    let quickBtn, profileBtn, noteBtn, outputBtn, summaryBtn, imageBtn, archiveBtn, externalArchiveBtn, startBtn, scrollBottomBtn;
     let customMenu = null;
     let contentWrapper = null;
     let currentInput = null;       // [변경] textarea → input (textarea OR contenteditable)
@@ -142,10 +141,12 @@
             #my-custom-btn-menu #my-counter-settings-button::after { content: ''; position: absolute; top: -10px; bottom: -10px; left: -8px; right: -10px; }
             #my-custom-btn-menu #my-counter-settings-button:hover { opacity: 0.7; }
             .my-counter-settings-icon { display: block; flex-shrink: 0; }
-            #my-custom-btn-menu #my-counter-content { display: flex; align-items: center; overflow: hidden; white-space: nowrap; max-width: calc(100vw - 120px); }
+            #my-custom-btn-menu #my-counter-content { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+            #my-custom-btn-menu #my-counter-content > .btn-menu-action-btn { flex-shrink: 0; }
 
             .btn-menu-action-btn { all: unset; position: relative; pointer-events: auto; cursor: pointer; margin-left: 8px; display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; border-radius: 6px; font-weight: 700; transition: background 0.15s, color 0.15s, opacity 0.15s; touch-action: manipulation; background: var(--btn-bg); color: inherit; }
-            #my-custom-btn-menu #my-counter-model-button { margin-left: 0; }
+            #my-custom-btn-menu #my-counter-content > .btn-menu-action-btn:first-child { margin-left: 0; }
+            #my-custom-btn-menu #my-counter-scroll-bottom-button { flex: 0 0 auto; margin-left: 8px; }
             .btn-menu-action-btn:hover { background: var(--btn-hover-bg); opacity: 0.9; }
             .btn-menu-action-btn.is-active { background: var(--active-btn-bg); color: var(--active-text); }
             .btn-menu-action-btn.is-active:hover { background: var(--active-btn-hover-bg); }
@@ -214,8 +215,6 @@
     function bindGlobalEvents() {
         document.addEventListener('click', (e) => {
             const clickedInsideModelMenu =
-                quickBtn?.contains(e.target) ||
-                guideBtn?.contains(e.target) ||
                 profileBtn?.contains(e.target) ||
                 noteBtn?.contains(e.target) ||
                 outputBtn?.contains(e.target) ||
@@ -224,6 +223,7 @@
                 archiveBtn?.contains(e.target) ||
                 externalArchiveBtn?.contains(e.target) ||
                 startBtn?.contains(e.target) ||
+                scrollBottomBtn?.contains(e.target) ||
                 customMenu?.contains(e.target);
 
             const clickedInsideSettingsMenu =
@@ -621,6 +621,35 @@
         return btn;
     }
 
+
+    function findChatScrollTarget() {
+        const docScroller = document.scrollingElement || document.documentElement;
+        const anchor = document.querySelector('main .wrtn-markdown')
+            || document.querySelector('main [data-message-id]')
+            || document.querySelector('.wrtn-markdown')
+            || document.querySelector('main');
+
+        for (let el = anchor; el; el = el.parentElement) {
+            if (el.scrollHeight - el.clientHeight <= 30) continue;
+            if (el === docScroller || /auto|scroll|overlay/.test(getComputedStyle(el).overflowY) || el.scrollTop > 0) {
+                return el;
+            }
+        }
+
+        return docScroller.scrollHeight - docScroller.clientHeight > 30 ? docScroller : null;
+    }
+
+    function scrollChatToBottom() {
+        const jump = () => {
+            const target = findChatScrollTarget();
+            if (!target) return;
+            target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
+        };
+        jump();
+        requestAnimationFrame(jump);
+        setTimeout(jump, 120);
+    }
+
     function initUI(inputEl) {
         document.getElementById('my-custom-btn-menu')?.remove();
         document.getElementById('btn-custom-dropdown-menu')?.remove();
@@ -656,8 +685,6 @@
             return makeNoKeyboardFocusButton(b, onclick);
         };
 
-        quickBtn = createBtn('my-counter-model-button', ICON.model, toggleMenu);
-        guideBtn = createBtn('my-counter-guide-button', ICON.guide, () => openDialogByIconPath(ICON_PATHS.guide, '플레이 가이드'));
         profileBtn = createBtn('my-counter-profile-button', ICON.profile, () => openDialogByIconPath(ICON_PATHS.profile, '대화 프로필'));
         noteBtn = createBtn('my-counter-note-button', ICON.note, () => openDialogByIconPath(ICON_PATHS.note, '유저 노트'));
         outputBtn = createBtn('my-counter-output-button', ICON.output, openOutputDialog);
@@ -666,10 +693,11 @@
         archiveBtn = createBtn('my-counter-archive-button', ICON.archive, openNativeImageArchive);
         externalArchiveBtn = createBtn('my-counter-external-archive-button', ICON.externalArchive, openExternalImageArchive);
         startBtn = createBtn('my-counter-start-button', ICON.start, openStartSetting);
+        scrollBottomBtn = createBtn('my-counter-scroll-bottom-button', ICON.bottom, scrollChatToBottom);
+        scrollBottomBtn.title = '채팅방 최하단으로 이동';
+        scrollBottomBtn.setAttribute('aria-label', '채팅방 최하단으로 이동');
 
         contentWrapper.append(
-            quickBtn,
-            guideBtn,
             profileBtn,
             noteBtn,
             outputBtn,
@@ -680,7 +708,7 @@
             startBtn
         );
 
-        menuBadge.append(settingsBtn, contentWrapper);
+        menuBadge.append(settingsBtn, contentWrapper, scrollBottomBtn);
         container.appendChild(menuBadge);
 
         customMenu = buildMenu();
@@ -694,8 +722,6 @@
 
         applyVisibleButtons();
         updateLayout(inputEl);
-
-        scheduleInitialAutoSync();
     }
 
     function scheduleInitialAutoSync() {
@@ -766,8 +792,6 @@
         menu.appendChild(title);
 
         const items = [
-            { key: 'modelButton', label: '모델 변경' },
-            { key: 'guideButton', label: '플레이 가이드' },
             { key: 'profileButton', label: '대화 프로필' },
             { key: 'noteButton', label: '유저 노트' },
             { key: 'outputButton', label: '출력량 조절' },
@@ -867,8 +891,6 @@
     }
 
     function applyVisibleButtons() {
-        if (quickBtn) quickBtn.style.display = visibleParts.modelButton === false ? 'none' : 'inline-flex';
-        if (guideBtn) guideBtn.style.display = visibleParts.guideButton === false ? 'none' : 'inline-flex';
         if (profileBtn) profileBtn.style.display = visibleParts.profileButton === false ? 'none' : 'inline-flex';
         if (noteBtn) noteBtn.style.display = visibleParts.noteButton === false ? 'none' : 'inline-flex';
         if (outputBtn) outputBtn.style.display = visibleParts.outputButton === false ? 'none' : 'inline-flex';

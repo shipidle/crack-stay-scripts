@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.7.1
+// @version      1.7.2
 // @description  🧪 BETA · AI 강제 스크롤 방지, 모델 변경 시 위치 유지, 최하단 버튼과 iPhone 키보드 정상 허용.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.7.1' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.7.2' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.7.1');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.7.2');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -659,6 +659,8 @@
   function isBottomButton(target) {
     const button = target?.closest?.('button, [role="button"]');
     if (!button || isModelControl(button)) return false;
+    // Composer-embedded mini-sidebar button is intentional user navigation.
+    if (button.id === 'my-counter-scroll-bottom-button') return true;
     if (button.closest?.('[role="menu"], [role="listbox"], [role="dialog"], form')) return false;
     const label = [
       button.getAttribute?.('aria-label'), button.getAttribute?.('title'),
