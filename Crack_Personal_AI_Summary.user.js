@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💾 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.3.0
+// @version      2.3.1
 // @description  🧪 BETA · 전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -82,7 +82,7 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.1';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -177,6 +177,7 @@
     apiKey: '',
     firebaseScript: '',
     extraPrompt: '',
+    backupRetention: 5, // 기존 기본값 유지
   };
 
   const storedConfig = loadJson(CONFIG_KEY, null);
@@ -311,6 +312,7 @@
 
   function shortError(error) {
     const raw = String(error?.message || error || '알 수 없는 오류').replace(/\s+/g, ' ').trim();
+    if (error?.name === 'QuotaExceededError' || /(?:quota.{0,30}exceed|storage.{0,30}full)/i.test(raw)) return '브라우저 저장공간 한도 초과. 메모리 관리자 > 백업에서 전체 JSON을 내려받고 오래된 백업을 정리해줘.';
     if (/summary_sync_state|summary_checkpoint|summary_batch|schema cache/i.test(raw)) {
       return 'Supabase에서 supabase/summary_sync.sql을 먼저 실행해줘.';
     }
@@ -813,6 +815,12 @@
     return Array.isArray(all[chatId]) ? all[chatId] : [];
   }
 
+  function localBackupRetention() {
+    const limit = Number(config.backupRetention);
+    return Number.isInteger(limit) && limit >= 1 && limit <= MAX_BACKUPS_PER_CHAT
+      ? limit : MAX_BACKUPS_PER_CHAT;
+  }
+
   function saveBackup(chatId, reason, entries) {
     const all = loadJson(BACKUP_KEY, {});
     const list = Array.isArray(all[chatId]) ? all[chatId] : [];
@@ -825,7 +833,7 @@
         createdBy: item.createdBy || '', createdAt: item.createdAt || '', updatedAt: item.updatedAt || '',
       })),
     });
-    all[chatId] = list.slice(0, MAX_BACKUPS_PER_CHAT);
+    all[chatId] = list.slice(0, localBackupRetention());
     saveJson(BACKUP_KEY, all);
     return all[chatId][0];
   }
@@ -1587,12 +1595,137 @@
     </div>`;
   }
 
+  function formatLocalBytes(bytes) {
+    return bytes >= 1024 * 1024
+      ? (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+      : (bytes / 1024).toFixed(1) + ' KB';
+  }
+
+  function localStorageUsage() {
+    let siteBytes = 0;
+    let managerBytes = 0;
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key === null) continue;
+      const bytes = new Blob([key, localStorage.getItem(key) || '']).size;
+      siteBytes += bytes;
+      if (key.startsWith(STORAGE_KEY)) managerBytes += bytes;
+    }
+    const archives = loadJson(BACKUP_KEY, {});
+    const list = Object.values(archives).filter(Array.isArray);
+    return {
+      siteBytes, managerBytes,
+      archiveBytes: new Blob([localStorage.getItem(BACKUP_KEY) || '']).size,
+      rooms: list.length,
+      snapshots: list.reduce((sum, items) => sum + items.length, 0),
+    };
+  }
+
+  function exportAllLocalBackups() {
+    const archives = loadJson(BACKUP_KEY, {});
+    const data = JSON.stringify({
+      kind: 'crack-memory-manager-backups',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      backups: archives,
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/json;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'crack-memory-backups-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    showToast('전체 백업 JSON 다운로드 요청 완료. 실제 저장 여부를 확인해줘.');
+  }
+
+  function pruneLocalBackups(limit) {
+    const all = loadJson(BACKUP_KEY, {});
+    const next = {};
+    let removed = 0;
+    for (const [chatId, snapshots] of Object.entries(all)) {
+      if (!Array.isArray(snapshots)) { next[chatId] = snapshots; continue; }
+      const kept = snapshots.slice(0, limit);
+      removed += snapshots.length - kept.length;
+      if (kept.length) next[chatId] = kept;
+    }
+    if (removed && !window.confirm('모든 채팅방에서 오래된 백업 ' + removed
+      + '개를 삭제하고 방당 최신 ' + limit + '개만 남길까요? 현재 요약·설정은 유지함.')) return;
+    saveJson(BACKUP_KEY, next);
+    config.backupRetention = limit;
+    persistConfig();
+    showToast('방별 백업 ' + limit + '개 보관 설정 완료 · ' + removed + '개 정리');
+    renderPanel();
+  }
+
+  function clearAllLocalBackups() {
+    const all = loadJson(BACKUP_KEY, {});
+    const count = Object.values(all).filter(Array.isArray).reduce((n, items) => n + items.length, 0);
+    if (!count) { showToast('삭제할 과거 백업이 없음.'); return; }
+    if (!window.confirm('과거 로컬 백업 ' + count
+      + '개를 모두 지울까요? 현재 메모리·자동요약 상태·설정은 삭제되지 않음.')) return;
+    if (!window.confirm('최종 확인: 백업 JSON을 외부에 보관했나요? 삭제 후 되돌릴 수 없음.')) return;
+    saveJson(BACKUP_KEY, {});
+    showToast('과거 로컬 백업 ' + count + '개 삭제 완료.');
+    renderPanel();
+  }
+
+  async function importLocalBackups(file) {
+    if (!file) return;
+    const archive = JSON.parse(await file.text());
+    if (archive?.kind !== 'crack-memory-manager-backups'
+      || archive.version !== 1 || !archive.backups || typeof archive.backups !== 'object'
+      || Array.isArray(archive.backups)) throw new Error('이 메모리 관리자가 내보낸 백업 JSON이 아님.');
+    const existing = loadJson(BACKUP_KEY, {});
+    const merged = { ...existing };
+    let added = 0;
+    for (const [chatId, items] of Object.entries(archive.backups)) {
+      if (!/^[a-z0-9_-]{1,128}$/i.test(chatId) || !Array.isArray(items)) throw new Error('백업의 방 ID 또는 목록 형식이 올바르지 않음.');
+      if (items.some(item => !item || typeof item.id !== 'string' || !Array.isArray(item.entries))) {
+        throw new Error('백업 항목 형식이 올바르지 않음.');
+      }
+      const current = Array.isArray(merged[chatId]) ? merged[chatId] : [];
+      const known = new Set(current.map(item => item.id));
+      const missing = items.filter(item => !known.has(item.id));
+      added += missing.length;
+      merged[chatId] = current.concat(missing)
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    }
+    if (!added) { showToast('새로 가져올 백업 없음.'); return; }
+    if (!window.confirm('백업 ' + added
+      + '개를 기존 자료에 추가할까요? 현재 요약·설정은 그대로이며 추가된 백업은 방별 보관 개수보다 많을 수 있음.')) return;
+    saveJson(BACKUP_KEY, merged);
+    showToast('백업 ' + added + '개 가져오기 완료.');
+    renderPanel();
+  }
+
   function backupsHtml() {
     const chatId = getChatId();
     const backups = chatId ? backupsFor(chatId) : [];
-    if (!backups.length) return `<div class="cmm-section"><h3>자동 백업</h3><p class="cmm-sub">아직 백업이 없음. 자동 삭제·재정리·수동 편집 직전에 최대 5개를 저장함.</p></div>`;
-    return `<div class="cmm-section"><h3>자동 백업</h3><p class="cmm-sub">복구는 현재 내용을 지우지 않고 누락된 항목만 추가함.</p>
-      ${backups.map(item => `<div class="cmm-backup"><div class="cmm-preview-title"><span>${escapeHtml(item.reason)}</span><span>${item.entries.length}개</span></div><div class="cmm-sub">${new Date(item.createdAt).toLocaleString()}</div><div class="cmm-row" style="margin-top:8px"><button class="cmm-btn gray" data-action="copy-backup" data-id="${item.id}">JSON 복사</button><button class="cmm-btn" data-action="restore-backup" data-id="${item.id}">누락분 복구</button></div></div>`).join('')}
+    const usage = localStorageUsage();
+    const limit = localBackupRetention();
+    const controls = `<div class="cmm-section"><h3>로컬 저장공간 및 백업 관리</h3>
+      <p class="cmm-sub">이 사이트의 localStorage 추정 사용량 ${formatLocalBytes(usage.siteBytes)} · 메모리 관리자 ${formatLocalBytes(usage.managerBytes)}
+      · 과거 백업 ${formatLocalBytes(usage.archiveBytes)} (${usage.rooms}개 방, ${usage.snapshots}개).
+      다른 스크립트의 GM 저장소나 Safari 전체 저장량은 포함하지 않음.</p>
+      <p class="cmm-sub">정리 대상은 과거 자동 백업뿐이며 현재 장기기억·요약 진행 상태·모델/API 설정은 유지함.</p>
+      <div class="cmm-row">
+        <button class="cmm-btn gray" data-action="export-all-backups">전체 백업 JSON 다운로드</button>
+        <button class="cmm-btn gray" data-action="import-all-backups">백업 JSON 가져오기</button>
+        <input id="cmm-backups-file" type="file" accept=".json,application/json" hidden>
+      </div>
+      <label class="cmm-field">채팅방당 보관 개수
+        <select id="cmm-backup-retention">${[1, 2, 3, 5].map(n => `<option value="${n}" ${n === limit ? 'selected' : ''}>${n}개</option>`).join('')}</select>
+      </label>
+      <div class="cmm-row">
+        <button class="cmm-btn" data-action="prune-backups">보관 개수 적용·오래된 백업 정리</button>
+        <button class="cmm-btn gray" data-action="clear-all-backups">과거 백업 전체 삭제</button>
+      </div>
+    </div>`;
+    if (!backups.length) return controls + '<div class="cmm-section"><h3>현재 방 자동 백업</h3><p class="cmm-sub">이 채팅방에는 아직 과거 백업이 없음.</p></div>';
+    return controls + `<div class="cmm-section"><h3>현재 방 자동 백업</h3><p class="cmm-sub">복구는 현재 내용을 지우지 않고 누락된 항목만 추가함.</p>
+      ${backups.map(item => `<div class="cmm-backup"><div class="cmm-preview-title"><span>${escapeHtml(item.reason)}</span><span>${item.entries.length}개</span></div><div class="cmm-sub">${new Date(item.createdAt).toLocaleString()}</div><div class="cmm-row" style="margin-top:8px"><button class="cmm-btn gray" data-action="copy-backup" data-id="${escapeHtml(item.id)}">JSON 복사</button><button class="cmm-btn" data-action="restore-backup" data-id="${escapeHtml(item.id)}">누락분 복구</button><button class="cmm-btn gray" data-action="delete-backup" data-id="${escapeHtml(item.id)}">이 백업 삭제</button></div></div>`).join('')}
     </div>`;
   }
 
@@ -1605,6 +1738,13 @@
     else if (activeTab === 'editor') body.innerHTML = editorHtml();
     else if (activeTab === 'settings') body.innerHTML = settingsHtml();
     else body.innerHTML = backupsHtml();
+    if (activeTab === 'backups') {
+      panel.querySelector('#cmm-backups-file')?.addEventListener('change', event => {
+        const file = event.target.files?.[0];
+        if (file) void withBusy(() => importLocalBackups(file));
+        event.target.value = '';
+      });
+    }
     if (activeTab === 'editor' && editorLoaded) {
       const textarea = panel.querySelector('#cmm-editor');
       textarea?.addEventListener('input', updateEditorMeta);
@@ -1672,6 +1812,26 @@
       const state = stateFor(chatId);
       state.pendingCompaction = null;
       persistStates();
+      return renderPanel();
+    }
+    if (action === 'export-all-backups') return exportAllLocalBackups();
+    if (action === 'import-all-backups') return panel.querySelector('#cmm-backups-file')?.click();
+    if (action === 'prune-backups') {
+      const limit = Number(panel.querySelector('#cmm-backup-retention')?.value);
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_BACKUPS_PER_CHAT) throw new Error('방당 백업 보관 개수는 1~5개여야 함.');
+      return pruneLocalBackups(limit);
+    }
+    if (action === 'clear-all-backups') return clearAllLocalBackups();
+    if (action === 'delete-backup') {
+      const all = loadJson(BACKUP_KEY, {});
+      const current = Array.isArray(all[chatId]) ? all[chatId] : [];
+      const selected = current.find(item => item.id === target.dataset.id);
+      if (!selected) throw new Error('삭제할 백업을 찾지 못함.');
+      if (!window.confirm('이 채팅방의 선택한 과거 백업 1개를 삭제할까요? 현재 장기기억은 유지함.')) return;
+      all[chatId] = current.filter(item => item.id !== selected.id);
+      if (!all[chatId].length) delete all[chatId];
+      saveJson(BACKUP_KEY, all);
+      showToast('선택한 과거 백업 삭제 완료.');
       return renderPanel();
     }
     if (action === 'copy-backup') {
