@@ -210,7 +210,41 @@ def desktop_send_click(p):
     p.evaluate("document.querySelector('.wrtn-markdown').insertAdjacentHTML('beforeend','<p>Reply</p>');host.scrollTo(0,maxTop())")
     near(p.evaluate('host.scrollTop'),before)
 
+def desktop_fast_wheel(p):
+    p.evaluate("editor.classList.add('__chat_input_textarea')")
+    p.locator('#editor').focus()
+    p.keyboard.press('Enter')
+    # A fast wheel/page movement to bottom is user input, not an app snap.
+    p.evaluate("""() => {
+      host.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-100}));
+      nativeTo(1200);
+    }""")
+    p.wait_for_timeout(350)
+    p.evaluate("""() => {
+      host.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:9000}));
+      nativeTo(maxTop());
+    }""")
+    near(p.evaluate('host.scrollTop'),p.evaluate('maxTop()'))
+    p.wait_for_timeout(350)
+    near(p.evaluate('host.scrollTop'),p.evaluate('maxTop()'))
+    before=p.evaluate('host.scrollTop')
+    p.evaluate("document.querySelector('.wrtn-markdown').insertAdjacentHTML('beforeend','<p>Reply</p>');host.scrollTop=maxTop()")
+    near(p.evaluate('host.scrollTop'),before)
+
+def desktop_scrollbar_track(p):
+    arm(p)
+    p.evaluate("""() => {
+      const r=host.getBoundingClientRect();
+      host.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'mouse',clientX:r.right-2}));
+      nativeTo(maxTop());
+      host.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerType:'mouse'}));
+    }""")
+    p.wait_for_timeout(350)
+    near(p.evaluate('host.scrollTop'),p.evaluate('maxTop()'))
+
 CASES=[
+ ('desktop fast wheel reaches bottom',desktop_fast_wheel),
+ ('desktop scrollbar track click',desktop_scrollbar_track),
  ('desktop reply without scrolling',desktop_reply),
  ('desktop send button without scrolling',desktop_send_click),
  ('reply during touch',touch_reply),('reply during inertia',inertia_reply),

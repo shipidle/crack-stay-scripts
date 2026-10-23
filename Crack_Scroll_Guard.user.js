@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.2
+// @version      1.8.3
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.2' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.3' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.2');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.3');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -396,14 +396,14 @@
     finishTimer = setTimeout(endGesture, INERTIA_QUIET_MS);
   }
 
-  function startGesture(target, down) {
+  function startGesture(target, down, source = 'touch') {
     if (!inChat() || !isScrollable(target)) return;
     // Arm before the first scroll event; JS scrolling stays guarded during touch.
     if (!gesture) checkPosition();
     saveUserPosition(target);
     if (finishTimer !== null) clearTimeout(finishTimer);
     finishTimer = null;
-    gesture = { target, down, moved: !down, y: null, direction: 0,
+    gesture = { target, down, source, moved: !down || source === 'scrollbar', y: null, direction: 0,
       startedAt: Date.now(), acceptedTop: target.scrollTop,
       acceptedAt: Date.now() };
     if (!down) queueGestureEnd();
@@ -460,7 +460,7 @@
         // Reject both contrary-to-finger jumps and implausibly fast jumps.
         const impossibleJump = delta > Math.max(450, target.clientHeight * 0.85) &&
           elapsed < 125;
-        if (atBottom && fromHistory && reading?.target === target &&
+        if (gesture.source === 'touch' && atBottom && fromHistory && reading?.target === target &&
             (gesture.direction < 0 || impossibleJump) && delta > 100) {
           restoreDirect(target, gesture.acceptedTop ?? reading.top);
           if (!gesture.down) queueGestureEnd();
@@ -799,20 +799,20 @@
   document.addEventListener('touchcancel', pointerEnd, { capture: true, passive: true });
   document.addEventListener('wheel', event => {
     if (overlayTarget(event.target)) return;
-    startGesture(scrollTarget(event.target), false);
+    startGesture(scrollTarget(event.target), false, 'wheel');
     if (gesture) gesture.direction = Math.sign(event.deltaY);
   }, { capture: true, passive: true });
   document.addEventListener('keydown', event => {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || '') || event.target?.isContentEditable) return;
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
-      startGesture(scrollTarget(event.target), false);
+      startGesture(scrollTarget(event.target), false, 'keyboard');
     }
   }, true);
   document.addEventListener('pointerdown', event => {
     if (event.pointerType === 'touch') return;
     const el = scrollTarget(event.target);
     const right = el === documentScroller() ? window.innerWidth : el.getBoundingClientRect().right;
-    if (isScrollable(el) && event.clientX > right - 18) startGesture(el, true);
+    if (isScrollable(el) && event.clientX > right - 18) startGesture(el, true, 'scrollbar');
   }, true);
   // iOS emits both pointer and touch events; touchcancel/pointercancel differ.
   document.addEventListener('pointermove', event => { if (event.pointerType !== 'touch') pointerMove(); }, true);
