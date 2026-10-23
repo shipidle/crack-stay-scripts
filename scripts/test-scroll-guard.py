@@ -242,7 +242,45 @@ def desktop_scrollbar_track(p):
     p.wait_for_timeout(350)
     near(p.evaluate('host.scrollTop'),p.evaluate('maxTop()'))
 
+def desktop_ctrl_enter_completion(p):
+    p.evaluate("""() => {
+      editor.classList.add('__chat_input_textarea');
+      editor.placeholder='메시지';
+      editor.insertAdjacentHTML('afterend','<button id="send">Send</button>');
+      window.testSends=0; send.onclick=()=>testSends++;
+      window.GM_addStyle=()=>{};
+      nativeTo(maxTop());
+    }""")
+    optimizer=(DEFAULT.parent / 'Crack_Linebreak_Optimizer.user.js').read_text(encoding='utf-8')
+    p.evaluate(optimizer)
+    p.locator('#editor').focus()
+    before=p.evaluate('host.scrollTop')
+    p.keyboard.press('Control+Enter')
+    assert p.evaluate('testSends') == 1, 'Ctrl+Enter must click Send once'
+    p.evaluate("document.querySelector('.wrtn-markdown').insertAdjacentHTML('beforeend','<p>Streaming reply</p>');host.scrollTop=maxTop()")
+    near(p.evaluate('host.scrollTop'),before)
+    p.evaluate("""() => {
+      host.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-350}));
+      nativeTo(host.scrollTop-350);
+    }""")
+    p.wait_for_timeout(350)
+    reading=p.evaluate('host.scrollTop')
+    assert reading < before
+    p.evaluate("""() => {
+      document.querySelector('.wrtn-markdown').insertAdjacentHTML('beforeend','<p>Completed reply</p>');
+      editor.blur();
+      editor.focus();
+      host.scrollTop=maxTop();
+    }""")
+    near(p.evaluate('host.scrollTop'),reading)
+    p.wait_for_timeout(350)
+    near(p.evaluate('host.scrollTop'),reading)
+    p.evaluate("document.querySelector('body > button').onclick=()=>host.scrollTop=maxTop()")
+    p.locator('body > button').click()
+    near(p.evaluate('host.scrollTop'),p.evaluate('maxTop()'))
+
 CASES=[
+ ('desktop Ctrl Enter with optimizer and completion focus',desktop_ctrl_enter_completion),
  ('desktop fast wheel reaches bottom',desktop_fast_wheel),
  ('desktop scrollbar track click',desktop_scrollbar_track),
  ('desktop reply without scrolling',desktop_reply),
@@ -280,7 +318,7 @@ with sync_playwright() as pw:
             assert not errors, '; '.join(errors)
             result={'case':name,'pass':True}
         except Exception as error:
-            result={'case':name,'pass':False,'error':str(error).splitlines()[0]}
+            result={'case':name,'pass':False,'error':(str(error).splitlines() or [type(error).__name__])[0]}
         results.append(result)
         print(('PASS ' if result['pass'] else 'FAIL ')+name+(' — '+result.get('error','') if not result['pass'] else ''),flush=True)
         context.close()

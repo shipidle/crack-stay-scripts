@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.3
+// @version      1.8.4
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.3' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.4' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.3');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.4');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -742,6 +742,10 @@
       }
       if (isEditor(this)) {
         editorActive = true;
+        if (desktopReplyHold) {
+          // Completion refocus must not move the viewport before restoration.
+          return nativeFocus.call(this, { ...(options && typeof options === 'object' ? options : {}), preventScroll: true });
+        }
         releaseForKeyboard();
         // Do NOT use preventScroll: true on a real editable composer.
         return nativeFocus.apply(this, arguments);
@@ -821,7 +825,9 @@
   document.addEventListener('scroll', nativeScroll, true);
 
   function holdBeforeDesktopReply(event) {
-    if (event.isTrusted === false || !inChat() || overlayTarget(event.target) ||
+    // Ctrl+Enter helpers call the real send button's click(), which is untrusted.
+    // Keep accepting only a nearby submit button below, not arbitrary events.
+    if ((event.isTrusted === false && event.type !== 'click') || !inChat() || overlayTarget(event.target) ||
         !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
     const composer = document.querySelector('.__chat_input_textarea');
     if (!composer) return;
