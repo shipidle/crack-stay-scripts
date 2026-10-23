@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.7.2
-// @description  🧪 BETA · AI 강제 스크롤 방지, 모델 변경 시 위치 유지, 최하단 버튼과 iPhone 키보드 정상 허용.
+// @version      1.8.0
+// @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://crack.wrtn.ai/*
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.7.2' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.0' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.7.2');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.0');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -46,6 +46,16 @@
   let modelHold = null;
   let modelObserver = null;
   const MODEL_HOLD_MS = 9000;
+  let panelHold = null;
+  let panelObserver = null;
+  const PANEL_GRACE_MS = 2100;
+  const OVERLAY_SELECTOR = [
+    '[role="dialog"]', '[aria-modal="true"]', '#cmm-overlay',
+    '#cbg-settings-overlay', '#cbg-crop-overlay', '#csb-panel',
+    '#crack-helper-panel', '#cwa-panel', '#cdt-panel',
+    '#ch-panel', '#info-display-turn-adjust',
+    '#btn-custom-dropdown-menu', '#btn-menu-settings-menu'
+  ].join(',');
   const EDITOR_SELECTOR = 'textarea, input, [contenteditable="true"], [role="textbox"]';
 
   function isEditor(node) {
@@ -57,7 +67,120 @@
   function releaseForKeyboard() {
     // Safari must be able to move the composer above its on-screen keyboard.
     keyboardSettlingUntil = Date.now() + 1300;
+    clearPanelHold();
     clearReading();
+  }
+
+  function overlayTarget(node) {
+    return !!node?.closest?.(OVERLAY_SELECTOR) ||
+      !!node?.closest?.('#cwa-host, #crack-helper-panel, #csb-panel');
+  }
+
+  function overlayVisible() {
+    const nodes = document.querySelectorAll?.(OVERLAY_SELECTOR) || [];
+    for (const node of nodes) {
+      if (node.hidden || node.getAttribute?.('aria-hidden') === 'true') continue;
+      const css = getComputedStyle(node);
+      if (css.display === 'none' || css.visibility === 'hidden') continue;
+      const rect = node.getBoundingClientRect?.();
+      if (rect && rect.width > 15 && rect.height > 15) return true;
+    }
+    return false;
+  }
+
+  function clearPanelHold() {
+    panelHold = null;
+    panelObserver?.disconnect();
+    panelObserver = null;
+    if (!reading && !modelHold && checkTimer !== null) {
+      clearInterval(checkTimer);
+      checkTimer = null;
+    }
+  }
+
+  function holdForPanel() {
+    if (!inChat() || editorActive) return;
+    if (panelHold) {
+      panelHold.until = Date.now() + PANEL_GRACE_MS;
+      return;
+    }
+    const el = reading?.target?.isConnected && isScrollable(reading.target)
+      ? reading.target : findReplacement();
+    if (!el || !isScrollable(el)) return;
+    const docScroller = documentScroller();
+    panelHold = {
+      target: el, top: el.scrollTop, height: el.scrollHeight,
+      gap: bottomGap(el), atBottom: bottomGap(el) <= BOTTOM_GAP,
+      docTop: docScroller.scrollTop,
+      until: Date.now() + PANEL_GRACE_MS, hasOpened: false,
+    };
+    watchWhileReading();
+    if (window.MutationObserver && document.body) {
+      try {
+        panelObserver = new window.MutationObserver(() => {
+          if (panelHold && !gesture && !keyboardTransition()) {
+            // Microtask/observer callback runs before the next visual frame.
+            checkPosition();
+          }
+        });
+        panelObserver.observe(document.body, {
+          childList: true, subtree: true, attributes: true,
+          attributeFilter: ['class','style','hidden','aria-hidden']
+        });
+      } catch (_) {
+        panelObserver?.disconnect();
+        panelObserver = null;
+      }
+    }
+  }
+
+  function restorePanelPosition() {
+    if (!panelHold) return;
+    const open = overlayVisible();
+    if (open) {
+      panelHold.hasOpened = true;
+      panelHold.until = Date.now() + PANEL_GRACE_MS;
+    }
+    if (Date.now() > panelHold.until) {
+      clearPanelHold();
+      return;
+    }
+    const previous = panelHold.target;
+    let el = previous;
+    if (!el?.isConnected || !isScrollable(el)) {
+      el = findReplacement();
+      if (!el || !isScrollable(el)) return;
+      panelHold.target = el;
+    }
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (max < 100 || (!panelHold.atBottom && max + 40 < panelHold.top)) return;
+    let desired = panelHold.atBottom ? max : Math.min(panelHold.top, max);
+    const heightDelta = el.scrollHeight - panelHold.height;
+    const scrollDelta = el.scrollTop - panelHold.top;
+    // Accept native anchoring when the viewport really stays over the same text.
+    if (!panelHold.atBottom && Math.abs(heightDelta) > 80 &&
+        Math.abs(scrollDelta - heightDelta) < 20 &&
+        Math.abs(bottomGap(el) - panelHold.gap) < 35) {
+      panelHold.top = el.scrollTop;
+      panelHold.height = el.scrollHeight;
+      panelHold.gap = bottomGap(el);
+      desired = el.scrollTop;
+    }
+    // Overlay focus may reset the chat scroller even without replacing it.
+    if (Math.abs(el.scrollTop - desired) > 3) {
+      restoreDirect(el, desired);
+      if (reading && reading.target === el) {
+        reading.top = desired;
+        reading.height = el.scrollHeight;
+        reading.gap = bottomGap(el);
+      }
+    }
+    const docScroller = documentScroller();
+    if (el !== docScroller && panelHold.docTop > 5 &&
+        Math.abs(docScroller.scrollTop - panelHold.docTop) > 5 &&
+        docScroller.scrollHeight > docScroller.clientHeight + panelHold.docTop - 5) {
+      restoreDirect(docScroller, panelHold.docTop);
+    }
   }
 
   function stopLayoutObserver() {
@@ -116,21 +239,21 @@
   function clearReading() {
     reading = null;
     stopLayoutObserver();
-    if (checkTimer !== null && !modelHold) {
+    if (checkTimer !== null && !modelHold && !panelHold) {
       clearInterval(checkTimer);
       checkTimer = null;
     }
   }
 
   function watchWhileReading() {
-    if ((reading || modelHold) && checkTimer === null) checkTimer = setInterval(checkPosition, CHECK_INTERVAL_MS);
+    if ((reading || modelHold || panelHold) && checkTimer === null) checkTimer = setInterval(checkPosition, CHECK_INTERVAL_MS);
   }
 
   function clearModelHold() {
     modelHold = null;
     modelObserver?.disconnect();
     modelObserver = null;
-    if (!reading && checkTimer !== null) {
+    if (!reading && !panelHold && checkTimer !== null) {
       clearInterval(checkTimer);
       checkTimer = null;
     }
@@ -217,7 +340,7 @@
   }
 
   function saveUserPosition(el) {
-    if (!inChat() || keyboardTransition() || !isScrollable(el)) return;
+    if (!inChat() || keyboardTransition() || overlayVisible() || !isScrollable(el)) return;
     if (bottomGap(el) <= BOTTOM_GAP) {
       clearReading();
       return;
@@ -270,12 +393,16 @@
     saveUserPosition(target);
     if (finishTimer !== null) clearTimeout(finishTimer);
     finishTimer = null;
-    gesture = { target, down, moved: !down, y: null, direction: 0 };
+    gesture = { target, down, moved: !down, y: null, direction: 0,
+      startedAt: Date.now(), acceptedTop: target.scrollTop,
+      acceptedAt: Date.now() };
     if (!down) queueGestureEnd();
   }
 
   function pointerStart(event) {
+    if (overlayTarget(event.target)) return;
     if (isEditor(event.target)) {
+      // A panel's own input must not unlock or refocus the chat scroller.
       releaseForKeyboard();
       return;
     }
@@ -311,21 +438,34 @@
       gesture.target = target;
       if (gesture.moved) {
         if (modelHold && modelHold.target === target) clearModelHold();
+        if (panelHold && panelHold.target === target) clearPanelHold();
         // A cached native API can bypass wrappers. A bottom snap opposite an
         // upward swipe is not inertia; never save it as the user's new position.
-        if (gesture.direction < 0 && reading?.target === target
-          && target.scrollTop > reading.top + 80 && bottomGap(target) <= BOTTOM_GAP) {
-          restoreDirect(target, reading.top);
+        const delta = target.scrollTop - (gesture.acceptedTop ?? target.scrollTop);
+        const elapsed = Date.now() - (gesture.acceptedAt ?? Date.now());
+        const atBottom = bottomGap(target) <= BOTTOM_GAP;
+        const priorGap = reading?.target === target ? reading.gap : Infinity;
+        const fromHistory = priorGap > Math.max(160, target.clientHeight * 0.4);
+        // A browser/app bottom snap is not the finger's movement.
+        // Reject both contrary-to-finger jumps and implausibly fast jumps.
+        const impossibleJump = delta > Math.max(450, target.clientHeight * 0.85) &&
+          elapsed < 125;
+        if (atBottom && fromHistory && reading?.target === target &&
+            (gesture.direction < 0 || impossibleJump) && delta > 100) {
+          restoreDirect(target, gesture.acceptedTop ?? reading.top);
           if (!gesture.down) queueGestureEnd();
           return;
         }
+        gesture.acceptedTop = target.scrollTop;
+        gesture.acceptedAt = Date.now();
         saveUserPosition(target);
         if (!gesture.down) queueGestureEnd();
       }
       return;
     }
     if ((reading && reading.target === target) ||
-        (modelHold && modelHold.target === target)) checkPosition();
+        (modelHold && modelHold.target === target) ||
+        (panelHold && panelHold.target === target)) checkPosition();
   }
 
   function restoreDirect(el, value) {
@@ -376,6 +516,7 @@
 
   function checkPosition() {
     if (!inChat() || gesture || correcting || keyboardTransition()) return;
+    restorePanelPosition();
     restoreModelPosition();
     if (!reading) return;
     const el = readingTarget();
@@ -478,6 +619,7 @@
 
   function resetRoute() {
     path = location.pathname;
+    clearPanelHold();
     clearModelHold();
     clearReading();
     editorActive = false;
@@ -507,7 +649,8 @@
     // Model changes (and other React rerenders) sometimes write scrollTop=0.
     // Browser-native finger scrolling does not use this setter.
     const protectedTarget = saved !== undefined ||
-      (modelHold && modelHold.target === el);
+      (modelHold && modelHold.target === el) ||
+      (panelHold && panelHold.target === el);
     return !!protectedTarget && desired <= 4 &&
       el.scrollTop > Math.max(160, el.clientHeight * 0.4);
   }
@@ -573,6 +716,11 @@
   const nativeFocus = HTMLElement.prototype.focus;
   if (typeof nativeFocus === 'function') {
     HTMLElement.prototype.focus = function (options) {
+      if (overlayTarget(this)) {
+        holdForPanel();
+        // Let Safari focus the popup editor without releasing chat protection.
+        return nativeFocus.apply(this, arguments);
+      }
       if (isEditor(this)) {
         editorActive = true;
         releaseForKeyboard();
@@ -596,12 +744,17 @@
   }
 
   document.addEventListener('focusin', event => {
+    if (overlayTarget(event.target)) {
+      holdForPanel();
+      return;
+    }
     if (isEditor(event.target)) {
       editorActive = true;
       releaseForKeyboard();
     }
   }, true);
   document.addEventListener('focusout', event => {
+    if (overlayTarget(event.target)) return;
     if (isEditor(event.target)) {
       editorActive = false;
       keyboardSettlingUntil = Date.now() + 1150;
@@ -619,6 +772,7 @@
   document.addEventListener('touchend', pointerEnd, { capture: true, passive: true });
   document.addEventListener('touchcancel', pointerEnd, { capture: true, passive: true });
   document.addEventListener('wheel', event => {
+    if (overlayTarget(event.target)) return;
     startGesture(scrollTarget(event.target), false);
     if (gesture) gesture.direction = Math.sign(event.deltaY);
   }, { capture: true, passive: true });
@@ -703,14 +857,27 @@
     return /최상단|맨\s*위|가장\s*위|처음\s*(?:메시지|대화)|위로\s*(?:이동|가기)|(?:scroll|go|jump)[\s_-]*(?:to[\s_-]*)?top/i.test(label);
   }
 
+  function panelTrigger(target) {
+    const control = target?.closest?.('button, [role="button"], [role="menuitem"], #cwa-icon, #crack-helper-btn');
+    if (!control) return false;
+    const id = control.id || '';
+    if (/^(?:my-counter-(?:profile|note|output|summary|image|archive|external-archive|settings)-button|cmm-header-button|cbg-header-button|csb-toolbar-btn|cwa-toolbar-btn|crack-helper-btn|cdt-toolbar-btn)$/.test(id)) return true;
+    if (control.getAttribute?.('aria-haspopup') === 'dialog') return true;
+    const parent = control.closest?.('#my-custom-btn-menu, #cwa-toolbar');
+    return !!parent && !isBottomButton(control) && !isTopButton(control) &&
+      !isModelControl(control);
+  }
+
   function handleNavigationControl(event) {
     if (!inChat() || event.isTrusted === false) return;
-    if (isModelControl(event.target)) {
-      holdCurrentModelPosition();
-    } else if (isBottomButton(event.target) || isTopButton(event.target)) {
-      // The capture listener runs before the site's React click handler.
+    if (isBottomButton(event.target) || isTopButton(event.target)) {
+      clearPanelHold();
       clearModelHold();
       clearReading();
+    } else if (isModelControl(event.target)) {
+      holdCurrentModelPosition();
+    } else if (panelTrigger(event.target)) {
+      holdForPanel();
     }
   }
 
