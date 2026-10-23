@@ -29,7 +29,7 @@ BOOT = '''() => {
      if(key==='location')return testLocation;
      if(key==='history')return testHistory;
      const value=Reflect.get(target,key,target);
-     if(['addEventListener','removeEventListener','getComputedStyle','scroll','scrollBy','scrollTo'].includes(key)&&typeof value==='function')return value.bind(target);
+     if(['addEventListener','removeEventListener','getComputedStyle','matchMedia','scroll','scrollBy','scrollTo'].includes(key)&&typeof value==='function')return value.bind(target);
      return value;
    },set(target,key,value){return Reflect.set(target,key,value,target);}
  });
@@ -188,7 +188,31 @@ def cdp_swipe(p):
     p.evaluate('host.scrollTop=maxTop()')
     near(p.evaluate('host.scrollTop'),old)
 
+def desktop_reply(p):
+    p.evaluate("editor.classList.add('__chat_input_textarea');nativeTo(maxTop())")
+    p.locator('#editor').focus()
+    before=p.evaluate('host.scrollTop')
+    p.keyboard.press('Enter')
+    p.evaluate("document.querySelector('.wrtn-markdown').insertAdjacentHTML('beforeend','<p>New reply</p>');host.scrollTop=maxTop()")
+    near(p.evaluate('host.scrollTop'),before)
+    p.evaluate('rawSet.call(host,maxTop());host.dispatchEvent(new Event("scroll"))')
+    p.wait_for_timeout(250)
+    near(p.evaluate('host.scrollTop'),before)
+    p.evaluate("document.querySelector('button').onclick=()=>host.scrollTop=maxTop()")
+    p.locator('button').click()
+    near(p.evaluate('host.scrollTop'),p.evaluate('maxTop()'))
+
+def desktop_send_click(p):
+    p.evaluate("editor.classList.add('__chat_input_textarea');editor.insertAdjacentHTML('afterend','<button id=send>Send</button>');nativeTo(maxTop())")
+    before=p.evaluate('host.scrollTop')
+    p.locator('#send').click()
+    before=p.evaluate('host.scrollTop')
+    p.evaluate("document.querySelector('.wrtn-markdown').insertAdjacentHTML('beforeend','<p>Reply</p>');host.scrollTo(0,maxTop())")
+    near(p.evaluate('host.scrollTop'),before)
+
 CASES=[
+ ('desktop reply without scrolling',desktop_reply),
+ ('desktop send button without scrolling',desktop_send_click),
  ('reply during touch',touch_reply),('reply during inertia',inertia_reply),
  ('arm before first scroll',before_first_scroll),('visible message block:start',start_alignment),
  ('visible message block:center',center_alignment),('visible message nearest',nearest_alignment),
@@ -208,7 +232,8 @@ with sync_playwright() as pw:
     if executable: opts['executable_path']=executable
     browser=pw.chromium.launch(**opts)
     for name,case in CASES:
-        context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,device_scale_factor=1)
+        desktop=name.startswith('desktop ')
+        context=browser.new_context(viewport={'width':390,'height':844},is_mobile=not desktop,has_touch=not desktop,device_scale_factor=1)
         page=context.new_page()
         page.set_content(HTML)
         errors=[]

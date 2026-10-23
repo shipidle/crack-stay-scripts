@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.1
+// @version      1.8.2
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.1' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.2' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.1');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.2');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -35,6 +35,7 @@
   const nativeScrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
   let path = location.pathname;
   let reading = null;
+  let desktopReplyHold = false;
   let gesture = null;
   let finishTimer = null;
   let checkTimer = null;
@@ -62,9 +63,11 @@
     return !!(node?.matches?.(EDITOR_SELECTOR) || node?.closest?.(EDITOR_SELECTOR));
   }
   function keyboardTransition() {
+    if (desktopReplyHold) return false;
     return editorActive || Date.now() < keyboardSettlingUntil;
   }
   function releaseForKeyboard() {
+    if (desktopReplyHold) return;
     // Safari must be able to move the composer above its on-screen keyboard.
     keyboardSettlingUntil = Date.now() + 1300;
     clearPanelHold();
@@ -243,6 +246,7 @@
   }
 
   function clearReading() {
+    desktopReplyHold = false;
     reading = null;
     stopLayoutObserver();
     if (checkTimer !== null && !modelHold && !panelHold) {
@@ -347,7 +351,7 @@
 
   function saveUserPosition(el) {
     if (!inChat() || keyboardTransition() || overlayVisible() || !isScrollable(el)) return;
-    if (bottomGap(el) <= BOTTOM_GAP) {
+    if (bottomGap(el) <= BOTTOM_GAP && !desktopReplyHold) {
       clearReading();
       return;
     }
@@ -536,6 +540,15 @@
     const height = el.scrollHeight;
     const gap = bottomGap(el);
     const shift = actual - reading.top;
+    // A desktop submission pins the pre-reply position even if it was the
+    // bottom. Appending a reply must not be mistaken for native anchoring.
+    if (desktopReplyHold) {
+      if (shift > 2) restoreDirect(el, reading.top);
+      else if (shift < -2) reading.top = actual;
+      reading.height = height;
+      reading.gap = bottomGap(el);
+      return;
+    }
     // Restore native framework-driven top resets after changing a chat model.
     if (modelHold && actual <= 4 &&
         reading.top > Math.max(160, el.clientHeight * 0.4)) {
@@ -806,6 +819,35 @@
   document.addEventListener('pointerup', event => { if (event.pointerType !== 'touch') pointerEnd(); }, true);
   document.addEventListener('pointercancel', event => { if (event.pointerType !== 'touch') pointerEnd(); }, true);
   document.addEventListener('scroll', nativeScroll, true);
+
+  function holdBeforeDesktopReply(event) {
+    if (event.isTrusted === false || !inChat() || overlayTarget(event.target) ||
+        !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
+    const composer = document.querySelector('.__chat_input_textarea');
+    if (!composer) return;
+    const fromComposer = event.target === composer || composer.contains(event.target);
+    if (event.type === 'keydown') {
+      if (!fromComposer || event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+    } else if (event.type === 'submit') {
+      if (!event.target.contains(composer)) return;
+    } else {
+      const button = event.target.closest?.('button');
+      // The current Crack send button has no type attribute (DOM type=submit).
+      if (!button || button.type !== 'submit' || button.disabled) return;
+      let container = composer.parentElement;
+      for (let i = 0; container && i < 4 && !container.contains(button); i++) container = container.parentElement;
+      if (!container || container === document.body || !container.contains(button)) return;
+    }
+    const target = findReplacement();
+    if (!isScrollable(target)) return;
+    clearPanelHold();
+    clearModelHold();
+    desktopReplyHold = true;
+    saveUserPosition(target);
+  }
+  for (const type of ['keydown', 'click', 'submit']) {
+    document.addEventListener(type, holdBeforeDesktopReply, true);
+  }
 
   function isModelControl(target) {
     const control = target?.closest?.(
