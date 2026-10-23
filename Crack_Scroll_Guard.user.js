@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.4
+// @version      1.8.5
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.4' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.5' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.4');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.5');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -396,11 +396,28 @@
     finishTimer = setTimeout(endGesture, INERTIA_QUIET_MS);
   }
 
+  function saveWheelPosition(target) {
+    if (!reading || reading.target !== target) {
+      saveUserPosition(target);
+      return;
+    }
+    // Hot path: no overlay scan, anchor hit-test or observer setup per wheel tick.
+    reading.top = target.scrollTop;
+    reading.height = target.scrollHeight;
+    reading.gap = bottomGap(target);
+    for (const parent of reading.parents) parent.top = parent.target.scrollTop;
+    reading.anchor = null;
+    reading.anchorY = null;
+  }
+
   function startGesture(target, down, source = 'touch') {
     if (!inChat() || !isScrollable(target)) return;
     // Arm before the first scroll event; JS scrolling stays guarded during touch.
-    if (!gesture) checkPosition();
-    saveUserPosition(target);
+    // Chrome's compositor may have moved before the wheel callback arrives.
+    // Never restore an old reading position at the start of manual wheel input.
+    if (!gesture && source !== 'wheel') checkPosition();
+    if (source === 'wheel') saveWheelPosition(target);
+    else saveUserPosition(target);
     if (finishTimer !== null) clearTimeout(finishTimer);
     finishTimer = null;
     gesture = { target, down, source, moved: !down || source === 'scrollbar', y: null, direction: 0,
@@ -468,7 +485,8 @@
         }
         gesture.acceptedTop = target.scrollTop;
         gesture.acceptedAt = Date.now();
-        saveUserPosition(target);
+        if (gesture.source === 'wheel') saveWheelPosition(target);
+        else saveUserPosition(target);
         if (!gesture.down) queueGestureEnd();
       }
       return;

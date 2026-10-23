@@ -279,7 +279,31 @@ def desktop_ctrl_enter_completion(p):
     p.locator('body > button').click()
     near(p.evaluate('host.scrollTop'),p.evaluate('maxTop()'))
 
+def desktop_wheel_before_event(p):
+    p.evaluate("editor.classList.add('__chat_input_textarea')")
+    p.locator('#editor').focus()
+    p.keyboard.press('Enter')
+    p.evaluate("""() => {
+      host.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-100}));
+      nativeTo(1200);
+    }""")
+    p.wait_for_timeout(350)
+    p.evaluate('writes=[]')
+    # Compositor position is already newer when the next wheel callback arrives.
+    p.evaluate("""() => {
+      rawSet.call(host,1320);
+      host.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:120}));
+      host.dispatchEvent(new Event('scroll'));
+    }""")
+    near(p.evaluate('host.scrollTop'),1320)
+    p.wait_for_timeout(350)
+    near(p.evaluate('host.scrollTop'),1320)
+    assert p.evaluate('writes.length') == 0, 'manual wheel must not trigger restoration writes'
+    p.evaluate('host.scrollTop=maxTop()')
+    near(p.evaluate('host.scrollTop'),1320)
+
 CASES=[
+ ('desktop compositor wheel before event',desktop_wheel_before_event),
  ('desktop Ctrl Enter with optimizer and completion focus',desktop_ctrl_enter_completion),
  ('desktop fast wheel reaches bottom',desktop_fast_wheel),
  ('desktop scrollbar track click',desktop_scrollbar_track),
@@ -304,6 +328,8 @@ with sync_playwright() as pw:
     if executable: opts['executable_path']=executable
     browser=pw.chromium.launch(**opts)
     for name,case in CASES:
+        if os.environ.get('SCROLL_TEST_CASE') and os.environ['SCROLL_TEST_CASE'] != name:
+            continue
         desktop=name.startswith('desktop ')
         context=browser.new_context(viewport={'width':390,'height':844},is_mobile=not desktop,has_touch=not desktop,device_scale_factor=1)
         page=context.new_page()
