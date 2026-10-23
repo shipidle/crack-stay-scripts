@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ↩️ 줄바꿈 최적화
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.6.0
+// @version      1.6.1
 // @description  🧪 BETA · 줄바꿈을 최적화하고 Enter 오전송을 막아 PC는 Ctrl+Enter, iPhone/iPad는 Command+Enter로 전송합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -19,7 +19,7 @@
   'use strict';
 
   const STYLE_ID = 'crack-linebreak-optimizer-style';
-  const GUARD_VERSION = '1.6.0';
+  const GUARD_VERSION = '1.6.1';
   const CHAT_INPUT_SELECTOR = 'textarea[placeholder*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap';
   const KEYBOARD_EVENT_TYPES = ['keydown', 'keypress', 'keyup'];
   const CSS = `
@@ -180,7 +180,7 @@
       });
       if (labeled) return labeled;
 
-      const submit = buttons.find(button => button.matches('button[type="submit"]'));
+      const submit = buttons.find(button => button.matches('button') && button.type === 'submit');
       if (submit) return submit;
     }
 
@@ -235,7 +235,7 @@
           return /전송|보내기|send|submit/i.test(label);
         });
         if (labeled) return labeled;
-        const submit = buttons.find(button => button.matches('button[type="submit"]:not(:disabled)'));
+        const submit = buttons.find(button => button.matches('button') && button.type === 'submit' && !button.matches(':disabled, [aria-disabled="true"]'));
         if (submit) return submit;
       }
       return null;

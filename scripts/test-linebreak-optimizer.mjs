@@ -14,8 +14,9 @@ function createHarness({ appleTouch = false } = {}) {
   class MockElement {}
   const button = new MockElement();
   Object.assign(button, {
-    matches: selector => selector === 'button[type="submit"]' || false,
-    getAttribute: name => name === 'aria-label' ? '전송' : null,
+    type: 'submit',
+    matches: selector => selector === 'button',
+    getAttribute: () => null,
     textContent: '',
     querySelector: selector => selector === 'svg' ? {} : null,
     getBoundingClientRect: () => ({ left: 370, right: 405, top: 120, bottom: 155, width: 35, height: 35 }),
@@ -99,7 +100,7 @@ function createHarness({ appleTouch = false } = {}) {
 }
 
 assert.match(source, /@run-at\s+document-start/);
-assert.match(source, /@version\s+1\.6\.0/);
+assert.match(source, /@version\s+1\.6\.1/);
 assert.match(source, /crackEnterGuardPage/);
 assert.match(source, /new KeyboardEvent\('keydown'/);
 assert.match(source, /shiftKey:\s*true/);
@@ -118,7 +119,8 @@ assert.match(source, /const JAPANESE_RE/);
   let insertedLineBreaks = 0;
   let pageSends = 0;
   const sendButton = {
-    matches: selector => selector === 'button[type="submit"]:not(:disabled)',
+    type: 'submit',
+    matches: selector => selector === 'button',
     getAttribute: () => null,
     textContent: '',
     click: () => { pageSends += 1; },
