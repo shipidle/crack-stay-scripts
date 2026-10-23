@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.0
+// @version      1.8.1
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.0' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.1' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.0');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.1');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -99,7 +99,13 @@
   }
 
   function holdForPanel() {
-    if (!inChat() || editorActive) return;
+    if (!inChat()) return;
+    // The chat composer can retain focus when opening a userscript panel.
+    // Its old keyboard state must not disable restoration of the chat.
+    if (editorActive) {
+      editorActive = false;
+      keyboardSettlingUntil = 0;
+    }
     if (panelHold) {
       panelHold.until = Date.now() + PANEL_GRACE_MS;
       return;
@@ -757,14 +763,21 @@
     if (overlayTarget(event.target)) return;
     if (isEditor(event.target)) {
       editorActive = false;
-      keyboardSettlingUntil = Date.now() + 1150;
+      // Closing the chat keyboard to open a popup must not unlock the chat.
+      keyboardSettlingUntil = panelHold ? 0 : Date.now() + 1150;
     }
   }, true);
   window.visualViewport?.addEventListener('resize', () => {
-    if (editorActive || isEditor(document.activeElement)) releaseForKeyboard();
+    if (!panelHold && (editorActive ||
+        (isEditor(document.activeElement) && !overlayTarget(document.activeElement)))) {
+      releaseForKeyboard();
+    }
   }, { passive: true });
   window.addEventListener('resize', () => {
-    if (editorActive || isEditor(document.activeElement)) releaseForKeyboard();
+    if (!panelHold && (editorActive ||
+        (isEditor(document.activeElement) && !overlayTarget(document.activeElement)))) {
+      releaseForKeyboard();
+    }
   }, { passive: true });
 
   document.addEventListener('touchstart', pointerStart, { capture: true, passive: true });
