@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📊 턴수 & 크래커 표시기
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.1.14
+// @version      1.1.15
 // @description  🧪 BETA · 입력창 내부 상단에 턴수, 사용/잔여/최근 차감 크래커를 표시합니다. 턴수를 길게 눌러 방별 수동 보정이 가능합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -25,7 +25,7 @@
     let suppressTurnClick = false;
 
     const SELECTOR = {
-        input: 'textarea[placeholder*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap',
+        input: 'textarea[placeholder*="메시지"], textarea[aria-label*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap, .ProseMirror[contenteditable="true"], [role="textbox"][contenteditable="true"]',
         messageGroup: 'div[data-message-group-id]',
         modelIcon: 'img[src*="model-icon"]'
     };
@@ -101,6 +101,7 @@
     injectBaseStyle();
     bindGlobalEvents();
     startObserver();
+    installRecoveryWatch();
     scheduleUpdate();
 
     function injectBaseStyle() {
@@ -442,9 +443,37 @@
         });
     }
 
+    // 탭 복귀/SPA 이동 및 입력창 재생성 후 배지가 누락되면 재연결한다.
+    function installRecoveryWatch() {
+        let lastObservedUrl = location.href;
+        const onReturn = () => {
+            if (!document.hidden) scheduleUpdate();
+        };
+        window.addEventListener('pageshow', onReturn);
+        window.addEventListener('focus', onReturn);
+        window.addEventListener('popstate', onReturn);
+        document.addEventListener('visibilitychange', onReturn);
+
+        setInterval(() => {
+            if (document.hidden) return;
+            const urlChanged = location.href !== lastObservedUrl;
+            lastObservedUrl = location.href;
+            const inputEl = findChatInput();
+            const badge = document.getElementById('my-custom-info-display');
+            if (urlChanged || inputEl !== currentInput ||
+                (inputEl && (!badge?.isConnected || badge.parentElement !== findInputContainer(inputEl)))) {
+                scheduleUpdate();
+            }
+        }, 3000);
+    }
+
     function scheduleUpdate() {
-        clearTimeout(updateTimer);
-        updateTimer = setTimeout(updateTurnCount, 80);
+        // 변경이 계속 발생해도 예약된 갱신을 지연시키지 않는다.
+        if (updateTimer !== null) return;
+        updateTimer = setTimeout(() => {
+            updateTimer = null;
+            updateTurnCount();
+        }, 80);
     }
 
     function loadDetailParts() {
@@ -548,6 +577,37 @@
         const newUiContainer = inputEl.closest('div.flex.flex-col.rounded-lg.border, div.rounded-lg.border.bg-background');
         if (newUiContainer) return newUiContainer;
         return inputEl.parentElement;
+    }
+
+    // 채팅 입력창을 우선 선택하고 편집용/숨김 입력창은 제외한다.
+    function findChatInput() {
+        const candidates = Array.from(document.querySelectorAll(SELECTOR.input)).filter(el => {
+            if (!el.isConnected || el.dataset.loreRefinerMessageId) return false;
+            if (el.closest('.bg-surface_tertiary, [aria-hidden="true"], [hidden], [role="dialog"], [data-message-group-id], .wrtn-markdown, #cmm-overlay, #crack-helper-panel, #cdt-panel, #csb-panel, #cwa-host')) return false;
+
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+        });
+
+        const rank = el => el.matches('.__chat_input_textarea') ? 3
+            : el.matches('textarea[placeholder*="메시지"], textarea[aria-label*="메시지"]') ? 2
+            : el.matches('.tiptap, .ProseMirror') ? 1 : 0;
+
+        candidates.sort((a, b) => rank(b) - rank(a)
+            || b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+        return candidates[0] || null;
+    }
+
+    // 불필요한 style 변이를 막아 MutationObserver 갱신 루프를 줄인다.
+    function setInputSpacing(inputEl, paddingTop) {
+        for (const [property, pixels] of [['padding-top', paddingTop], ['min-height', paddingTop + 40]]) {
+            const next = `${pixels}px`;
+            if (inputEl.style.getPropertyValue(property) !== next ||
+                inputEl.style.getPropertyPriority(property) !== 'important') {
+                inputEl.style.setProperty(property, next, 'important');
+            }
+        }
     }
 
     function initUI(inputEl) {
@@ -954,8 +1014,7 @@
 
         const requiredPaddingTop = otherIsInsideContainer ? 81 : 46;
 
-        inputEl.style.setProperty('padding-top', `${requiredPaddingTop}px`, 'important');
-        inputEl.style.setProperty('min-height', `${requiredPaddingTop + 40}px`, 'important');
+        setInputSpacing(inputEl, requiredPaddingTop);
 
         syncSideLayerStack();
     }
@@ -1193,15 +1252,7 @@
             lastDialogCheckTime = now;
         }
 
-        const inputEl = Array.from(document.querySelectorAll(SELECTOR.input)).find(el => {
-            if (el.dataset.loreRefinerMessageId) return false;
-            if (el.closest('.bg-surface_tertiary')) return false;
-
-            const wrapText = (el.closest('div.flex.flex-col')?.innerText || '');
-            if (wrapText.includes('수정 완료') || wrapText.includes('취소')) return false;
-
-            return true;
-        });
+        const inputEl = findChatInput();
 
         if (!inputEl) {
             counterBadge?.remove();
