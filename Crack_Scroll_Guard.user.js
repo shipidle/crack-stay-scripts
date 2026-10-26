@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.5
+// @version      1.8.6
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -55,6 +55,9 @@
     '#cbg-settings-overlay', '#cbg-crop-overlay', '#csb-panel',
     '#crack-helper-panel', '#cwa-panel', '#cdt-panel',
     '#ch-panel', '#info-display-turn-adjust',
+    '#rpcm-overlay', '#rpcm-ai-backdrop', '#rpcm-story-view-backdrop',
+    '#rpcm-detached-backdrop', '#rpcm-api-settings-backdrop',
+    '#rpcm-private-sync', '#rpcm-ai-memory-backdrop',
     '#btn-custom-dropdown-menu', '#btn-menu-settings-menu'
   ].join(',');
   const EDITOR_SELECTOR = 'textarea, input, [contenteditable="true"], [role="textbox"]';
