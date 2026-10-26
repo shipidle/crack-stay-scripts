@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📱 미니 사이드바 메뉴
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.3.10
+// @version      1.3.11
 // @description  🧪 BETA · 입력창 상단에 자주 쓰는 메뉴와 채팅방 최하단 이동 버튼을 표시합니다.
 // @match        *://crack.wrtn.ai/*
 // @grant        none
@@ -21,7 +21,7 @@
 
     // [변경] textarea + 새 contenteditable div 모두 지원
     const SELECTOR = {
-        input: 'textarea[placeholder*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap',
+        input: 'textarea[placeholder*="메시지"], textarea[aria-label*="메시지"], div.__chat_input_textarea, div[contenteditable="true"].tiptap, .ProseMirror[contenteditable="true"], [role="textbox"][contenteditable="true"]',
         modelIcon: 'img[src*="model-icon"]',
         modelButton: 'button[aria-haspopup="menu"]',
         menuItem: 'div[role="menuitem"]'
@@ -118,6 +118,7 @@
     injectBaseStyle();
     bindGlobalEvents();
     startObserver();
+    installRecoveryWatch();
     scheduleUpdate();
 
     function injectBaseStyle() {
@@ -273,13 +274,41 @@
             childList: true,
             subtree: true,
             attributes: true,
-            attributeFilter: ['aria-valuenow', 'data-state', 'aria-checked']
+            attributeFilter: ['aria-valuenow', 'data-state', 'aria-checked', 'class']
         });
     }
 
+    // 탭 복귀/SPA 이동 및 입력창 재생성 후 배지가 누락되면 재연결한다.
+    function installRecoveryWatch() {
+        let lastObservedUrl = location.href;
+        const onReturn = () => {
+            if (!document.hidden) scheduleUpdate();
+        };
+        window.addEventListener('pageshow', onReturn);
+        window.addEventListener('focus', onReturn);
+        window.addEventListener('popstate', onReturn);
+        document.addEventListener('visibilitychange', onReturn);
+
+        setInterval(() => {
+            if (document.hidden) return;
+            const urlChanged = location.href !== lastObservedUrl;
+            lastObservedUrl = location.href;
+            const inputEl = findChatInput();
+            const badge = document.getElementById('my-custom-btn-menu');
+            if (urlChanged || inputEl !== currentInput ||
+                (inputEl && (!badge?.isConnected || badge.parentElement !== findInputContainer(inputEl)))) {
+                scheduleUpdate();
+            }
+        }, 3000);
+    }
+
     function scheduleUpdate() {
-        clearTimeout(updateTimer);
-        updateTimer = setTimeout(updateState, 80);
+        // 변경이 계속 발생해도 예약된 갱신을 지연시키지 않는다.
+        if (updateTimer !== null) return;
+        updateTimer = setTimeout(() => {
+            updateTimer = null;
+            updateState();
+        }, 80);
     }
 
     function loadVisibleParts() {
@@ -345,6 +374,37 @@
         const newUiContainer = inputEl.closest('div.flex.flex-col.rounded-lg.border, div.rounded-lg.border.bg-background');
         if (newUiContainer) return newUiContainer;
         return inputEl.parentElement;
+    }
+
+    // 채팅 입력창을 우선 선택하고 편집용/숨김 입력창은 제외한다.
+    function findChatInput() {
+        const candidates = Array.from(document.querySelectorAll(SELECTOR.input)).filter(el => {
+            if (!el.isConnected || el.dataset.loreRefinerMessageId) return false;
+            if (el.closest('.bg-surface_tertiary, [aria-hidden="true"], [hidden], [role="dialog"], [data-message-group-id], .wrtn-markdown, #cmm-overlay, #crack-helper-panel, #cdt-panel, #csb-panel, #cwa-host')) return false;
+
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+        });
+
+        const rank = el => el.matches('.__chat_input_textarea') ? 3
+            : el.matches('textarea[placeholder*="메시지"], textarea[aria-label*="메시지"]') ? 2
+            : el.matches('.tiptap, .ProseMirror') ? 1 : 0;
+
+        candidates.sort((a, b) => rank(b) - rank(a)
+            || b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+        return candidates[0] || null;
+    }
+
+    // 불필요한 style 변이를 막아 MutationObserver 갱신 루프를 줄인다.
+    function setInputSpacing(inputEl, paddingTop) {
+        for (const [property, pixels] of [['padding-top', paddingTop], ['min-height', paddingTop + 40]]) {
+            const next = `${pixels}px`;
+            if (inputEl.style.getPropertyValue(property) !== next ||
+                inputEl.style.getPropertyPriority(property) !== 'important') {
+                inputEl.style.setProperty(property, next, 'important');
+            }
+        }
     }
 
     function getContextImageSwitch() {
@@ -1343,20 +1403,11 @@ const infoIsSibling = infoDisplay && menuBadge.parentElement.contains(infoDispla
 
 const requiredPaddingTop = infoIsSibling ? 81 : 46;
 
-inputEl.style.setProperty('padding-top', `${requiredPaddingTop}px`, 'important');
-inputEl.style.setProperty('min-height', `${requiredPaddingTop + 40}px`, 'important');
+setInputSpacing(inputEl, requiredPaddingTop);
     }
 
     function updateState() {
-        const inputEl = Array.from(document.querySelectorAll(SELECTOR.input)).find(el => {
-    if (el.dataset.loreRefinerMessageId) return false;
-    if (el.closest('.bg-surface_tertiary')) return false;
-
-    const wrapText = (el.closest('div.flex.flex-col')?.innerText || '');
-    if (wrapText.includes('수정 완료') || wrapText.includes('취소')) return false;
-
-    return true;
-});
+        const inputEl = findChatInput();
 
         if (!inputEl) {
             menuBadge?.remove();
