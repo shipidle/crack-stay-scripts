@@ -184,6 +184,31 @@ function fakeStorage(entries) {
   assert.equal(ctx.exposed.localStorageUsage().snapshots, 4);
   assert.ok(ctx.exposed.localStorageUsage().largestKeys.some(item => item.label === 'another-app'));
   assert.ok(ctx.exposed.localStorageUsage().otherBytes > 0);
+
+  // Lore Injector is disabled but localStorage data persists: clean only opt-in archives/logs.
+  store.setItem('lore-injector-v5', JSON.stringify({ activeSettings: true }));
+  store.setItem('lore-injector-v5-backups', JSON.stringify([{ old: true }]));
+  store.setItem('lore-api-cost-log', JSON.stringify([{ cost: 10 }]));
+  let loreUi = ctx.exposed.backupsHtml();
+  assert.match(loreUi, /비활성 로어 인젝터 데이터 정리/);
+  assert.match(loreUi, /data-action="clear-lore-backups"/);
+  assert.match(loreUi, /data-action="clear-lore-cost-log"/);
+  await ctx.exposed.handleAction('clear-lore-backups', { dataset: {} });
+  assert.equal(store.getItem('lore-injector-v5-backups'), null);
+  assert.ok(store.getItem('lore-api-cost-log'), 'Deleting Lore Injector archive must not delete cost log');
+  assert.ok(store.getItem('lore-injector-v5'), 'Deleting Lore Injector archive must preserve active settings');
+  await ctx.exposed.handleAction('clear-lore-cost-log', { dataset: {} });
+  assert.equal(store.getItem('lore-api-cost-log'), null);
+  assert.ok(store.getItem('lore-injector-v5'), 'Lore Injector current settings must survive cleanup');
+  store.setItem('lore-injector-v5-backups', '{"old":true}');
+  ctx.window.confirm = () => false;
+  await ctx.exposed.handleAction('clear-lore-backups', { dataset: {} });
+  assert.equal(store.getItem('lore-injector-v5-backups'), '{"old":true}', 'Canceled deletion must retain data');
+  ctx.window.confirm = () => true;
+  store.removeItem('lore-injector-v5-backups');
+  loreUi = ctx.exposed.backupsHtml();
+  assert.doesNotMatch(loreUi, /data-action="clear-lore-backups"/);
+  assert.match(loreUi, /data-action="export-lore-local"/);
   ctx.exposed.pruneLocalBackups(2);
   let result = JSON.parse(store.getItem(backupsKey));
   assert.equal(result.room1.length, 2);
