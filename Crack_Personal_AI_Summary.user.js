@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💾 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.3.3
+// @version      2.3.4
 // @description  🧪 BETA · 전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -82,7 +82,7 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '2.3.3';
+  const VERSION = '2.3.4';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -1741,6 +1741,76 @@
     renderPanel();
   }
 
+  function loreInjectorStorageHtml() {
+    const labels = [
+      ['lore-injector-v5', '현재 설정·데이터 (보존)'],
+      ['lore-injector-v5-backups', '과거 로컬 백업'],
+      ['lore-api-cost-log', 'API 비용 기록'],
+    ];
+    const found = labels.map(([key, label]) => {
+      const raw = localStorage.getItem(key);
+      return { key, label, bytes: raw === null ? 0 : new Blob([key, raw]).size, present: raw !== null };
+    });
+    if (!found.some(item => item.present)) return '';
+    const archive = found[1];
+    const log = found[2];
+    return `<div class="cmm-section"><h3>비활성 로어 인젝터 데이터 정리</h3>
+      <p class="cmm-sub">확장프로그램을 꺼도 localStorage는 남음. 현재 설정(lore-injector-v5)은 삭제하지 않고,
+      과거 백업과 API 비용 기록만 개별 정리할 수 있음. 다른 스크립트 데이터는 건드리지 않음.</p>
+      ${found.map(item => `<div class="cmm-preview-title" style="margin-top:8px;word-break:break-all">
+        <span>${escapeHtml(item.label)}</span><span>${item.present ? formatLocalBytes(item.bytes) : '없음'}</span>
+      </div>`).join('')}
+      <div class="cmm-row" style="margin-top:12px">
+        <button class="cmm-btn gray" data-action="export-lore-local">로어 인젝터 데이터 JSON 다운로드</button>
+        ${archive.present ? '<button class="cmm-btn danger" data-action="clear-lore-backups">과거 백업 삭제</button>' : ''}
+        ${log.present ? '<button class="cmm-btn danger" data-action="clear-lore-cost-log">API 비용 기록 삭제</button>' : ''}
+      </div>
+      <p class="cmm-sub">JSON에는 설정이나 API 인증 정보가 포함될 수 있으니 외부에 공유하지 말 것.
+      삭제 전 다운로드 파일이 실제 저장되었는지 확인. 삭제한 기록은 자동 복원되지 않음.</p>
+    </div>`;
+  }
+
+  function exportLoreLocalStorage() {
+    const keys = ['lore-injector-v5', 'lore-injector-v5-backups', 'lore-api-cost-log'];
+    const entries = {};
+    for (const key of keys) {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) entries[key] = raw;
+    }
+    if (!Object.keys(entries).length) { showToast('저장된 로어 인젝터 데이터가 없음.'); return; }
+    const content = JSON.stringify({
+      kind: 'crack-lore-injector-localStorage-export',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      entries,
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'crack-lore-injector-local-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    showToast('로어 인젝터 데이터 JSON 다운로드 요청 완료. 실제 저장 여부를 확인해줘.');
+  }
+
+  function clearLoreLocalItem(key) {
+    const targets = {
+      'lore-injector-v5-backups': '로어 인젝터 과거 백업',
+      'lore-api-cost-log': '로어 인젝터 API 비용 기록',
+    };
+    if (!Object.hasOwn(targets, key)) throw new Error('삭제가 허용되지 않은 저장 항목임.');
+    const raw = localStorage.getItem(key);
+    if (raw === null) { showToast('이미 삭제된 항목임.'); return; }
+    const bytes = new Blob([key, raw]).size;
+    if (!window.confirm(targets[key] + ' (' + formatLocalBytes(bytes)
+      + ')을 삭제할까요? 로어 인젝터 현재 설정과 다른 데이터는 유지함. 삭제 후에는 이 기록을 복구할 수 없음.')) return;
+    localStorage.removeItem(key);
+    showToast(targets[key] + ' 삭제 완료 · 약 ' + formatLocalBytes(bytes) + ' 확보');
+    renderPanel();
+  }
+
   function backupsHtml() {
     // 백업은 방마다 생성되지만 저장소는 모든 방이 공유하므로 여기서도 전체 방을 보여줌.
     const currentChatId = getChatId();
@@ -1782,9 +1852,9 @@
       <p class="cmm-sub">저장공간 절약을 위해 방마다 1개 보관을 권장함. 정리는 버튼을 눌러야 실행됨.</p>
     </div>`;
     if (!allRooms.length) {
-      return controls + '<div class="cmm-section"><h3>전체 방 과거 백업</h3><p class="cmm-sub">저장된 로컬 백업이 없음. 기존 크랙 서버 장기기억과 자동 요약은 그대로 유지됨.</p></div>';
+      return controls + loreInjectorStorageHtml() + '<div class="cmm-section"><h3>전체 방 과거 백업</h3><p class="cmm-sub">저장된 로컬 백업이 없음. 기존 크랙 서버 장기기억과 자동 요약은 그대로 유지됨.</p></div>';
     }
-    return controls + `<div class="cmm-section"><h3>전체 방 과거 백업 · ${usage.rooms}개 방</h3>
+    return controls + loreInjectorStorageHtml() + `<div class="cmm-section"><h3>전체 방 과거 백업 · ${usage.rooms}개 방</h3>
       <p class="cmm-sub">어느 방에서 열어도 모든 방의 백업을 볼 수 있음. 다른 방의 백업은 복사·삭제할 수 있지만,
       <strong>서버 장기기억 복원은 해당 채팅방으로 이동해야 가능함.</strong> 잘못된 방으로 복원되지 않도록 제한했음.</p>
       ${allRooms.map(([roomId, backups]) => {
@@ -1901,6 +1971,9 @@
       return renderPanel();
     }
     if (action === 'export-all-backups') return exportAllLocalBackups();
+    if (action === 'export-lore-local') return exportLoreLocalStorage();
+    if (action === 'clear-lore-backups') return clearLoreLocalItem('lore-injector-v5-backups');
+    if (action === 'clear-lore-cost-log') return clearLoreLocalItem('lore-api-cost-log');
     if (action === 'import-all-backups') return panel.querySelector('#cmm-backups-file')?.click();
     if (action === 'prune-backups') {
       const limit = Number(panel.querySelector('#cmm-backup-retention')?.value);
