@@ -165,6 +165,9 @@ function fakeStorage(entries) {
   assert.match(ui, /전체 방 과거 백업/);
   assert.match(ui, /data-room="room1"/);
   assert.match(ui, /data-room="room2"/);
+  assert.match(ui, /data-action="delete-room-backups"/, 'Room-level bulk delete should be available');
+  assert.match(ui, /data-action="clear-other-room-backups"/, 'Cross-room bulk cleanup should be available');
+  assert.match(ui, /localStorage 사용량 상위 항목 확인/, 'Largest localStorage keys should be visible');
   assert.match(ui, /현재 방/);
   assert.match(ui, /복원하려면 이 채팅방을 먼저 열어야 함/);
   assert.equal((ui.match(/data-action="restore-backup"/g) || []).length, 3, 'Only the current room should offer restore controls');
@@ -179,6 +182,8 @@ function fakeStorage(entries) {
   assert.equal(apiReads, 0, 'Cross-room restore must not reach the remote API');
 
   assert.equal(ctx.exposed.localStorageUsage().snapshots, 4);
+  assert.ok(ctx.exposed.localStorageUsage().largestKeys.some(item => item.label === 'another-app'));
+  assert.ok(ctx.exposed.localStorageUsage().otherBytes > 0);
   ctx.exposed.pruneLocalBackups(2);
   let result = JSON.parse(store.getItem(backupsKey));
   assert.equal(result.room1.length, 2);
@@ -189,6 +194,33 @@ function fakeStorage(entries) {
   result = JSON.parse(store.getItem(backupsKey));
   assert.equal(Object.hasOwn(result, 'room2'), false, 'A different room archive should be removable');
   assert.equal(result.room1.length, 2, 'Removing another room archive must not affect this room');
+
+  // Remove every backup in one other room without opening that chat.
+  store.setItem(backupsKey, JSON.stringify({ ...result, room2: [makeItem('other', '2026-10-16')] }));
+  await ctx.exposed.handleAction('delete-room-backups', { dataset: { room: 'room2' } });
+  result = JSON.parse(store.getItem(backupsKey));
+  assert.equal(Object.hasOwn(result, 'room2'), false);
+  assert.equal(result.room1.length, 2);
+
+  // Clear all *other* rooms; preserve current room, config, progress, and other apps.
+  store.setItem(backupsKey, JSON.stringify({
+    ...result, room2: [makeItem('other', '2026-10-16')], room3: [makeItem('third', '2026-10-15')],
+  }));
+  await ctx.exposed.handleAction('clear-other-room-backups', { dataset: {} });
+  result = JSON.parse(store.getItem(backupsKey));
+  assert.deepEqual(Object.keys(result), ['room1']);
+  assert.equal(result.room1.length, 2);
+  assert.equal(store.getItem(stateKey), '{"progress":40}');
+  assert.equal(store.getItem('another-app'), 'keep');
+
+  // Declining a deletion prompt must leave archives untouched.
+  store.setItem(backupsKey, JSON.stringify({ ...result, room2: [makeItem('other', '2026-10-16')] }));
+  ctx.window.confirm = () => false;
+  await ctx.exposed.handleAction('clear-other-room-backups', { dataset: {} });
+  assert.equal(JSON.parse(store.getItem(backupsKey)).room2.length, 1);
+  ctx.window.confirm = () => true;
+  store.setItem(backupsKey, JSON.stringify(result));
+
   const archived = { kind: 'crack-memory-manager-backups', version: 1, backups: {
     room1: [makeItem('old', '2026-10-17'), makeItem('new', '2026-10-19')],
   } };
