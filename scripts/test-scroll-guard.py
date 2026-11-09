@@ -302,7 +302,28 @@ def desktop_wheel_before_event(p):
     p.evaluate('host.scrollTop=maxTop()')
     near(p.evaluate('host.scrollTop'),1320)
 
+def cached_mid_history_jump(p):
+    arm(p, active=True)
+    p.evaluate('nativeTo(2600)')
+    near(p.evaluate('host.scrollTop'),1200)
+
+def focused_composer_history(p):
+    p.evaluate("editor.focus()")
+    arm(p)
+    p.evaluate("window.visualViewport?.dispatchEvent(new Event('resize'));editor.focus();host.scrollTop=maxTop()")
+    near(p.evaluate('host.scrollTop'),1200)
+    assert p.evaluate('document.activeElement===editor'), 'must not blur the composer'
+
+def interrupted_touch_resume(p):
+    arm(p, active=True)
+    p.evaluate("window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'));nativeTo(2600)")
+    p.wait_for_timeout(250)
+    near(p.evaluate('host.scrollTop'),1200)
+
 CASES=[
+ ('cached jump short of bottom during upward swipe',cached_mid_history_jump),
+ ('focused composer history and viewport resize',focused_composer_history),
+ ('interrupted touch resumes protection',interrupted_touch_resume),
  ('desktop compositor wheel before event',desktop_wheel_before_event),
  ('desktop Ctrl Enter with optimizer and completion focus',desktop_ctrl_enter_completion),
  ('desktop fast wheel reaches bottom',desktop_fast_wheel),

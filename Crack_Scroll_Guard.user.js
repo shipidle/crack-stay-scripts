@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.6
+// @version      1.8.7
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.5' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.7' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.5');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.7');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -43,6 +43,7 @@
   let layoutObserver = null;
   let observedLayoutTarget = null;
   let editorActive = false;
+  let manualReadingIntent = false;
   let keyboardSettlingUntil = 0;
   let modelHold = null;
   let modelObserver = null;
@@ -66,10 +67,11 @@
     return !!(node?.matches?.(EDITOR_SELECTOR) || node?.closest?.(EDITOR_SELECTOR));
   }
   function keyboardTransition() {
-    if (desktopReplyHold) return false;
+    if (desktopReplyHold || manualReadingIntent) return false;
     return editorActive || Date.now() < keyboardSettlingUntil;
   }
   function releaseForKeyboard() {
+    manualReadingIntent = false;
     if (desktopReplyHold) return;
     // Safari must be able to move the composer above its on-screen keyboard.
     keyboardSettlingUntil = Date.now() + 1300;
@@ -449,6 +451,14 @@
     const y = event?.touches?.[0]?.clientY;
     if (Number.isFinite(y) && gesture.y !== null && Math.abs(gesture.y - y) > 1) {
       gesture.direction = Math.sign(gesture.y - y);
+      // Safari can leave the composer focused while the user reads history.
+      // A deliberate chat swipe takes priority; do not blur or close its keyboard.
+      if (!overlayTarget(event.target) && !isEditor(event.target)) {
+        const wasKeyboardTransition = keyboardTransition();
+        manualReadingIntent = true;
+        keyboardSettlingUntil = 0;
+        if (wasKeyboardTransition) saveUserPosition(gesture.target);
+      }
     }
     if (Number.isFinite(y)) gesture.y = y;
   }
@@ -480,8 +490,14 @@
         // Reject both contrary-to-finger jumps and implausibly fast jumps.
         const impossibleJump = delta > Math.max(450, target.clientHeight * 0.85) &&
           elapsed < 125;
-        if (gesture.source === 'touch' && atBottom && fromHistory && reading?.target === target &&
-            (gesture.direction < 0 || impossibleJump) && delta > 100) {
+        const heightDelta = target.scrollHeight - (reading?.height ?? target.scrollHeight);
+        const nativeAnchoring = Math.abs(heightDelta) > 70 && Math.abs(delta - heightDelta) < 35;
+        // Cached native calls and Safari focus/layout scrolling may stop short
+        // of the bottom. Reject a downward leap against an upward finger too,
+        // but allow content prepends that preserve the visible text.
+        const contraryJump = gesture.direction < 0 && !nativeAnchoring;
+        if (gesture.source === 'touch' && fromHistory && reading?.target === target &&
+            (contraryJump || (atBottom && impossibleJump && !nativeAnchoring)) && delta > 100) {
           restoreDirect(target, gesture.acceptedTop ?? reading.top);
           if (!gesture.down) queueGestureEnd();
           return;
@@ -663,6 +679,7 @@
     clearModelHold();
     clearReading();
     editorActive = false;
+    manualReadingIntent = false;
     keyboardSettlingUntil = 0;
     gesture = null;
     if (finishTimer !== null) clearTimeout(finishTimer);
@@ -763,7 +780,7 @@
       }
       if (isEditor(this)) {
         editorActive = true;
-        if (desktopReplyHold) {
+        if (desktopReplyHold || (manualReadingIntent && reading)) {
           // Completion refocus must not move the viewport before restoration.
           return nativeFocus.call(this, { ...(options && typeof options === 'object' ? options : {}), preventScroll: true });
         }
@@ -794,7 +811,7 @@
     }
     if (isEditor(event.target)) {
       editorActive = true;
-      releaseForKeyboard();
+      if (!manualReadingIntent) releaseForKeyboard();
     }
   }, true);
   document.addEventListener('focusout', event => {
@@ -802,17 +819,17 @@
     if (isEditor(event.target)) {
       editorActive = false;
       // Closing the chat keyboard to open a popup must not unlock the chat.
-      keyboardSettlingUntil = panelHold ? 0 : Date.now() + 1150;
+      keyboardSettlingUntil = panelHold || manualReadingIntent ? 0 : Date.now() + 1150;
     }
   }, true);
   window.visualViewport?.addEventListener('resize', () => {
-    if (!panelHold && (editorActive ||
+    if (!panelHold && !manualReadingIntent && (editorActive ||
         (isEditor(document.activeElement) && !overlayTarget(document.activeElement)))) {
       releaseForKeyboard();
     }
   }, { passive: true });
   window.addEventListener('resize', () => {
-    if (!panelHold && (editorActive ||
+    if (!panelHold && !manualReadingIntent && (editorActive ||
         (isEditor(document.activeElement) && !overlayTarget(document.activeElement)))) {
       releaseForKeyboard();
     }
@@ -828,6 +845,7 @@
     if (gesture) gesture.direction = Math.sign(event.deltaY);
   }, { capture: true, passive: true });
   document.addEventListener('keydown', event => {
+    if (event.key === 'Tab') manualReadingIntent = false;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || '') || event.target?.isContentEditable) return;
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
       startGesture(scrollTarget(event.target), false, 'keyboard');
@@ -835,6 +853,7 @@
   }, true);
   document.addEventListener('pointerdown', event => {
     if (event.pointerType === 'touch') return;
+    if (isEditor(event.target) && !overlayTarget(event.target)) releaseForKeyboard();
     const el = scrollTarget(event.target);
     const right = el === documentScroller() ? window.innerWidth : el.getBoundingClientRect().right;
     if (isScrollable(el) && event.clientX > right - 18) startGesture(el, true, 'scrollbar');
@@ -977,6 +996,20 @@
   }
   window.addEventListener('popstate', () => { if (path !== location.pathname) resetRoute(); });
   window.addEventListener('hashchange', () => { if (path !== location.pathname) resetRoute(); });
-  window.addEventListener('pageshow', () => { if (path !== location.pathname) resetRoute(); });
+  function resumeAfterPagePause() {
+    if (path !== location.pathname) { resetRoute(); return; }
+    // iOS may suspend a tab without delivering touchend. Do not adopt a focus
+    // jump as the last user position or leave gesture.down blocking all checks.
+    gesture = null;
+    if (finishTimer !== null) clearTimeout(finishTimer);
+    finishTimer = null;
+    if (!document.hidden) {
+      checkPosition();
+      setTimeout(checkPosition, 100);
+    }
+  }
+  document.addEventListener('visibilitychange', resumeAfterPagePause);
+  window.addEventListener('pagehide', resumeAfterPagePause);
+  window.addEventListener('pageshow', resumeAfterPagePause);
   setInterval(() => { if (path !== location.pathname) resetRoute(); }, 1500);
 })(typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window);
