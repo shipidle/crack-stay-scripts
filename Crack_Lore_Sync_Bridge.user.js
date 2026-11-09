@@ -1,14 +1,11 @@
 // ==UserScript==
 // @name         ☁️ 크랙 로어 개인 동기화 브리지
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.5.3
-// @description  🧪 BETA · 개인 Supabase에 로어 백업·메모리 체크포인트·방별 설정을 안전하게 동기화합니다.
+// @version      1.6.0
+// @description  🧪 BETA · 로어 인젝터 없이 개인 Supabase의 메모리 체크포인트·배경·번역·메신저 설정을 연동합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
-// @match        https://crack.wrtn.ai/stories/*/episodes/*
-// @match        https://crack.wrtn.ai/characters/*/chats/*
-// @match        https://crack.wrtn.ai/u/*/c/*
-// @match        https://crack.wrtn.ai/
+// @match        https://crack.wrtn.ai/*
 // @updateURL    https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js
 // @downloadURL  https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Lore_Sync_Bridge.user.js
 // @grant        GM_addStyle
@@ -25,7 +22,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.5.3';
+  const VERSION = '1.6.0';
   const APP_KEY = 'shipidle:crack-lore-sync-bridge:v1';
   const SUMMARY_SYNC_API_KEY = '__SHIPIDLE_CMM_TURN_SYNC__';
   const BACKGROUND_SYNC_API_KEY = '__SHIPIDLE_CHAT_BACKGROUND_SYNC__';
@@ -36,17 +33,8 @@
   const DIALOGUE_TABLE = 'dialogue_translator_sync';
   const MESSENGER_TABLE = 'messenger_sync';
   const BACKGROUND_MAX_BYTES = 700 * 1024;
-  const BRIDGE = unsafeWindow || window;
+  const BRIDGE = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   const AUTH_REDIRECT = 'https://crack.wrtn.ai/';
-  const REMOTE_CHECK_MS = 10 * 60_000;
-  const LOCAL_SCAN_MS = 2 * 60_000;
-  const UPLOAD_DEBOUNCE_MS = 60_000;
-  const SECRET_KEYS = new Set([
-    'autoExtKey', 'autoExtVertexJson', 'autoExtFirebaseScript',
-    'autoExtFirebaseEmbedKey', 'autoExtGeminiEmbedKey', 'autoExtDeepSeekKey',
-    'autoExtOpenAIKey', 'backupServerPassword', 'backupServerToken',
-  ]);
-
   const defaultConfig = {
     projectUrl: '',
     publishableKey: '',
@@ -55,18 +43,13 @@
     deviceLabel: '',
   };
   let config = { ...defaultConfig };
-  let syncState = { lastHash: '', lastRevision: 0, lastSyncAt: 0, dirty: false };
   let session = null;
   let panel = null;
   let statusEl = null;
   let latestStatus = '';
   let latestStatusTone = '';
   let busy = false;
-  let needsInitialChoice = false;
-  let remoteMetadata = null;
-  let remoteCheckRunning = false;
-  let localScanRunning = false;
-  let uploadTimer = null;
+  let initialized = false;
   let refreshSessionPromise = null;
 
   const textEncoder = new TextEncoder();
@@ -111,9 +94,6 @@
     if (/summary_sync_state|summary_checkpoint|summary_batch|schema cache/i.test(raw)) {
       return 'Supabase에 supabase/summary_sync.sql을 먼저 실행해줘.';
     }
-    if (/save_lore_sync_state|previous_ciphertext|content_hash|lore sync conflict/i.test(raw)) {
-      return 'Supabase에 supabase/lore_sync_v2.sql을 먼저 실행해줘.';
-    }
     if (/email not confirmed/i.test(raw)) return '이메일 인증이 아직 안 됨. 받은메일함의 인증 링크를 누른 뒤 다시 로그인하면 됨.';
     if (/invalid login credentials/i.test(raw)) return '이메일 또는 비밀번호가 맞지 않음.';
     if (/user already registered/i.test(raw)) return '이미 가입된 이메일임. 로그인 버튼을 쓰면 됨.';
@@ -134,17 +114,12 @@
 
   async function load() {
     config = { ...defaultConfig, ...(await GM_getValue(`${APP_KEY}:config`, {})) };
-    syncState = { ...syncState, ...(await GM_getValue(`${APP_KEY}:state`, {})) };
     session = await GM_getValue(`${APP_KEY}:session`, null);
     await consumeAuthHash();
   }
 
   async function persistConfig() {
     await GM_setValue(`${APP_KEY}:config`, config);
-  }
-
-  async function persistState() {
-    await GM_setValue(`${APP_KEY}:state`, syncState);
   }
 
   async function persistSession(next) {
@@ -322,14 +297,16 @@
   }
 
   function backgroundSyncStatus() {
-    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Lore Sync에 Supabase 연결 정보를 저장해주셈.' };
-    if (!session?.access_token) return { ready: false, reason: 'Lore Sync에서 Supabase 로그인해주셈.' };
+    if (!initialized) return { ready: false, initializing: true, reason: 'Supabase 연결 정보를 불러오는 중.' };
+    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Supabase 브리지에 Supabase 연결 정보를 저장해줘.' };
+    if (!session?.access_token) return { ready: false, reason: 'Supabase 브리지에서 Supabase 로그인해줘.' };
     return { ready: true, email: session.user?.email || config.email || '', deviceLabel: config.deviceLabel || '내 기기' };
   }
 
   function dialogueSyncStatus() {
-    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Lore Sync에 Supabase 연결 정보를 저장해주셈.' };
-    if (!session?.access_token) return { ready: false, reason: 'Lore Sync에서 Supabase 로그인해주셈.' };
+    if (!initialized) return { ready: false, initializing: true, reason: 'Supabase 연결 정보를 불러오는 중.' };
+    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Supabase 브리지에 Supabase 연결 정보를 저장해줘.' };
+    if (!session?.access_token) return { ready: false, reason: 'Supabase 브리지에서 Supabase 로그인해줘.' };
     return { ready: true, email: session.user?.email || config.email || '', deviceLabel: config.deviceLabel || '내 기기' };
   }
 
@@ -367,8 +344,9 @@
   }
 
   function messengerSyncStatus() {
-    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Lore Sync에 Supabase 연결 정보를 저장해줘.' };
-    if (!session?.access_token) return { ready: false, reason: 'Lore Sync에서 Supabase 로그인해줘.' };
+    if (!initialized) return { ready: false, initializing: true, reason: 'Supabase 연결 정보를 불러오는 중.' };
+    if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Supabase 브리지에 Supabase 연결 정보를 저장해줘.' };
+    if (!session?.access_token) return { ready: false, reason: 'Supabase 브리지에서 Supabase 로그인해줘.' };
     return { ready: true, email: session.user?.email || config.email || '', deviceLabel: config.deviceLabel || '내 기기' };
   }
 
@@ -539,39 +517,6 @@
     return `data:${image.mime};base64,${btoa(binary)}`;
   }
 
-  function sanitizeBackup(backup) {
-    const copy = JSON.parse(JSON.stringify(backup));
-    const settings = copy.settings && typeof copy.settings === 'object' ? copy.settings : {};
-    for (const key of SECRET_KEYS) delete settings[key];
-    for (const key of ['urlExtLogs', 'urlInjLogs', 'urlRefinerLogs']) delete settings[key];
-    copy.settings = settings;
-    copy.includeSecrets = false;
-    copy.logsExcluded = true;
-    return copy;
-  }
-
-  async function waitForBackupTools(timeoutMs = 20_000) {
-    const until = Date.now() + timeoutMs;
-    while (Date.now() < until) {
-      const tools = BRIDGE.__LoreInj?.backupTools;
-      if (tools?.exportFullBackup && tools?.importFullBackup) return tools;
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
-    throw new Error('기존 로어 인젝터를 찾지 못함. 현재 인젝터가 켜진 채팅방에서 다시 열어줘.');
-  }
-
-  async function exportBackup() {
-    const tools = await waitForBackupTools();
-    const raw = await tools.exportFullBackup({ includeSecrets: false, includeLogs: false, includeEmbeddings: true, includeHistory: false });
-    return sanitizeBackup(raw);
-  }
-
-  async function restoreBackup(backup) {
-    const tools = await waitForBackupTools();
-    setStatus('☁️ 클라우드 데이터를 복원 중...\n현재 페이지는 새로고침하지 않음.');
-    await tools.importFullBackup(backup, 'replace', { includeSecrets: false, importSettings: true });
-  }
-
   function bytesToBase64Url(bytes) {
     let text = '';
     const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -634,16 +579,10 @@
     }
   }
 
-  async function fingerprint(backup) {
-    const copy = JSON.parse(JSON.stringify(backup));
-    delete copy.exportedAt;
-    const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(JSON.stringify(copy)));
-    return bytesToBase64Url(new Uint8Array(digest));
-  }
-
   function summarySyncStatus() {
+    if (!initialized) return { ready: false, initializing: true, reason: 'Supabase 연결 정보를 불러오는 중.' };
     if (!config.projectUrl || !config.publishableKey) return { ready: false, reason: 'Supabase 연결 정보를 저장해줘.' };
-    if (!session?.access_token) return { ready: false, reason: '로어 동기화에서 Supabase 로그인해줘.' };
+    if (!session?.access_token) return { ready: false, reason: 'Supabase 브리지에서 Supabase 로그인해줘.' };
     if (!config.syncPassphrase || config.syncPassphrase.length < 8) return { ready: false, reason: '동기화 암호를 저장해줘.' };
     return { ready: true, reason: '' };
   }
@@ -759,192 +698,8 @@
     });
   }
 
-  function normalizeRemoteMetadata(row) {
-    if (!row) return null;
-    return {
-      revision: Number(row.revision || 0),
-      updatedAt: row.updated_at || '',
-      deviceLabel: row.device_label || '',
-      schemaVersion: Number(row.schema_version || 1),
-      contentHash: row.content_hash || '',
-      previousRevision: Number(row.previous_revision || 0),
-      previousUpdatedAt: row.previous_updated_at || '',
-      previousDeviceLabel: row.previous_device_label || '',
-      previousSchemaVersion: Number(row.previous_schema_version || 1),
-      previousContentHash: row.previous_content_hash || '',
-    };
-  }
-
-  async function getRemoteMetadata() {
-    const active = await refreshSessionIfNeeded();
-    const select = 'revision,updated_at,device_label,schema_version,content_hash,previous_revision,previous_updated_at,previous_device_label,previous_schema_version,previous_content_hash';
-    const rows = await authedRequest(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`);
-    remoteMetadata = normalizeRemoteMetadata(Array.isArray(rows) ? rows[0] : null);
-    return remoteMetadata;
-  }
-
-  async function getRemoteBackup(slot = 'current') {
-    const active = await refreshSessionIfNeeded();
-    const previous = slot === 'previous';
-    const select = previous
-      ? 'previous_ciphertext,previous_revision,previous_updated_at,previous_device_label,previous_schema_version,previous_content_hash'
-      : 'ciphertext,revision,updated_at,device_label,schema_version,content_hash';
-    const rows = await authedRequest(`${config.projectUrl}/rest/v1/lore_sync_state?owner_id=eq.${encodeURIComponent(active.user.id)}&select=${select}`);
-    const row = Array.isArray(rows) ? rows[0] : null;
-    const ciphertext = previous ? row?.previous_ciphertext : row?.ciphertext;
-    if (!ciphertext) throw new Error(previous ? '클라우드에 이전 백업이 아직 없음.' : '클라우드에 복원할 백업이 아직 없음.');
-    return {
-      ciphertext,
-      revision: Number(previous ? row.previous_revision : row.revision || 0),
-      contentHash: previous ? row.previous_content_hash || '' : row.content_hash || '',
-    };
-  }
-
-  async function upload(backup, hash, remoteRevision = 0) {
-    setStatus('☁️ 클라우드에 저장 중...');
-    const ciphertext = await encryptBackup(backup);
-    const schemaVersion = Number(JSON.parse(ciphertext).v || 1);
-    const rows = await authedRequest(`${config.projectUrl}/rest/v1/rpc/save_lore_sync_state`, {
-      method: 'POST',
-      headers: { Prefer: 'return=representation' },
-      body: {
-        p_ciphertext: ciphertext,
-        p_content_hash: hash,
-        p_base_revision: Number(remoteRevision || 0),
-        p_device_label: config.deviceLabel || navigator.platform || '내 기기',
-        p_schema_version: schemaVersion,
-      },
-    });
-    remoteMetadata = normalizeRemoteMetadata(Array.isArray(rows) ? rows[0] : null);
-    const revision = remoteMetadata?.revision || Number(remoteRevision || 0) + 1;
-    syncState = { ...syncState, lastHash: hash, lastRevision: revision, lastSyncAt: Date.now(), dirty: false };
-    await persistState();
-    setStatus(`☁️ 동기화 완료\n${new Date(syncState.lastSyncAt).toLocaleTimeString()} · revision ${syncState.lastRevision}`);
-  }
-
-  async function firstSync(mode) {
-    const remote = await getRemoteMetadata();
-    if (!remote) {
-      if (mode === 'restore') throw new Error('클라우드에 복원할 백업이 아직 없음. 첫 기기에서는 먼저 백업을 올려줘.');
-      const local = await exportBackup();
-      const hash = await fingerprint(local);
-      await upload(local, hash, 0);
-      needsInitialChoice = false;
-      return;
-    }
-    if (mode === 'upload') {
-      const local = await exportBackup();
-      await upload(local, await fingerprint(local), remote.revision);
-      needsInitialChoice = false;
-      return;
-    }
-    await restoreRemote('current');
-    needsInitialChoice = false;
-  }
-
-  async function restoreRemote(slot = 'current') {
-    const remote = await getRemoteBackup(slot);
-    const cloud = await decryptBackup(remote.ciphertext);
-    await restoreBackup(cloud);
-    const restoredHash = remote.contentHash || await fingerprint(sanitizeBackup(cloud));
-    syncState = { ...syncState, lastHash: restoredHash, lastRevision: remote.revision, lastSyncAt: Date.now(), dirty: false };
-    await persistState();
-    setStatus(slot === 'previous'
-      ? '☁️ 이전 클라우드 로어 복원 완료. 클라우드 최신본은 그대로 유지함.'
-      : '☁️ 클라우드 로어 복원 완료. 현재 페이지는 새로고침하지 않았음.');
-  }
-
   function isChatRoute() {
-    return /^\/stories\/[a-f0-9]+\/episodes\/[a-f0-9]+\/?$/i.test(location.pathname)
-      || /^\/characters\/[a-f0-9]+\/chats\/[a-f0-9]+\/?$/i.test(location.pathname)
-      || /^\/u\/[a-f0-9]+\/c\/[a-f0-9]+\/?$/i.test(location.pathname);
-  }
-
-  function syncReady() {
-    return isChatRoute() && session?.access_token && config.syncPassphrase && config.projectUrl && config.publishableKey;
-  }
-
-  async function checkRemoteMetadata() {
-    if (!syncReady() || document.hidden || remoteCheckRunning) return;
-    remoteCheckRunning = true;
-    try {
-      const remote = await getRemoteMetadata();
-      if (!syncState.lastHash && remote) {
-        needsInitialChoice = true;
-      } else if (remote && remote.revision > Number(syncState.lastRevision || 0)) {
-        if (remote.contentHash && remote.contentHash === syncState.lastHash) {
-          syncState.lastRevision = remote.revision;
-          await persistState();
-        } else {
-          setStatus(syncState.dirty
-            ? '⚠️ 이 기기와 클라우드가 모두 바뀜. 자동 업로드를 멈춤. 패널에서 업로드 또는 복원을 골라줘.'
-            : '☁️ 다른 기기에서 최신 로어가 올라옴. 내려받진 않았음. 패널에서 복원하면 됨.', 'warn');
-        }
-      }
-    } catch (error) {
-      console.warn('[Lore Sync Bridge] metadata check failed:', error);
-    } finally {
-      remoteCheckRunning = false;
-      if (panel) renderPanel();
-    }
-  }
-
-  async function flushPendingUpload() {
-    uploadTimer = null;
-    if (!syncReady() || needsInitialChoice || !syncState.lastHash) return;
-    try {
-      const local = await exportBackup();
-      const hash = await fingerprint(local);
-      if (hash === syncState.lastHash) {
-        syncState.dirty = false;
-        await persistState();
-        return;
-      }
-      const remote = await getRemoteMetadata();
-      if (remote && remote.revision > Number(syncState.lastRevision || 0) && remote.contentHash !== syncState.lastHash) {
-        setStatus('⚠️ 이 기기와 클라우드가 모두 바뀜. 자동 업로드를 멈춤. 패널에서 업로드 또는 복원을 골라줘.', 'warn');
-        return;
-      }
-      if (remote?.contentHash && remote.contentHash === hash) {
-        syncState = { ...syncState, lastHash: hash, lastRevision: remote.revision, dirty: false };
-        await persistState();
-        return;
-      }
-      await upload(local, hash, remote?.revision || 0);
-    } catch (error) {
-      console.warn('[Lore Sync Bridge] delayed upload failed:', error);
-      setStatus(`❌ 자동 업로드 실패: ${shortError(error)}`, 'error');
-    }
-  }
-
-  async function scheduleUpload() {
-    syncState.dirty = true;
-    await persistState();
-    if (uploadTimer) clearTimeout(uploadTimer);
-    setStatus('☁️ 로어 변경 감지됨. 1분 동안 변경을 모은 뒤 업로드함.');
-    uploadTimer = setTimeout(() => void flushPendingUpload(), UPLOAD_DEBOUNCE_MS);
-  }
-
-  async function scanLocalChanges() {
-    if (!syncReady() || document.hidden || localScanRunning || needsInitialChoice || !syncState.lastHash) return;
-    localScanRunning = true;
-    try {
-      const local = await exportBackup();
-      const hash = await fingerprint(local);
-      if (hash !== syncState.lastHash && remoteMetadata && remoteMetadata.revision > Number(syncState.lastRevision || 0) && remoteMetadata.contentHash !== syncState.lastHash) {
-        syncState.dirty = true;
-        await persistState();
-        setStatus('⚠️ 이 기기와 클라우드가 모두 바뀜. 자동 업로드를 멈춤. 패널에서 업로드 또는 복원을 골라줘.', 'warn');
-      } else if (hash !== syncState.lastHash) await scheduleUpload();
-      else if (syncState.dirty) {
-        syncState.dirty = false;
-        await persistState();
-      }
-    } catch (error) {
-      console.warn('[Lore Sync Bridge] local change scan failed:', error);
-    } finally {
-      localScanRunning = false;
-    }
+    return /^\/(stories\/[^/]+\/episodes|characters\/[^/]+\/chats|u\/[^/]+\/c)\/[^/?#]+\/?$/.test(location.pathname);
   }
 
   function value(id) {
@@ -988,14 +743,14 @@
     head.className = 'clsb-head';
     const title = document.createElement('div');
     title.className = 'clsb-title';
-    title.textContent = '☁️ 크랙 로어 개인 동기화';
+    title.textContent = '☁️ 크랙 Supabase 연동';
     const close = document.createElement('button');
     close.type = 'button'; close.className = 'clsb-close'; close.textContent = '×'; close.onclick = closePanel;
     head.append(title, close); panel.appendChild(head);
 
     const intro = document.createElement('div');
     intro.className = 'clsb-card';
-    intro.innerHTML = '<h3>기존 인젝터는 건드리지 않음</h3><p class="clsb-note">현재 로어 인젝터의 공식 백업/복원 기능만 사용함. Gemini 키·크랙 토큰·제작자 서버 로그인 정보는 업로드하지 않음.</p>';
+    intro.innerHTML = '<h3>공용 Supabase 연결</h3><p class="clsb-note">개인 요약 메모리·배경·번역·메신저의 클라우드 연동을 제공합니다. 로어 인젝터는 필요하지 않으며, 기존 로어 백업은 변경하지 않습니다. RP 매니저의 자체 동기화는 RP 매니저에서 설정합니다.</p>';
     panel.appendChild(intro);
 
     const connection = document.createElement('div'); connection.className = 'clsb-card';
@@ -1031,30 +786,10 @@
     account.appendChild(accountRow); panel.appendChild(account);
 
     const sync = document.createElement('div'); sync.className = 'clsb-card';
-    sync.innerHTML = '<h3>암호화 동기화</h3><p class="clsb-note">이 암호는 Supabase에 보내지지 않고 이 기기에만 저장됨. 로컬 변경은 2분마다 기기 안에서만 확인하고, 변경 발견 후 1분간 모아 gzip 압축·암호화하여 자동 업로드함. 원격은 접속 시와 화면을 보는 동안 10분마다 작은 메타데이터만 확인하며, 실제 백업은 복원 버튼을 눌렀을 때만 내려받음. 자동 백업에는 임베딩을 포함하고 내부 히스토리는 제외함.</p>';
+    sync.innerHTML = '<h3>요약 메모리 암호화</h3><p class="clsb-note">개인 요약 메모리의 작업 데이터를 암호화하는 데 사용합니다. 기존 암호를 유지하고 기기마다 같은 암호를 입력하세요. 배경·번역·메신저 연동에는 이 암호가 필요하지 않습니다.</p>';
     addField(sync, 'clsb-passphrase', '동기화 암호', 'password', config.syncPassphrase, '8자 이상, 기기마다 같은 암호');
     const syncRow = document.createElement('div'); syncRow.className = 'clsb-row';
     syncRow.append(makeButton('동기화 암호 저장', '', async () => { config.syncPassphrase = value('clsb-passphrase'); if (config.syncPassphrase.length < 8) throw new Error('동기화 암호는 8자 이상이어야 함.'); await persistConfig(); setStatus('✅ 이 기기에 동기화 암호를 저장함.'); }));
-    if (needsInitialChoice) {
-      syncRow.append(
-        makeButton('클라우드 로어 복원', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('restore'); }),
-        makeButton('이 기기 로어로 클라우드 덮어쓰기', 'danger', async () => {
-          if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.');
-          if (!confirm('이 기기의 로어를 새 클라우드 기준으로 저장함. 기존 클라우드 로어는 덮어써짐. 계속할까?')) return;
-          await firstSync('upload');
-        }),
-      );
-    } else if (!syncState.lastHash) {
-      syncRow.append(makeButton('처음 백업 올리기', 'primary', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await firstSync('upload'); }));
-    } else {
-      syncRow.append(
-        makeButton('지금 업로드', '', async () => { const local = await exportBackup(); await upload(local, await fingerprint(local), (await getRemoteMetadata())?.revision || 0); }),
-        makeButton('최신 클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await restoreRemote('current'); }),
-      );
-      if (remoteMetadata?.previousRevision) {
-        syncRow.append(makeButton('이전 클라우드 로어 복원', '', async () => { if (!config.syncPassphrase) throw new Error('동기화 암호를 먼저 저장해줘.'); await restoreRemote('previous'); }));
-      }
-    }
     sync.appendChild(syncRow); panel.appendChild(sync);
 
     statusEl = document.createElement('div');
@@ -1062,17 +797,14 @@
     if (latestStatus) {
       statusEl.textContent = latestStatus;
       statusEl.className = `clsb-status ${latestStatusTone}`.trim();
-    } else if (session?.access_token) {
-      statusEl.textContent = '✅ 로그인된 상태. 동기화 암호를 저장한 뒤 백업 또는 복원을 선택해줘.';
     } else {
-    const injectorFound = !!BRIDGE.__LoreInj?.backupTools;
-    statusEl.textContent = needsInitialChoice
-      ? '⚠️ 클라우드 백업이 이미 있음. 클라우드 기준을 받을 땐 "클라우드 로어 복원", 이 기기 로어를 새 기준으로 쓸 땐 "이 기기 로어로 클라우드 덮어쓰기"를 눌러줘.'
-      : `${injectorFound ? '✅ 기존 로어 인젝터 감지됨' : '⏳ 기존 로어 인젝터 기다리는 중'}\n동기화 비용: 1회 0.00원 · 누적 0.00원`;
+      statusEl.textContent = session?.access_token
+        ? '✅ Supabase 로그인 정보가 저장되어 있음. 각 스크립트에서 동기화를 사용할 수 있음.'
+        : 'Supabase 연결 정보를 저장하고 로그인해줘.';
     }
     panel.appendChild(statusEl);
     const meta = document.createElement('div'); meta.className = 'clsb-meta';
-    meta.textContent = `Bridge v${VERSION} · 마지막 동기화: ${syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString() : '아직 없음'} · 클라우드 revision ${remoteMetadata?.revision || syncState.lastRevision || 0} · 현재본과 이전본 1개만 보관 · AES-256-GCM 암호화.`;
+    meta.textContent = `Supabase Bridge v${VERSION} · 로어 자동 백업·복원 중단 · 기존 계정·암호 유지`;
     panel.appendChild(meta);
   }
 
@@ -1114,7 +846,7 @@
     }
     const button = existing || document.createElement('button');
     if (!existing) {
-      button.id = 'clsb-fab'; button.type = 'button'; button.title = '크랙 로어 개인 동기화'; button.setAttribute('aria-label', '크랙 로어 개인 동기화');
+      button.id = 'clsb-fab'; button.type = 'button'; button.title = '크랙 Supabase 연동'; button.setAttribute('aria-label', '크랙 Supabase 연동');
       button.addEventListener('click', openPanel);
     }
     if (button.parentElement !== headerHost) headerHost.insertBefore(button, headerHost.firstChild);
@@ -1129,64 +861,27 @@
     cloudIcon.textContent = '\u2601\uFE0F';
   }
 
-  let chatSyncPrepared = false;
-  let chatSyncPreparing = false;
-
-  async function prepareChatSync() {
-    if (chatSyncPrepared || chatSyncPreparing || !isChatRoute()) return;
-    chatSyncPreparing = true;
-    try {
-      if (session?.access_token && config.syncPassphrase && config.projectUrl && config.publishableKey) {
-        const remote = await getRemoteMetadata();
-        if (!syncState.lastHash && remote) needsInitialChoice = true;
-        else if (!syncState.lastHash && !remote) setStatus('☁️ 첫 기기임. 패널에서 "처음 백업 올리기"를 누르면 됨.');
-        else {
-          if (remote && remote.revision > Number(syncState.lastRevision || 0) && remote.contentHash !== syncState.lastHash) {
-            setStatus('☁️ 다른 기기에서 최신 로어가 올라옴. 내려받진 않았음. 패널에서 복원하면 됨.', 'warn');
-          }
-          await scanLocalChanges();
-        }
-      }
-    } catch (error) {
-      console.warn('[Lore Sync Bridge] boot check failed:', error);
-    } finally {
-      chatSyncPrepared = true;
-      chatSyncPreparing = false;
-    }
-  }
-
   function syncBridgeRoute() {
     if (!isChatRoute()) {
       document.getElementById('clsb-fab')?.remove();
       if (panel) closePanel();
-      chatSyncPrepared = false;
       return;
     }
     mountButton();
-    void prepareChatSync();
   }
 
   async function initialize() {
     await load();
+    initialized = true;
     syncBridgeRoute();
     setInterval(syncBridgeRoute, 1000);
-    setInterval(() => void checkRemoteMetadata(), REMOTE_CHECK_MS);
-    setInterval(() => void scanLocalChanges(), LOCAL_SCAN_MS);
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) return;
-      void checkRemoteMetadata();
-      void scanLocalChanges();
-    });
-    window.addEventListener('online', () => {
-      void checkRemoteMetadata();
-      void scanLocalChanges();
-    });
   }
 
   Object.defineProperty(BRIDGE, SUMMARY_SYNC_API_KEY, {
     configurable: true,
     value: Object.freeze({
       version: 1,
+      bridgeVersion: VERSION,
       getStatus: summarySyncStatus,
       getCheckpoint: getSummaryCheckpoint,
       initializeCheckpoint: initializeSummaryCheckpoint,
@@ -1201,6 +896,7 @@
     configurable: true,
     value: Object.freeze({
       version: 1,
+      bridgeVersion: VERSION,
       getStatus: backgroundSyncStatus,
       getManifest: getBackgroundManifest,
       saveManifest: saveBackgroundManifest,
@@ -1213,6 +909,7 @@
     configurable: true,
     value: Object.freeze({
       version: 1,
+      bridgeVersion: VERSION,
       getStatus: dialogueSyncStatus,
       getSettings: getDialogueSettings,
       saveSettings: saveDialogueSettings,
@@ -1223,6 +920,7 @@
     configurable: true,
     value: Object.freeze({
       version: 1,
+      bridgeVersion: VERSION,
       getStatus: messengerSyncStatus,
       getSettings: getMessengerSettings,
       saveSettings: saveMessengerSettings,

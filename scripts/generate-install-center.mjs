@@ -102,7 +102,8 @@ ${config.channels.flatMap(channel => config.devices.map(device => section(channe
 ## 별도 1회 설정
 
 - MAIN/BETA의 기기 간 요약 턴 동기화는 [Supabase SQL](https://github.com/${config.repository}/blob/beta/supabase/summary_sync.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
-- MAIN/BETA의 로어 저용량 동기화와 현재본·이전본 보관은 [Lore Sync v2 SQL](https://github.com/${config.repository}/blob/beta/supabase/lore_sync_v2.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
+- BETA 브리지 v1.6.0부터 로어 인젝터 백업·복원을 제거하고 Supabase 공용 연동만 유지함. 기존 설치를 업데이트하면 연결 정보·로그인·요약 암호가 유지됨. 개인 요약 메모리도 v2.3.5 이상으로 함께 업데이트한 뒤 크랙 페이지를 새로고침해줘.
+- MAIN의 기존 로어 저용량 동기화와 현재본·이전본 보관은 [Lore Sync v2 SQL](https://github.com/${config.repository}/blob/beta/supabase/lore_sync_v2.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
 - MAIN/BETA의 방별 번역 설정 수동 보관은 [대사 번역 설정 SQL](https://github.com/${config.repository}/blob/beta/supabase/dialogue_translator_sync.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
 - MAIN/BETA의 메신저 방별 설정 동기화는 [메신저 설정 SQL](https://github.com/${config.repository}/blob/beta/supabase/messenger_sync.sql)을 같은 Supabase 프로젝트에서 1회 실행해야 함.
 

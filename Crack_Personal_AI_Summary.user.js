@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         💾 크랙 개인 요약 메모리 편집 & AI 자동 요약 추가
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      2.3.4
+// @version      2.3.5
 // @description  🧪 BETA · 전체 대화 20턴 단위 동기화, AI 장기기억 요약, 51→10 재요약, 편집 및 백업 통합 관리자
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -82,7 +82,7 @@
   // END AI GATEWAY ADAPTER
 
 
-  const VERSION = '2.3.4';
+  const VERSION = '2.3.5';
   const API_BASE = 'https://crack-api.wrtn.ai/crack-gen/v3/chats';
   const STORAGE_KEY = 'shipidle:crack-memory-manager:v2';
   const CONFIG_KEY = `${STORAGE_KEY}:config`;
@@ -560,16 +560,24 @@
     return api?.version >= 1 ? api : null;
   }
 
-  function requireTurnSyncApi() {
-    const api = turnSyncApi();
-    if (!api) throw new Error('Crack_Lore_Sync_Bridge v1.2.0 이상을 설치해줘.');
-    const status = api.getStatus?.() || { ready: false, reason: '턴 동기화 상태를 확인하지 못함.' };
-    if (!status.ready) throw new Error(status.reason || 'Supabase 턴 동기화를 준비해줘.');
+  async function requireTurnSyncApi(timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    let api;
+    let status;
+    do {
+      api = turnSyncApi();
+      status = api?.getStatus?.();
+      if (api && !status?.initializing) break;
+      if (Date.now() >= deadline) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (true);
+    if (!api) throw new Error('Supabase 브리지에 연결하지 못함. 기존 Crack_Lore_Sync_Bridge를 활성화·업데이트한 뒤 페이지를 새로고침해줘.');
+    if (!status?.ready) throw new Error(status?.reason || 'Supabase 턴 동기화를 준비해줘.');
     return api;
   }
 
   async function syncedTurnWindow(chatId) {
-    const api = requireTurnSyncApi();
+    const api = await requireTurnSyncApi();
     let checkpoint = await api.getCheckpoint(chatId);
     if (!checkpoint) {
       const allStats = await fetchAllTurnStats();
@@ -925,7 +933,7 @@
     };
     persistStates();
     if (syncBatch) {
-      await requireTurnSyncApi().saveBatch({
+      await (await requireTurnSyncApi()).saveBatch({
         chatId,
         batchEndCount: syncBatch.batchEndCount,
         lockOwner: syncBatch.lockOwner,
@@ -940,7 +948,7 @@
     const state = stateFor(chatId);
     const job = state.pendingBatch;
     if (!job) return false;
-    const syncApi = job.syncBatch ? requireTurnSyncApi() : null;
+    const syncApi = job.syncBatch ? await requireTurnSyncApi() : null;
     const originalCreatedIds = Array.isArray(job.createdIds) ? job.createdIds.filter(Boolean).map(String) : [];
     job.createdIds = originalCreatedIds;
     if (!Array.isArray(job.items) || validateItems(job.items, 'normal').length > 0) {
@@ -1218,7 +1226,7 @@
       if (state.pendingBatch) {
         if (state.pendingBatch.syncBatch) {
           const pendingSync = state.pendingBatch.syncBatch;
-          const api = requireTurnSyncApi();
+          const api = await requireTurnSyncApi();
           const claim = await api.claimBatch({
             chatId,
             batchStartTurnId: pendingSync.batchStartTurnId,

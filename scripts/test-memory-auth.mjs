@@ -33,7 +33,7 @@ function buildAuthHarness(initialSession, responder) {
     between(loreSource, '  function makeHeaders', '  function request'),
     between(loreSource, '  function request', '  function validateConnection'),
     between(loreSource, '  async function syncStoredSession', '  async function consumeAuthHash'),
-    between(loreSource, '  async function authHeaders', '  function sanitizeBackup'),
+    between(loreSource, '  async function authHeaders', '  function bytesToBase64Url'),
   ].join('\n');
   const factory = new Function(
     'GM_getValue', 'GM_setValue', 'GM_xmlhttpRequest', 'initialSession',
