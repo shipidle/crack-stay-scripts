@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🛡️ 스크롤 가드
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      1.8.7
+// @version      1.8.8
 // @description  🧪 BETA · iPhone 터치 중 하단 점프 방지, 유저스크립트 창 열기/닫기 위치 유지, 모델·키보드·최하단 버튼 보호.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,10 +21,10 @@
   const { document, Element, HTMLElement, history, location } = window;
   const getComputedStyle = window.getComputedStyle.bind(window);
   if (window.__SHIPIDLE_SCROLL_GUARD__) return;
-  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.7' };
+  window.__SHIPIDLE_SCROLL_GUARD__ = { version: '1.8.8' };
   // Shared DOM marker for Stay's separate userscript execution worlds.
   function exposeStatus() {
-    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.7');
+    document.documentElement?.setAttribute('data-shipidle-scroll-guard', '1.8.8');
   }
   exposeStatus();
   if (!document.documentElement) document.addEventListener('readystatechange', exposeStatus);
@@ -44,6 +44,7 @@
   let observedLayoutTarget = null;
   let editorActive = false;
   let manualReadingIntent = false;
+  let viewportSettlingUntil = 0;
   let keyboardSettlingUntil = 0;
   let modelHold = null;
   let modelObserver = null;
@@ -351,6 +352,7 @@
     if (anchor && anchor !== el && (el === documentScroller() || el.contains(anchor))) {
       reading.anchor = anchor;
       reading.anchorY = anchor.getBoundingClientRect().top;
+      reading.viewportTop = box.top;
     }
   }
 
@@ -569,6 +571,7 @@
     const el = readingTarget();
     if (!el || !isScrollable(el)) return;
     for (const parent of reading.parents) {
+      if (Date.now() < viewportSettlingUntil) { parent.top = parent.target.scrollTop; continue; }
       if (parent.target.isConnected && parent.target.scrollTop > parent.top + 2) {
         restoreDirect(parent.target, parent.top);
       }
@@ -598,7 +601,9 @@
     const savedGap = reading.gap ?? gap;
     let anchorDelta = null;
     if (reading.anchor?.isConnected && (el === documentScroller() || el.contains(reading.anchor))) {
-      anchorDelta = reading.anchor.getBoundingClientRect().top - reading.anchorY;
+      const viewportTop = el === documentScroller() ? 0 : el.getBoundingClientRect().top;
+      anchorDelta = reading.anchor.getBoundingClientRect().top - reading.anchorY
+        - (viewportTop - (reading.viewportTop ?? viewportTop));
     }
 
     // Pixel-level correction ONLY after a structural reply reflow, with
@@ -697,6 +702,8 @@
     if (correcting || keyboardTransition() ||
         desired === null || !Number.isFinite(desired)) return false;
     const target = readingTarget();
+    // Keyboard/browser chrome may reposition an ancestor independently of chat.
+    if (Date.now() < viewportSettlingUntil && el !== target) return false;
     const saved = reading
       ? (el === target ? reading.top :
         reading.parents.find(parent => parent.target === el)?.top)
@@ -822,18 +829,33 @@
       keyboardSettlingUntil = panelHold || manualReadingIntent ? 0 : Date.now() + 1150;
     }
   }, true);
+  function settleViewportGeometry() {
+    // iOS keyboard dismissal and Safari toolbar animation move/resize the chat
+    // viewport. Old ancestor offsets and absolute anchors no longer describe it.
+    viewportSettlingUntil = Date.now() + 700;
+    if (reading) {
+      for (const parent of reading.parents) parent.top = parent.target.scrollTop;
+      reading.anchor = null;
+      reading.anchorY = null;
+      reading.settledAt = viewportSettlingUntil;
+    }
+  }
   window.visualViewport?.addEventListener('resize', () => {
+    settleViewportGeometry();
     if (!panelHold && !manualReadingIntent && (editorActive ||
         (isEditor(document.activeElement) && !overlayTarget(document.activeElement)))) {
       releaseForKeyboard();
     }
   }, { passive: true });
   window.addEventListener('resize', () => {
+    settleViewportGeometry();
     if (!panelHold && !manualReadingIntent && (editorActive ||
         (isEditor(document.activeElement) && !overlayTarget(document.activeElement)))) {
       releaseForKeyboard();
     }
   }, { passive: true });
+
+  window.visualViewport?.addEventListener('scroll', settleViewportGeometry, { passive: true });
 
   document.addEventListener('touchstart', pointerStart, { capture: true, passive: true });
   document.addEventListener('touchmove', pointerMove, { capture: true, passive: true });

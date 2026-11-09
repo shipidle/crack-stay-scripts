@@ -63,6 +63,7 @@ const tests = [
  ['explicit latest button still releases guard', h=>{h.arm();const button=new h.Element('BUTTON');button.attributes={'aria-label':'최신 메시지'};h.fire('document','click',{target:button,isTrusted:true});h.host.scrollTop=7400;assert.equal(h.host.scrollTop,7400);}],
  ['desktop reply stays pinned', h=>{h.editor.focus();h.fire('document','keydown',{target:h.editor,key:'Enter',isTrusted:true});h.host.scrollHeight+=1000;h.host.scrollTop=8400;assert.equal(h.host.scrollTop,7400);}],
  ['desktop wheel still moves freely', h=>{h.fire('document','wheel',{target:h.host,deltaY:-200});h.nativeTo(1200);h.tick(350);h.fire('document','wheel',{target:h.host,deltaY:300});h.nativeTo(1500);h.tick(350);assert.equal(h.host.scrollTop,1500);}],
+ ['viewport resize allows outer page geometry to settle', h=>{h.arm();h.document.documentElement.scrollHeight=1800;h.fire('viewport','resize');h.document.documentElement.scrollTop=150;assert.equal(h.document.documentElement.scrollTop,150);h.nativeTo(1200);assert.equal(h.document.documentElement.scrollTop,150);h.host.scrollTop=7400;assert.equal(h.host.scrollTop,1200);}],
 ];
 let failed=0;
 for(const [name,test]of tests){try{test(harness(name.startsWith('desktop ')));console.log('PASS',name);}catch(error){failed++;console.log('FAIL',name,'—',error.message);}}
