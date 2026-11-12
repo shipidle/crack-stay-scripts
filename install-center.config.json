@@ -17,7 +17,8 @@
   "channelFileAliases": {},
   "channelExcludes": {
     "main": [
-      "Crack_Chat_Bookmarks.user.js"
+      "Crack_Chat_Bookmarks.user.js",
+      "Crack_Model_Icon.user.js"
     ]
   },
   "devices": [

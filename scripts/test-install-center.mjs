@@ -37,7 +37,8 @@ for (const channel of config.channels) {
     const section = install.slice(start, next < 0 ? install.length : next);
     const excluded = new Set([
       ...device.exclude,
-      ...(config.channelExcludes?.[channel.id] || [])
+      ...(config.channelExcludes?.[channel.id] || []),
+      ...(config.channelDeviceExcludes?.[channel.id]?.[device.id] || [])
     ]);
     const selected = files.filter(file => !excluded.has(file));
     assert.match(section, new RegExp(`총 ${selected.length}개`));
