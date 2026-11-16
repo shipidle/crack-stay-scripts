@@ -257,7 +257,7 @@ function isVisible(element) {
     return button.disabled
       || button.getAttribute('aria-disabled') === 'true'
       || button.getAttribute('aria-busy') === 'true'
-      || /\b(?:Generating|Processing|Queueing|Cancelling|Cancel Generation|Stop Generation)\b/i.test(label)
+      || /\b(?:Generating|Processing|Queueing|Cancelling|Cancel(?: Generation)?|Stop Generation)\b/i.test(label)
       || /생성\s*중|처리\s*중|취소\s*중/.test(label);
   }
 
@@ -316,7 +316,7 @@ function isVisible(element) {
   function start() {
     const button = nativeGenerateButton();
     if (!button) {
-      notify('NAI 이미지 생성 페이지에서 생성 버튼을 찾지 못했습니다.');
+      notify('생성 버튼을 찾지 못했습니다. 아이콘을 길게 눌러 설정에서 버튼을 직접 지정하세요.');
       return;
     }
     state.active = true;
