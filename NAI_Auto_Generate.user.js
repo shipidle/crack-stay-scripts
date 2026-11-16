@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🖼️ NAI 무한 이미지 생성
 // @namespace    https://github.com/shipidle/crack-stay-scripts
-// @version      0.1.0
-// @description  🧪 BETA · NovelAI의 현재 프롬프트와 설정으로 반복 생성합니다. 짧게 누르면 ON/OFF, 길게 누르면 생성 간격을 설정합니다.
+// @version      0.1.1
+// @description  🧪 BETA · iPhone Safari 생성 버튼 탐지 보강. 현재 프롬프트로 반복 생성하며 짧게 누르면 ON/OFF, 길게 누르면 생성 간격을 설정합니다.
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
 // @match        https://novelai.net/image*
@@ -56,7 +56,10 @@
     requestAt: 0,
     nextAt: 0,
     completed: 0,
-    currentButton: null
+    currentButton: null,
+    initialImages: '',
+    imageChangeAt: 0,
+    imageChanged: false
   };
 
   const style = document.createElement('style');
@@ -72,6 +75,7 @@
     '#naig-settings label{display:block;font-weight:650;margin-bottom:8px}',
     '#naig-settings input{width:100%;height:34px;box-sizing:border-box;padding:5px 9px;border:1px solid #647080;border-radius:6px;background:#171b22;color:white;font:inherit}',
     '#naig-settings small{display:block;margin-top:8px;color:#b9c0cb;font-size:11px;line-height:1.45}',
+    '#naig-settings .naig-pick{margin-top:10px;padding:7px 9px;min-height:32px;width:100%;border-radius:7px;background:#454e5d;font-size:12px}',
     '#naig-toast{position:fixed;z-index:2147483647;left:50%;bottom:26px;transform:translateX(-50%);max-width:min(90vw,360px);padding:8px 12px;border-radius:8px;background:#282e37;color:white;box-shadow:0 4px 16px #0006;font:12px/1.4 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;pointer-events:none;text-align:center}'
   ].join('\n');
   (document.head || document.documentElement).appendChild(style);
@@ -99,8 +103,12 @@
   settings.id = 'naig-settings';
   settings.hidden = true;
   settings.style.display = 'none';
-  settings.innerHTML = '<label for="naig-delay">생성 간격 (초)</label><input id="naig-delay" type="number" min="0" max="600" step="0.5" inputmode="decimal"><small>이미지 생성이 완료된 뒤 다음 생성까지 기다리는 시간입니다. 0초부터 600초까지 설정할 수 있습니다.</small>';
+  settings.innerHTML = '<label for="naig-delay">생성 간격 (초)</label><input id="naig-delay" type="number" min="0" max="600" step="0.5" inputmode="decimal"><small>이미지 생성 완료 후 다음 생성까지 0~600초 대기합니다.</small><button type="button" class="naig-pick" id="naig-pick">생성 버튼 직접 지정 (인식 실패 시)</button><small>위 버튼을 누른 다음, NAI의 실제 Generate 버튼을 한 번 터치하세요. 지정하는 터치는 이미지 생성을 실행하지 않습니다.</small>';
   const delayInput = settings.querySelector('#naig-delay');
+  const pickButton = settings.querySelector('#naig-pick');
+  let pickedButton = null;
+  let pickedSelector = '';
+  let picking = false;
   delayInput.value = String(state.delaySeconds);
 
   let longPressTimer = null;
@@ -121,23 +129,122 @@
     toastTimer = window.setTimeout(function () { toast.remove(); }, 3700);
   }
 
-  function isVisible(element) {
-    if (!element || !element.isConnected || !element.getClientRects().length) return false;
+function isVisible(element) {
+    if (!element || !element.isConnected) return false;
     const css = window.getComputedStyle(element);
-    return css.display !== 'none' && css.visibility !== 'hidden';
+    if (css.display === 'none' || css.visibility === 'hidden') return false;
+    // Safari can use display:contents for a clickable wrapper.
+    if (element.getClientRects().length) return true;
+    return Array.from(element.children || []).some(child => child.getClientRects().length > 0);
+  }
+
+  function cleanLabel(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function candidateLabel(button) {
+    return cleanLabel([
+      button.getAttribute('aria-label'),
+      button.getAttribute('title'),
+      button.getAttribute('data-testid'),
+      button.getAttribute('data-tooltip'),
+      button.getAttribute('data-action'),
+      button.getAttribute('data-state'),
+      button.getAttribute('value'),
+      button.textContent
+    ].filter(Boolean).join(' '));
+  }
+
+  function isGenerateLabel(label) {
+    // Compact mobile buttons may contain only "Generate", an image count, or an accessible label.
+    return /(?:^|[\s:/_-])generat(?:e|ion)(?=$|[\s:/_-]|\d)/i.test(label)
+      || /(?:^|[\s:/_-])create\s+(?:images?|art)(?:$|[\s:/_-])/i.test(label)
+      || /(?:이미지\s*)?생성(?:하기)?/.test(label);
+  }
+
+  function isOtherAction(label) {
+    return /\b(?:cancel|stop|abort|upscale|enhance|variation|retry|download|randomize|configure|settings|preview|grid|history|reference|image2image|img2img|inpaint)\b/i.test(label)
+      || /생성\s*취소|중지|설정|다운로드|업스케일/.test(label);
+  }
+
+  function pickedGenerateButton() {
+    if (pickedButton && isVisible(pickedButton)) return pickedButton;
+    if (pickedSelector) {
+      try {
+        const match = document.querySelector(pickedSelector);
+        if (isVisible(match)) {
+          pickedButton = match;
+          return match;
+        }
+      } catch (_) { /* selector invalid after layout change */ }
+    }
+    return null;
   }
 
   function nativeGenerateButton() {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    return buttons.find(function (button) {
-      if (!isVisible(button) || host.contains(button)) return false;
-      return /Generate\s+\d+\s+Images?\b/i.test(button.textContent || '');
-    }) || buttons.find(function (button) {
-      if (!isVisible(button) || host.contains(button)) return false;
-      const label = [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent]
-        .filter(Boolean).join(' ').trim();
-      return /^Generate(?:\s+Images?)?(?:\s+\d+\s+Images?)?(?:\s+\d+\s+Anlas)?$/i.test(label);
-    }) || null;
+    const manuallySelected = pickedGenerateButton();
+    if (manuallySelected) return manuallySelected;
+    const candidates = Array.from(document.querySelectorAll(
+      'button,[role="button"],input[type="button"],input[type="submit"]'
+    ));
+    let best = null;
+    let bestScore = -1;
+    for (const button of candidates) {
+      if (host.contains(button) || settings.contains(button) || !isVisible(button)) continue;
+      const label = candidateLabel(button);
+      if (!isGenerateLabel(label) || isOtherAction(label)) continue;
+      const rect = button.getBoundingClientRect();
+      // A button-sized control is preferred over generic panels exposing the same text.
+      if (rect.width > window.innerWidth * .95 && rect.height > 140) continue;
+      let score = 0;
+      if (button.tagName === 'BUTTON' || button.tagName === 'INPUT') score += 25;
+      if (/^generat(?:e|ion)\b/i.test(cleanLabel(button.textContent || button.value))) score += 30;
+      if (/\bgenerate\s+\d+\s+images?\b/i.test(label)) score += 25;
+      if (/\b(?:generate|generation|생성)\b/i.test(cleanLabel(button.getAttribute('aria-label')))) score += 22;
+      if (/\b(?:anlas|credits?)\b/i.test(label)) score += 12;
+      if (/\bgenerate\b/i.test(cleanLabel(button.getAttribute('data-testid')))) score += 18;
+      if (rect.width > 60 && rect.height >= 25) score += 8;
+      // The image count / Anlas information often sits in the same mobile button.
+      if (/\b\d+\s+images?\b/i.test(label)) score += 6;
+      if (score > bestScore) { bestScore = score; best = button; }
+    }
+    return best;
+  }
+
+  function resultImageSignature() {
+    // Only large, fully loaded image elements count; tiny icons/avatars should not trigger completion.
+    const signatures = [];
+    for (const img of document.querySelectorAll('img')) {
+      if (!isVisible(img) || !img.complete || img.naturalWidth < 256 || img.naturalHeight < 256) continue;
+      const src = img.currentSrc || img.src;
+      if (src) signatures.push(src.slice(0, 160));
+    }
+    return signatures.join('|');
+  }
+
+  function stableSelectorFor(button) {
+    const escape = typeof CSS !== 'undefined' && CSS.escape
+      ? CSS.escape
+      : value => String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+    if (button.id) {
+      const selector = '#' + escape(button.id);
+      if (document.querySelectorAll(selector).length === 1) return selector;
+    }
+    for (const attr of ['data-testid', 'data-action']) {
+      const value = button.getAttribute(attr);
+      if (value) {
+        const selector = '[' + attr + '="' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]';
+        if (document.querySelectorAll(selector).length === 1) return selector;
+      }
+    }
+    // Used only during the current page session; dynamic re-rendering is checked for uniqueness.
+    const chain = [];
+    for (let node = button; node && node !== document.body; node = node.parentElement) {
+      const nth = Array.from(node.parentElement?.children || []).filter(child => child.tagName === node.tagName).indexOf(node) + 1;
+      chain.unshift(node.tagName.toLowerCase() + ':nth-of-type(' + nth + ')');
+    }
+    const selector = 'body > ' + chain.join(' > ');
+    return document.querySelectorAll(selector).length === 1 ? selector : '';
   }
 
   function currentGenerateButton() {
@@ -146,10 +253,12 @@
 
   function isBusy(button) {
     if (!button) return false;
+    const label = candidateLabel(button);
     return button.disabled
       || button.getAttribute('aria-disabled') === 'true'
       || button.getAttribute('aria-busy') === 'true'
-      || /\b(?:Generating|Processing|Queueing|Cancelling|Cancel Generation|Stop Generation)\b/i.test(button.textContent || '');
+      || /\b(?:Generating|Processing|Queueing|Cancelling|Cancel Generation|Stop Generation)\b/i.test(label)
+      || /생성\s*중|처리\s*중|취소\s*중/.test(label);
   }
 
   function render() {
@@ -183,6 +292,9 @@
     }
     state.currentButton = button;
     state.requestAt = Date.now();
+    state.initialImages = resultImageSignature();
+    state.imageChanged = false;
+    state.imageChangeAt = 0;
     state.phase = 'awaiting-busy';
     try {
       button.click();
@@ -191,6 +303,14 @@
       return;
     }
     if (isBusy(button)) state.phase = 'generating';
+  }
+
+  function completeGeneration(now) {
+    state.completed += 1;
+    state.phase = 'cooldown';
+    state.nextAt = now + state.delaySeconds * 1000;
+    state.currentButton = null;
+    render();
   }
 
   function start() {
@@ -202,6 +322,7 @@
     state.active = true;
     state.completed = 0;
     state.currentButton = button;
+    state.lastImageSignature = '';
     state.phase = isBusy(button) ? 'waiting-existing' : 'idle';
     render();
     if (state.phase === 'idle') submitGeneration();
@@ -217,6 +338,16 @@
 
     const button = currentGenerateButton();
     const now = Date.now();
+    // For Safari mobile UIs that do not disable the Generate button, detect the
+    // finished output image. Wait for the image signature to settle before retrying.
+    if (state.phase === 'awaiting-busy' || state.phase === 'generating') {
+      const signature = resultImageSignature();
+      if (signature && signature !== state.initialImages) {
+        if (signature !== state.lastImageSignature) state.imageChangeAt = now;
+        state.imageChanged = true;
+      }
+      state.lastImageSignature = signature;
+    }
     if (state.phase === 'waiting-existing') {
       if (button && !isBusy(button) && nativeGenerateButton()) submitGeneration();
       return;
@@ -224,18 +355,17 @@
     if (state.phase === 'awaiting-busy') {
       if (button && isBusy(button)) {
         state.phase = 'generating';
+      } else if (state.imageChanged && now - state.imageChangeAt > 3500 && now - state.requestAt > 3500) {
+        completeGeneration(now);
       } else if (now - state.requestAt > ACK_TIMEOUT_MS) {
-        stop('생성 시작 상태를 확인하지 못해 중지했습니다.');
+        stop('생성 진행 상태를 확인하지 못했습니다. 설정에서 생성 버튼을 직접 지정할 수 있습니다.');
       }
       return;
     }
     if (state.phase === 'generating') {
-      if (button && !isBusy(button) && nativeGenerateButton()) {
-        state.completed += 1;
-        state.phase = 'cooldown';
-        state.nextAt = now + state.delaySeconds * 1000;
-        state.currentButton = null;
-        render();
+      if ((button && !isBusy(button) && nativeGenerateButton())
+        || (state.imageChanged && now - state.imageChangeAt > 3500 && now - state.requestAt > 3500)) {
+        completeGeneration(now);
       } else if (now - state.requestAt > GENERATION_TIMEOUT_MS) {
         stop('생성 완료를 10분 동안 확인하지 못해 중지했습니다.');
       }
@@ -292,6 +422,35 @@
     }
     notify('생성 간격: ' + state.delaySeconds + '초');
   }
+
+  function finishPicking(event) {
+    if (!picking) return;
+    if (host.contains(event.target) || settings.contains(event.target)) return;
+    const candidate = event.target.closest('button,[role="button"],input[type="button"],input[type="submit"]');
+    if (!candidate || !isVisible(candidate)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pickedButton = candidate;
+    pickedSelector = stableSelectorFor(candidate);
+    picking = false;
+    pickButton.textContent = '생성 버튼 직접 지정 (인식 실패 시)';
+    notify('생성 버튼을 지정했습니다. 이제 이미지 아이콘을 눌러 시작하세요.');
+  }
+
+  pickButton.addEventListener('click', function (event) {
+    event.stopPropagation();
+    if (state.active) {
+      notify('자동 생성을 먼저 끈 뒤 버튼을 지정해주세요.');
+      return;
+    }
+    picking = !picking;
+    pickButton.textContent = picking ? '지정 취소' : '생성 버튼 직접 지정 (인식 실패 시)';
+    if (picking) {
+      closeSettings();
+      notify('NAI의 실제 이미지 Generate 버튼을 한 번 터치해 지정하세요.');
+    }
+  });
+  document.addEventListener('click', finishPicking, true);
 
   delayInput.addEventListener('change', updateDelay);
   delayInput.addEventListener('keydown', function (event) {
