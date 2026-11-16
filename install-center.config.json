@@ -18,7 +18,8 @@
   "channelExcludes": {
     "main": [
       "Crack_Chat_Bookmarks.user.js",
-      "Crack_Model_Icon.user.js"
+      "Crack_Model_Icon.user.js",
+      "NAI_Auto_Generate.user.js"
     ]
   },
   "devices": [
@@ -49,6 +50,7 @@
   ],
   "order": [
     "NAI_Prompt_Selector.user.js",
+    "NAI_Auto_Generate.user.js",
     "Crack_Assistant.user.js",
     "Crack_Character_State.user.js",
     "Crack_Chat_Background.user.js",
