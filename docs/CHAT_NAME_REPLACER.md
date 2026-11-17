@@ -1,4 +1,4 @@
-# 🔁 채팅 이름 일괄 치환 — BETA 0.2.1
+# 🔁 채팅 이름 일괄 치환 — BETA 0.2.2
 
 [Stay 설치·업데이트](https://raw.githubusercontent.com/shipidle/crack-stay-scripts/beta/Crack_Chat_Name_Replacer.user.js)
 
