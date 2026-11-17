@@ -19,7 +19,8 @@
     "main": [
       "Crack_Chat_Bookmarks.user.js",
       "Crack_Model_Icon.user.js",
-      "NAI_Auto_Generate.user.js"
+      "NAI_Auto_Generate.user.js",
+      "Crack_Chat_Name_Replacer.user.js"
     ]
   },
   "devices": [
@@ -64,6 +65,7 @@
     "Crack_Rewriting_Helper.user.js",
     "Crack_Dialogue_Translator.user.js",
     "Crack_Chat_Bookmarks.user.js",
+    "Crack_Chat_Name_Replacer.user.js",
     "Crack_Messenger.user.js",
     "Crack_Count_Cracker_HUD.user.js",
     "Crack_Mini_Sidebar_Menu.user.js",
