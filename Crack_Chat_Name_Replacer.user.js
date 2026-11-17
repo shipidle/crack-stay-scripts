@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🔁 채팅 이름 일괄 치환
 // @namespace    https://github.com/shipidle/crack-stay-scripts/name-replacer
-// @version      0.2.0
+// @version      0.2.1
 // @description  🧪 BETA · 전체 대화 서버 원문 일괄 치환(1건 시험·백업·개별 검증·중단), 화면 치환, 요약 메모리 확인.
 // @match        https://crack.wrtn.ai/*
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
@@ -271,12 +271,13 @@
   }
   function candidates() {
     return data.filter(m => ['assistant', 'user'].includes(m.role)
-      && !m.isPrologue && !/generat|stream|pending|writing|in.progress/i.test(m.status)
+      && !/generat|stream|pending|writing|in.progress/i.test(m.status)
       && hits(m.content, settings.from) > 0);
   }
-  async function auditHistory() {
+  async function auditHistory(requireClean = false) {
     const originalIds = data.map(m => m.id);
     const current = [], seen = new Set(), cursors = new Set();
+    let remainingNames = 0;
     let cursor = '';
     for (let page = 0; page < 400; page++) {
       if (haltWrites || getRoom(location.pathname) !== room) throw new Error('방 변경 또는 중단으로 검증 실패.');
@@ -286,12 +287,18 @@
       for (const m of parsed.messages) {
         const id = String(m._id || m.id || '');
         if (!id) throw new Error('메시지 ID가 비어 있어 검증 실패.');
-        if (!seen.has(id)) { seen.add(id); current.push(id); }
+        if (!seen.has(id)) {
+          seen.add(id); current.push(id);
+          if (requireClean && ['assistant','user'].includes(m.role) &&
+              !/generat|stream|pending|writing|in.progress/i.test(String(m.status || '')))
+            remainingNames += hits(String(m.content || ''), settings.from);
+        }
       }
       cursor = parsed.cursor;
       if (!cursor) {
         if (current.length !== originalIds.length || current.some((id, i) => id !== originalIds[i]))
           throw new Error('수정 후 전체 대화의 개수 또는 순서가 달라짐. 즉시 중단했음.');
+        if (requireClean && remainingNames) throw new Error('수정 후에도 서버 기록에 ' + remainingNames + '회 이름이 남아 있음.');
         return;
       }
       if (cursors.has(cursor)) throw new Error('검증 중 페이지 커서 반복. 작업 중단.');
@@ -364,7 +371,7 @@
         }
       }
       tell('서버 메시지 수정 완료. 전체 기록 보존 최종 검증 중...');
-      await auditHistory();
+      await auditHistory(true);
       tell('서버 전체 수정 및 메시지별 재조회 완료. ' + changedCount +
         '건 수정, ' + alreadyDone + '건 기존 수정 확인.\n화면을 새로고침해 반영해줘. 요약 메모리는 별도 확인 필요.');
       probePassed = false;
@@ -376,6 +383,55 @@
       writing = false; controls();
     }
   }
+
+  async function restoreFromFile(input) {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || busy || writing || !room) return;
+    let backup;
+    try {
+      backup = JSON.parse(await file.text());
+      if (!backup || !String(backup.format || '').includes('crack-name-replacer/v1') ||
+          backup.mode !== 'original-backup' || backup.roomId !== room ||
+          !Array.isArray(backup.messages) || !backup.find || backup.find === backup.replace)
+        throw new Error('이 방에 해당하는 원본 백업 JSON이 아님.');
+      if (backup.messages.some(m => !m.id || typeof m.content !== 'string' || !['user', 'assistant'].includes(m.role)))
+        throw new Error('원본 백업의 메시지 필드가 올바르지 않음.');
+      if (!complete) throw new Error('원복 전 현재 방의 전체 기록을 먼저 검색해줘.');
+      if (backup.messages.length !== data.length ||
+          backup.messages.some((m, i) => m.id !== data[i].id))
+        throw new Error('백업 파일과 현재 방 메시지 수·순서가 다름. 자동 복구 차단.');
+    } catch (err) { return tell('백업 파일 확인 실패: ' + err.message); }
+    const restores = backup.messages.filter(m => hits(m.content, backup.find));
+    if (!restores.length) return tell('백업에 치환 대상이 없음.');
+    if (!confirm('백업의 원본 메시지로 되돌릴까?\n\n현재 서버의 본문이 백업의 원문 또는 그 치환본과 일치할 때만 수정함. ' +
+      restores.length + '건을 검사함.')) return;
+    const id = room;
+    haltWrites = false; writing = true; changedCount = 0; alreadyDone = 0; controls();
+    try {
+      for (const m of restores) {
+        if (haltWrites || room !== id || getRoom(location.pathname) !== id)
+          throw new Error('방 변경 또는 중단');
+        const original = m.content, desired = original.replaceAll(backup.find, backup.replace);
+        const current = await readOne(m);
+        if (current === original) { alreadyDone++; continue; }
+        if (current !== desired) throw new Error('백업 치환본과 서버 본문이 달라 원복 중단: ' + m.id);
+        await request('PATCH', route(m.id), { message: original });
+        if (await readOne(m) !== original) throw new Error('원복 재조회 불일치: ' + m.id);
+        changedCount++;
+        if ((changedCount + alreadyDone) % 10 === 0) await auditHistory();
+        tell('백업 복구 중: ' + (changedCount + alreadyDone) + '/' + restores.length);
+      }
+      await auditHistory();
+      tell('원본 백업 복구 완료: ' + changedCount + '건 원복 · ' +
+        alreadyDone + '건 기존 원문 유지. 새로고침 후 전체 기록을 다시 검색해줘.');
+      probePassed = false;
+    } catch (err) {
+      tell('복구 중단: ' + err.message + ' · 복구 ' + changedCount +
+        '건. 같은 백업을 다시 선택해 이어서 복구 가능.');
+    } finally { writing = false; controls(); }
+  }
+
   async function inspectMemory() {
     if (busy || writing || !room || !allowed()) return;
     busy = true; controls();
@@ -418,10 +474,11 @@
     panel.querySelector('#scnr-probe').disabled = !complete || busy || writing || !backupRequested;
     panel.querySelector('#scnr-bulk').disabled = !probePassed || !complete || busy || writing;
     panel.querySelector('#scnr-summary').disabled = busy || writing || !room;
+    panel.querySelector('#scnr-restore').disabled = busy || writing || !complete;
     panel.querySelector('#scnr-stop').disabled = !busy && !writing;
     panel.querySelector('#scnr-backup').disabled = !complete || busy;
     panel.querySelector('#scnr-copy').disabled = !complete || busy;
-    panel.querySelector('#scnr-view').disabled = !room || writing;
+    panel.querySelector('#scnr-view').disabled = !room || writing || busy;
     if (button) button.classList.toggle('scnr-on', settings.active);
   }
   function apply() {
@@ -494,7 +551,9 @@
       '<button id="scnr-stop" type="button">중단</button></div>' +
       '<p id="scnr-count">아직 검색하지 않음</p><div id="scnr-results"></div>' +
       '<div class="scnr-actions"><button id="scnr-backup" type="button">원본 백업 JSON</button>' +
-      '<button id="scnr-copy" type="button">치환본 JSON</button></div>' +
+      '<button id="scnr-copy" type="button">치환본 JSON</button>' +
+      '<button id="scnr-restore" type="button">원본 백업으로 복구</button></div>' +
+      '<input id="scnr-import" type="file" accept=".json,application/json" hidden>' +
       '<div class="scnr-actions"><button id="scnr-probe" type="button">서버 1건 시험 수정</button>' +
       '<button id="scnr-bulk" type="button">전체 서버 원문 수정</button></div>' +
       '<div class="scnr-actions"><button id="scnr-summary" type="button">요약 메모리 이름 검사</button></div>' +
@@ -519,6 +578,8 @@
     panel.querySelector('#scnr-summary').addEventListener('click', inspectMemory);
     panel.querySelector('#scnr-backup').addEventListener('click', () => exportJSON(false));
     panel.querySelector('#scnr-copy').addEventListener('click', () => exportJSON(true));
+    panel.querySelector('#scnr-restore').addEventListener('click', () => panel.querySelector('#scnr-import').click());
+    panel.querySelector('#scnr-import').addEventListener('change', e => { restoreFromFile(e.currentTarget); });
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && !panel.hidden) panel.hidden = true;
     });
