@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🔁 채팅 이름 일괄 치환
 // @namespace    https://github.com/shipidle/crack-stay-scripts/name-replacer
-// @version      0.2.1
+// @version      0.2.2
 // @description  🧪 BETA · 전체 대화 서버 원문 일괄 치환(1건 시험·백업·개별 검증·중단), 화면 치환, 요약 메모리 확인.
 // @match        https://crack.wrtn.ai/*
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
@@ -245,10 +245,16 @@
     return base + '/messages' + (messageId ? '/' + encodeURIComponent(messageId) : '');
   }
   async function request(method, url, body) {
-    const response = await fetch(url, {
-      method, headers: headers(), credentials: 'include', cache: 'no-store',
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
+    const timeoutController = new AbortController();
+    const timeout = setTimeout(() => timeoutController.abort(), 30000);
+    let response;
+    try {
+      response = await fetch(url, {
+        method, headers: headers(), credentials: 'include', cache: 'no-store',
+        signal: timeoutController.signal,
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+    } finally { clearTimeout(timeout); }
     const raw = await response.text();
     let parsed = null;
     try { parsed = raw ? JSON.parse(raw) : null; } catch (_) { /* reject malformed writes */ }
@@ -334,6 +340,8 @@
     writing = true; haltWrites = false; changedCount = 0; alreadyDone = 0;
     controls();
     try {
+      tell('서버 시험 수정 전 전체 기록 보존 상태 확인 중...');
+      await auditHistory();
       tell('서버 시험 수정: 메시지 1건 확인 중...');
       await updateOne(first);
       tell('시험 수정 후 전체 메시지 유지 여부를 점검 중...');
@@ -359,6 +367,8 @@
     controls();
     let progressed = 0;
     try {
+      tell('전체 서버 수정 전 기록 개수와 순서 확인 중...');
+      await auditHistory();
       for (const item of items) {
         if (haltWrites || getRoom(location.pathname) !== room || id !== room)
           throw new Error('중단 요청 또는 채팅방 변경');
@@ -409,6 +419,7 @@
     const id = room;
     haltWrites = false; writing = true; changedCount = 0; alreadyDone = 0; controls();
     try {
+      await auditHistory();
       for (const m of restores) {
         if (haltWrites || room !== id || getRoom(location.pathname) !== id)
           throw new Error('방 변경 또는 중단');
@@ -434,31 +445,44 @@
 
   async function inspectMemory() {
     if (busy || writing || !room || !allowed()) return;
+    const id = room;
     busy = true; controls();
     const match = {};
     try {
       for (const type of ['longTerm', 'shortTerm', 'relationship', 'goal']) {
-        let cursor = '', items = [], prev = new Set();
-        for (let i = 0; i < 100; i++) {
-          const params = new URLSearchParams({ limit: '20', type, orderBy: 'oldest', filter: 'all' });
-          if (cursor) params.set('cursor', cursor);
-          const json = await request('GET', API + encodeURIComponent(room) + '/summaries?' + params);
-          const body = json?.data || {};
-          const page = Array.isArray(body.summaries) ? body.summaries : [];
-          items.push(...page);
-          const next = String(body.nextCursor || '');
-          if (!next) break;
-          if (!page.length || prev.has(next)) throw new Error(type + ' 요약 페이지를 끝까지 조회하지 못함.');
-          prev.add(next); cursor = next;
-        }
-        match[type] = items.filter(m => hits(String(m.title || '') + '\n' + String(m.summary || ''), settings.from)).length;
+        try {
+          let cursor = '', items = [], seen = new Set(), finished = false;
+          for (let i = 0; i < 100; i++) {
+            let url;
+            if (type === 'goal') {
+              url = 'https://contents-api.wrtn.ai/character-chat/v3/chats/' +
+                encodeURIComponent(id) + '/summaries?limit=10' +
+                (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
+            } else {
+              const params = new URLSearchParams({ limit: '20', type, orderBy: 'oldest', filter: 'all' });
+              if (cursor) params.set('cursor', cursor);
+              url = API + encodeURIComponent(id) + '/summaries?' + params;
+            }
+            const json = await request('GET', url);
+            const body = json?.data || {};
+            if (!Array.isArray(body.summaries)) throw new Error('요약 형식 불명');
+            items.push(...body.summaries);
+            const next = String(body.nextCursor || '');
+            if (!next || body.hasNext === false) { finished = true; break; }
+            if (!body.summaries.length || seen.has(next)) throw new Error('요약 페이지 반복 또는 누락');
+            seen.add(next); cursor = next;
+          }
+          if (!finished) throw new Error('요약 조회 페이지 제한 도달');
+          match[type] = String(items.filter(m => hits(String(m.title || '') +
+            '\n' + String(m.summary || ''), settings.from)).length);
+        } catch (err) { match[type] = '조회 실패(' + err.message + ')'; }
       }
-      tell('요약 메모리 내 해당 이름 포함 항목\n' +
+      if (id !== room) return;
+      tell('요약 메모리 내 이름 포함 항목\n' +
         '장기 ' + match.longTerm + ' · 단기 ' + match.shortTerm +
         ' · 관계 ' + match.relationship + ' · 목표 ' + match.goal +
-        '\n요약 메모리는 서버 대화와 별도 저장됨. 이 버전은 자동 수정하지 않음.');
-    } catch (err) { tell('요약 메모리 조회 실패: ' + err.message); }
-    finally { busy = false; controls(); }
+        '\n요약 메모리는 서버 대화와 별도로 저장됨. 이 기능은 요약 내용을 자동 변경하지 않음.');
+    } finally { if (id === room) busy = false; controls(); }
   }
 
   function fill() {
