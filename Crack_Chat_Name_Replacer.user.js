@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🔁 채팅 이름 일괄 치환
 // @namespace    https://github.com/shipidle/crack-stay-scripts/name-replacer
-// @version      0.1.0
-// @description  🧪 BETA · 현재 채팅방의 전체 기록 검색, 이름 치환 미리보기, 원본·치환본 백업 및 화면 치환. 서버 원문은 수정하지 않습니다.
+// @version      0.2.0
+// @description  🧪 BETA · 전체 대화 서버 원문 일괄 치환(1건 시험·백업·개별 검증·중단), 화면 치환, 요약 메모리 확인.
 // @match        https://crack.wrtn.ai/*
 // @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Ctext%20x=%220%22%20y=%2252%22%20font-size=%2252%22%3E%F0%9F%8C%8A%3C/text%3E%3C/svg%3E
 // @author       shipidle
@@ -21,6 +21,8 @@
   const nodeSources = new WeakMap();
   let room = '', settings = { ...DEFAULT }, data = [], complete = false, busy = false;
   let controller = null, scheduled = false, button, panel, status, results, count;
+  let backupRequested = false, probePassed = false, writing = false, haltWrites = false;
+  let changedCount = 0, alreadyDone = 0;
 
   function getRoom(path) {
     for (const re of [/\/stories\/[^/]+\/episodes\/([^/?#]+)/,
@@ -86,7 +88,8 @@
   }
 
   function resetData() {
-    data = []; complete = false;
+    data = []; complete = false; backupRequested = false; probePassed = false;
+    changedCount = 0; alreadyDone = 0;
     if (results) results.replaceChildren();
     if (count) count.textContent = '아직 검색하지 않음';
     controls();
@@ -99,6 +102,7 @@
       paint(); // Restore visible nodes before switching to another room.
     }
     if (controller) controller.abort();
+    haltWrites = true;
     controller = null; busy = false;
     room = id; settings = id ? loadSettings(id) : { ...DEFAULT };
     resetData();
@@ -125,7 +129,7 @@
     return { messages: body.messages, cursor: body.hasNext === false ? '' : cursor };
   }
   async function scan() {
-    if (!room || busy || !allowed()) return;
+    if (!room || busy || writing || !allowed()) return;
     const id = room, aborter = new AbortController();
     controller = aborter; busy = true;
     resetData(); controls();
@@ -153,7 +157,8 @@
           if (ids.has(String(idValue))) continue;
           ids.add(String(idValue));
           data.push({ id: String(idValue), role: m.role || '',
-            createdAt: m.createdAt || '', content: m.content });
+            createdAt: m.createdAt || '', content: m.content,
+            status: m.status || '', isPrologue: m.isPrologue === true });
         }
         tell('전체 기록 검색 중: ' + data.length.toLocaleString() + '개');
         cursor = page.cursor;
@@ -228,8 +233,178 @@
       (replaced ? 'replaced' : 'backup') + '-' + new Date().toISOString().slice(0, 10) + '.json';
     document.body.append(anchor); anchor.click(); anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
-    tell('내보내기를 요청함. iPhone이라면 Safari 다운로드 또는 파일 앱을 확인해줘.');
+    if (!replaced) backupRequested = true;
+    controls();
+    tell((replaced ? '치환본' : '원본 백업') + ' 다운로드를 요청했음. 파일 앱에서 실제 저장 여부를 확인해줘.');
   }
+
+  // All writes are opt-in. The route and {message: text} body are based on
+  // CRACK-INJECTION-REFINER; this script additionally reads back each edit.
+  function route(messageId = '') {
+    const base = API + encodeURIComponent(room);
+    return base + '/messages' + (messageId ? '/' + encodeURIComponent(messageId) : '');
+  }
+  async function request(method, url, body) {
+    const response = await fetch(url, {
+      method, headers: headers(), credentials: 'include', cache: 'no-store',
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const raw = await response.text();
+    let parsed = null;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch (_) { /* reject malformed writes */ }
+    if (!response.ok) throw new Error('서버 요청 실패 HTTP ' + response.status + (raw ? ' · ' + raw.slice(0, 120) : ''));
+    if (parsed && parsed.result && parsed.result !== 'SUCCESS' && parsed.result !== 'success')
+      throw new Error('서버가 요청을 승인하지 않았음: ' + String(parsed.result));
+    if (method !== 'GET' && !parsed) throw new Error('쓰기 응답을 확인할 수 없어 작업 중단. 재조회가 필요함.');
+    return parsed;
+  }
+  async function readOne(item) {
+    const response = await request('GET', route(item.id));
+    const m = response?.data ?? response;
+    if (!m || String(m._id || m.id) !== item.id || typeof m.content !== 'string')
+      throw new Error('메시지 ID 또는 원문 재조회 실패: ' + item.id);
+    if (m.role !== item.role) throw new Error('메시지 역할이 달라 수정 중단: ' + item.id);
+    if (m.deletedAt) throw new Error('삭제된 메시지여서 중단: ' + item.id);
+    if (/generat|stream|pending|writing|in.progress/i.test(String(m.status || '')))
+      throw new Error('생성 중인 메시지여서 중단: ' + item.id);
+    return m.content;
+  }
+  function candidates() {
+    return data.filter(m => ['assistant', 'user'].includes(m.role)
+      && !m.isPrologue && !/generat|stream|pending|writing|in.progress/i.test(m.status)
+      && hits(m.content, settings.from) > 0);
+  }
+  async function auditHistory() {
+    const originalIds = data.map(m => m.id);
+    const current = [], seen = new Set(), cursors = new Set();
+    let cursor = '';
+    for (let page = 0; page < 400; page++) {
+      if (haltWrites || getRoom(location.pathname) !== room) throw new Error('방 변경 또는 중단으로 검증 실패.');
+      const json = await request('GET', route() + '?limit=50' +
+        (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+      const parsed = parse(json);
+      for (const m of parsed.messages) {
+        const id = String(m._id || m.id || '');
+        if (!id) throw new Error('메시지 ID가 비어 있어 검증 실패.');
+        if (!seen.has(id)) { seen.add(id); current.push(id); }
+      }
+      cursor = parsed.cursor;
+      if (!cursor) {
+        if (current.length !== originalIds.length || current.some((id, i) => id !== originalIds[i]))
+          throw new Error('수정 후 전체 대화의 개수 또는 순서가 달라짐. 즉시 중단했음.');
+        return;
+      }
+      if (cursors.has(cursor)) throw new Error('검증 중 페이지 커서 반복. 작업 중단.');
+      cursors.add(cursor);
+    }
+    throw new Error('검증 조회 최대 페이지 초과. 작업 중단.');
+  }
+  async function updateOne(item) {
+    const original = item.content, desired = original.replaceAll(settings.from, settings.to);
+    const now = await readOne(item);
+    if (now === desired) { alreadyDone++; return false; }
+    if (now !== original) throw new Error('원문이 조회 당시와 달라 작업 중지: ' + item.id);
+    const patched = await request('PATCH', route(item.id), { message: desired });
+    const returned = patched?.data;
+    if (returned && (returned._id || returned.id) && String(returned._id || returned.id) !== item.id)
+      throw new Error('서버가 다른 메시지 ID를 반환함. 작업 중단: ' + item.id);
+    const after = await readOne(item);
+    if (after !== desired) throw new Error('서버 저장 결과가 기대와 다름. 작업 중단: ' + item.id);
+    changedCount++; return true;
+  }
+  function readiness() {
+    if (!room || !complete || busy || writing) return '먼저 현재 방의 전체 기록 검색을 완료해줘.';
+    if (!allowed()) return '치환 대상과 변경 문자를 확인해줘.';
+    if (!backupRequested) return '먼저 원본 백업 JSON을 다운로드해줘.';
+    if (!candidates().length) return '수정할 대화 본문이 없음.';
+    return '';
+  }
+  async function serverTest() {
+    const error = readiness();
+    if (error) return tell(error);
+    if (!confirm('원본 JSON 파일을 실제로 저장했어?\n\n가장 최근 일치 메시지 1개를 서버에서 직접 수정한 뒤, 전체 대화가 보존됐는지 확인함. 수정을 진행할까?')) return;
+    const id = room, first = candidates()[0];
+    writing = true; haltWrites = false; changedCount = 0; alreadyDone = 0;
+    controls();
+    try {
+      tell('서버 시험 수정: 메시지 1건 확인 중...');
+      await updateOne(first);
+      tell('시험 수정 후 전체 메시지 유지 여부를 점검 중...');
+      await auditHistory();
+      if (id !== room) throw new Error('채팅방이 변경됨.');
+      probePassed = true;
+      tell('시험 수정 및 서버 재조회 성공. 전체 대화 ID/순서 유지 확인. 이제 전체 서버 수정 실행 가능.');
+    } catch (err) {
+      probePassed = false;
+      tell('시험 단계 중단: ' + err.message + '\n이전에 수정한 메시지가 있다면 원본 백업을 보관해줘.');
+    } finally {
+      writing = false; controls();
+    }
+  }
+  async function serverBulk() {
+    const error = readiness();
+    if (error) return tell(error);
+    if (!probePassed) return tell('먼저 서버 1건 시험 수정과 전체 대화 유지 검사를 통과해야 함.');
+    const items = candidates();
+    if (!confirm('주의: 이 방의 ' + items.length + '개 메시지 중 이름을 포함한 내용을 실제 서버에서 순차 수정함.\n\n원본 JSON 백업이 저장됐는지 확인했어? 실행 후 원래대로 자동 복구되지 않음.')) return;
+    const id = room;
+    writing = true; haltWrites = false;
+    controls();
+    let progressed = 0;
+    try {
+      for (const item of items) {
+        if (haltWrites || getRoom(location.pathname) !== room || id !== room)
+          throw new Error('중단 요청 또는 채팅방 변경');
+        await updateOne(item);
+        progressed++;
+        tell('서버 수정 진행: ' + progressed + '/' + items.length +
+          '건 검사 · 실제 수정 ' + changedCount + '건 · 이미 완료 ' + alreadyDone + '건');
+        if (progressed % 10 === 0) {
+          await auditHistory();
+        }
+      }
+      tell('서버 메시지 수정 완료. 전체 기록 보존 최종 검증 중...');
+      await auditHistory();
+      tell('서버 전체 수정 및 메시지별 재조회 완료. ' + changedCount +
+        '건 수정, ' + alreadyDone + '건 기존 수정 확인.\n화면을 새로고침해 반영해줘. 요약 메모리는 별도 확인 필요.');
+      probePassed = false;
+    } catch (err) {
+      probePassed = false;
+      tell('일괄 수정 중단: ' + err.message + '\n이번 시도 수정 ' + changedCount +
+        '건 · 이미 완료 ' + alreadyDone + '건. 다시 전체 조회 후 재개할 수 있음.');
+    } finally {
+      writing = false; controls();
+    }
+  }
+  async function inspectMemory() {
+    if (busy || writing || !room || !allowed()) return;
+    busy = true; controls();
+    const match = {};
+    try {
+      for (const type of ['longTerm', 'shortTerm', 'relationship', 'goal']) {
+        let cursor = '', items = [], prev = new Set();
+        for (let i = 0; i < 100; i++) {
+          const params = new URLSearchParams({ limit: '20', type, orderBy: 'oldest', filter: 'all' });
+          if (cursor) params.set('cursor', cursor);
+          const json = await request('GET', API + encodeURIComponent(room) + '/summaries?' + params);
+          const body = json?.data || {};
+          const page = Array.isArray(body.summaries) ? body.summaries : [];
+          items.push(...page);
+          const next = String(body.nextCursor || '');
+          if (!next) break;
+          if (!page.length || prev.has(next)) throw new Error(type + ' 요약 페이지를 끝까지 조회하지 못함.');
+          prev.add(next); cursor = next;
+        }
+        match[type] = items.filter(m => hits(String(m.title || '') + '\n' + String(m.summary || ''), settings.from)).length;
+      }
+      tell('요약 메모리 내 해당 이름 포함 항목\n' +
+        '장기 ' + match.longTerm + ' · 단기 ' + match.shortTerm +
+        ' · 관계 ' + match.relationship + ' · 목표 ' + match.goal +
+        '\n요약 메모리는 서버 대화와 별도 저장됨. 이 버전은 자동 수정하지 않음.');
+    } catch (err) { tell('요약 메모리 조회 실패: ' + err.message); }
+    finally { busy = false; controls(); }
+  }
+
   function fill() {
     if (!panel) return;
     panel.querySelector('#scnr-from').value = settings.from;
@@ -239,14 +414,18 @@
   }
   function controls() {
     if (!panel) return;
-    panel.querySelector('#scnr-scan').disabled = busy || !room || !allowed();
-    panel.querySelector('#scnr-stop').disabled = !busy;
+    panel.querySelector('#scnr-scan').disabled = busy || writing || !room || !allowed();
+    panel.querySelector('#scnr-probe').disabled = !complete || busy || writing || !backupRequested;
+    panel.querySelector('#scnr-bulk').disabled = !probePassed || !complete || busy || writing;
+    panel.querySelector('#scnr-summary').disabled = busy || writing || !room;
+    panel.querySelector('#scnr-stop').disabled = !busy && !writing;
     panel.querySelector('#scnr-backup').disabled = !complete || busy;
     panel.querySelector('#scnr-copy').disabled = !complete || busy;
-    panel.querySelector('#scnr-view').disabled = !room;
+    panel.querySelector('#scnr-view').disabled = !room || writing;
     if (button) button.classList.toggle('scnr-on', settings.active);
   }
   function apply() {
+    if (writing || busy) return tell('작업 중에는 치환 단어를 변경할 수 없음.');
     const from = panel.querySelector('#scnr-from').value;
     const to = panel.querySelector('#scnr-to').value;
     if (!from.trim() || from === to) {
@@ -316,8 +495,11 @@
       '<p id="scnr-count">아직 검색하지 않음</p><div id="scnr-results"></div>' +
       '<div class="scnr-actions"><button id="scnr-backup" type="button">원본 백업 JSON</button>' +
       '<button id="scnr-copy" type="button">치환본 JSON</button></div>' +
+      '<div class="scnr-actions"><button id="scnr-probe" type="button">서버 1건 시험 수정</button>' +
+      '<button id="scnr-bulk" type="button">전체 서버 원문 수정</button></div>' +
+      '<div class="scnr-actions"><button id="scnr-summary" type="button">요약 메모리 이름 검사</button></div>' +
       '<p id="scnr-status" class="scnr-note" role="status"></p>' +
-      '<p class="scnr-note">이 채팅방의 과거 메시지를 끝까지 불러옴. 화면 치환은 서버의 원문·AI가 읽는 문맥을 바꾸지 않음. 다른 기기에는 반영되지 않음. 치환본 JSON은 오프라인 사본이며 크랙에 자동 업로드되지 않음.</p>';
+      '<p class="scnr-note">실제 서버 수정은 원본 백업 다운로드 → 1건 시험 수정 → 전체 유지 확인 후에만 가능. 서버 저장은 메시지별 재조회로 검사함. 요약 메모리와 캐시가 자동 변경되는 것은 아님. 작업 전 다른 기기의 크랙을 닫고, 수정 중에는 채팅을 보내지 않는 것을 권장. JSON은 크랙에 자동 업로드되지 않음.</p>';
     document.body.append(button, panel);
     status = panel.querySelector('#scnr-status');
     results = panel.querySelector('#scnr-results');
@@ -327,7 +509,14 @@
     panel.querySelector('#scnr-apply').addEventListener('click', apply);
     panel.querySelector('#scnr-view').addEventListener('change', apply);
     panel.querySelector('#scnr-scan').addEventListener('click', () => { apply(); scan(); });
-    panel.querySelector('#scnr-stop').addEventListener('click', () => controller?.abort());
+    panel.querySelector('#scnr-stop').addEventListener('click', () => {
+      haltWrites = true;
+      if (controller) controller.abort();
+      if (writing) tell('중단 요청함. 진행 중이던 1개 요청 확인 후 멈춤.');
+    });
+    panel.querySelector('#scnr-probe').addEventListener('click', serverTest);
+    panel.querySelector('#scnr-bulk').addEventListener('click', serverBulk);
+    panel.querySelector('#scnr-summary').addEventListener('click', inspectMemory);
     panel.querySelector('#scnr-backup').addEventListener('click', () => exportJSON(false));
     panel.querySelector('#scnr-copy').addEventListener('click', () => exportJSON(true));
     document.addEventListener('keydown', e => {
