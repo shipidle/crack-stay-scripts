@@ -6,6 +6,8 @@
 
 [🔖 채팅 찾기·북마크 사용법 (beta)](./docs/CHAT_BOOKMARKS.md)
 
+[🔁 채팅 이름 일괄 치환·서버 수정 사용법 (beta)](./docs/CHAT_NAME_REPLACER.md)
+
 - `beta`: 최신 수정본을 먼저 사용하는 실사용 테스트 채널
 - `main`: 테스트 완료 후 Merge된 안정 채널
 
